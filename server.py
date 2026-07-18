@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 import signal_bot as bot
 
@@ -57,6 +57,14 @@ def _on_startup() -> None:
 
 def _scan_thread_alive() -> bool:
     return _thread is not None and _thread.is_alive()
+
+
+@app.get("/ping", response_class=PlainTextResponse)
+def ping() -> str:
+    """Keep-alive pinger'lar icin MINIMAL cevap (2 bayt). /health'in zengin
+    teshis JSON'i bazi ucretsiz pinger'larin cevap-boyu limitini asabiliyor;
+    uyandirmak icin tek gereken 200 donen bir istek, o yuzden bunu kullan."""
+    return "ok"
 
 
 @app.get("/health")

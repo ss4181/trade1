@@ -113,10 +113,16 @@ Render ücretsiz web servisi **15 dk** boşta kalınca uyur; ilk istek 30-60 sn
 gecikir. Bunu ücretsiz bir pinger'la çözüyoruz:
 
 1. [cron-job.org](https://cron-job.org) → ücretsiz kaydol.
-2. **Create cronjob** → URL: `https://signal-bot-XXXX.onrender.com/health` →
+2. **Create cronjob** → URL: `https://signal-bot-XXXX.onrender.com/ping` →
    aralık **her 10 dakika** (`*/10 * * * *`) → kaydet.
 
-Artık her 10 dk'da bir `/health` çağrılır, servis uyanık kalır.
+Artık her 10 dk'da bir `/ping` çağrılır, servis uyanık kalır.
+
+> **Neden `/ping`, `/health` değil:** `/health` zengin bir teşhis JSON'u
+> döndürür ve bazı ücretsiz pinger'lar (cron-job.org dâhil) yakaladıkları cevap
+> gövdesini sınırlar → "response larger than allowed limit" hatası. `/ping`
+> yalnızca `ok` (2 bayt) döner; keep-alive için tek gereken budur. `/health`'i
+> tarayıcıdan durum bakmak için kullanmaya devam et.
 
 > **Neden UptimeRobot değil:** UptimeRobot 2024 sonundan itibaren ücretsiz
 > planı "yalnızca ticari olmayan kişisel kullanım" ile sınırladı (ticari/gelir
