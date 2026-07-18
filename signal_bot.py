@@ -81,7 +81,26 @@ DEFAULT_SYMBOLS = (
     "APTUSDT,ARBUSDT,OPUSDT,FILUSDT,SUIUSDT,INJUSDT,SEIUSDT,TIAUSDT,"
     "AAVEUSDT,ETCUSDT,XLMUSDT,SANDUSDT,GALAUSDT,PEPEUSDT"
 )
-SYMBOLS = [s.strip() for s in _env("SYMBOLS", DEFAULT_SYMBOLS).split(",") if s.strip()]
+_SYMBOLS_ENV = os.environ.get("SYMBOLS", "").strip()
+SYMBOLS = [s.strip() for s in (_SYMBOLS_ENV or DEFAULT_SYMBOLS).split(",") if s.strip()]
+
+# --- dinamik sembol evreni ---
+# SYMBOLS env'i BOSSA bot evreni otomatik kurar: USDT spot cifti + aktif
+# USDⓈ-M perp'i olan coinler, PERP 24h hacmine gore siralanir, ilk
+# SYMBOL_MAX_COUNT alinir. Siralama perp hacmiyle yapilir cunku (a) islem
+# perp'te acilir, (b) mutlak spot esigi rejime gore kirilir (ayi piyasasinda
+# spot hacimler cokuyor). Spot tarafina kucuk bir veri-kalitesi tabani yeter
+# (S1/S3 spot verisinde hesaplanir ama kendi gecmisine gore normalize).
+# Arastirma evreni de ayni kuralla ("likit + hem spot hem perp") secilmisti;
+# esikler likit-disi coinlerde DOGRULANMADI — filtreler bilerek var.
+# SYMBOLS env'i doldurursan otomatik mod kapanir.
+SYMBOL_AUTO = _env("SYMBOL_AUTO", not _SYMBOLS_ENV,
+                   cast=lambda v: str(v).strip().lower() in ("1", "true", "yes"))
+SYMBOL_MAX_COUNT = _env("SYMBOL_MAX_COUNT", 120)
+SYMBOL_MIN_PERP_VOLUME_M = _env("SYMBOL_MIN_PERP_VOLUME_M", 10.0)  # milyon $/24h, perp
+SYMBOL_MIN_SPOT_VOLUME_M = _env("SYMBOL_MIN_SPOT_VOLUME_M", 1.0)   # milyon $/24h, spot
+UNIVERSE_REFRESH_HOURS = _env("UNIVERSE_REFRESH_HOURS", 24)
+
 SCAN_INTERVAL_MINUTES = _env("SCAN_INTERVAL_MINUTES", 60)
 KLINE_LIMIT = _env("KLINE_LIMIT", 250)          # >= VOLUME_ZSCORE_WINDOW + 24 olmali
 SIGNAL_LOG = _env("SIGNAL_LOG", "signals.log")
@@ -182,6 +201,60 @@ def calc_volume_zscore(volumes: list[float], window: int = VOLUME_ZSCORE_WINDOW)
     return z
 
 
+# --------------------------------------------------------------------------
+# referans seviyeleri (mekanik; tavsiye DEGIL)
+# --------------------------------------------------------------------------
+# 24 aylik backtest'in (2024-07 -> 2026-06, research/REPORT.md) dogrulanmis
+# ufuktaki HAM getiri dagilimlari. Onemli durustluk notu: backtest'te tek
+# dogrulanan cikis kurali ZAMAN cikisidir (ufuk sonunda kapat); fiyat-bazli
+# stop/hedef HIC test edilmedi. q10/q90 sadece tarihsel dagilimin uc yuzdelik
+# dilimleri — "buradan kes/su fiyattan al" talimati degildir.
+STRATEGY_STATS = {
+    "S1": {"h": 24, "med": 0.93, "q10": -4.49, "q90": 8.83, "wr": 62, "n": 316},
+    "S2": {"h": 72, "med": 0.24, "q10": -9.09, "q90": 12.73, "wr": 52, "n": 339},
+    "S3": {"h": 4,  "med": 0.16, "q10": -2.84, "q90": 4.16, "wr": 53, "n": 1015},
+}
+
+
+def _sig6(x: float) -> float:
+    """Fiyati 6 anlamli haneye yuvarla (PEPE gibi cok kucuk fiyatlar icin)."""
+    return float(f"{x:.6g}")
+
+
+def realized_sigma1h(closes: list[float], window: int = 168) -> float | None:
+    """Son `window` saatlik log-getirinin std'si (arastirmadaki vol tanimi)."""
+    lo = max(1, len(closes) - window)
+    rets = [math.log(closes[i] / closes[i - 1])
+            for i in range(lo, len(closes)) if closes[i - 1] > 0]
+    if len(rets) < 30:
+        return None
+    mu = sum(rets) / len(rets)
+    var = sum((r - mu) ** 2 for r in rets) / (len(rets) - 1)
+    return math.sqrt(var)
+
+
+def build_ref_levels(strategy: str, price: float,
+                     sigma1h: float | None) -> dict | None:
+    """Sinyal icin mekanik referans paketi: giris referansi, zaman cikisi,
+    tarihsel dagilimin fiyat karsiliklari, tipik dalgalanma bandi."""
+    st = STRATEGY_STATS.get(strategy.split("+")[0])
+    if st is None:
+        return None
+    ref = {
+        "entry_ref": _sig6(price),
+        "time_exit_hours": st["h"],
+        "hist_n": st["n"], "hist_winrate_pct": st["wr"],
+        "hist_median_pct": st["med"],
+        "hist_q10_pct": st["q10"], "hist_q90_pct": st["q90"],
+        "median_price": _sig6(price * (1 + st["med"] / 100)),
+        "q10_price": _sig6(price * (1 + st["q10"] / 100)),
+        "q90_price": _sig6(price * (1 + st["q90"] / 100)),
+    }
+    if sigma1h is not None:
+        ref["sigma_h_pct"] = round(sigma1h * math.sqrt(st["h"]) * 100, 2)
+    return ref
+
+
 def bullish_divergence(closes, lows, rsi, i: int) -> bool:
     """Bar i icin: fiyat onceki dipten dusuk AMA RSI o dipten yuksek mi?
     Onceki dip: son DIVERGENCE_GAP bar haric tutulup ondan onceki
@@ -220,9 +293,90 @@ def fetch_funding(symbol: str, limit: int = 3) -> list[dict]:
             for x in sorted(r.json(), key=lambda x: x["fundingTime"])]
 
 
-# spot sembolu -> perp sembolu (dusuk fiyatli coinlerde 1000x kontrat)
+# spot sembolu -> perp sembolu eslemesi (dusuk fiyatli coinlerde 1000x kontrat).
+# Otomatik evren modunda fetch_universe() doldurur; statik modda bilinen istisna.
+PERP_MAP: dict[str, str] = {"PEPEUSDT": "1000PEPEUSDT"}
+_last_universe_refresh = 0.0
+
+# Sabit/pegli varliklar evren disi: fiyat dinamikleri kripto degil (stable, altin,
+# wrapped) — S1/S3 varsayimlari bunlarda gecerli degil.
+STABLE_OR_PEGGED = {
+    "USDC", "FDUSD", "TUSD", "DAI", "USDP", "PYUSD", "BUSD", "AEUR", "EUR",
+    "EURI", "USDE", "USD1", "BFUSD", "XUSD", "USDF", "PAXG", "XAUT",
+    "WBTC", "WBETH",
+}
+
+
 def perp_symbol(spot: str) -> str:
-    return {"PEPEUSDT": "1000PEPEUSDT"}.get(spot, spot)
+    return PERP_MAP.get(spot, spot)
+
+
+def fetch_universe() -> tuple[list[str], dict[str, str]]:
+    """Likidite-filtreli evren: USDT spot cifti + aktif USDⓈ-M perp'i olan
+    semboller; PERP 24h hacmine gore azalan sirali ilk N. Spot tarafina
+    kucuk bir veri-kalitesi tabani uygulanir."""
+    r = requests.get(f"{FUT_API}/fapi/v1/exchangeInfo", timeout=30)
+    r.raise_for_status()
+    perps = {s["symbol"] for s in r.json()["symbols"]
+             if s.get("contractType") == "PERPETUAL"
+             and s.get("status") == "TRADING"
+             and s.get("quoteAsset") == "USDT"}
+    r = requests.get(f"{FUT_API}/fapi/v1/ticker/24hr", timeout=30)
+    r.raise_for_status()
+    perp_vol = {}
+    for t in r.json():
+        try:
+            perp_vol[t["symbol"]] = float(t.get("quoteVolume") or 0.0)
+        except (TypeError, ValueError, KeyError):
+            continue
+    r = requests.get(f"{SPOT_API}/api/v3/ticker/24hr", timeout=30)
+    r.raise_for_status()
+    rows = []
+    for t in r.json():
+        sym = t.get("symbol", "")
+        if not sym.endswith("USDT") or sym[:-4] in STABLE_OR_PEGGED:
+            continue
+        try:
+            spot_qv = float(t.get("quoteVolume") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if spot_qv < SYMBOL_MIN_SPOT_VOLUME_M * 1e6:
+            continue
+        perp = sym if sym in perps else (
+            "1000" + sym if "1000" + sym in perps else None)
+        if perp is None:
+            continue
+        pv = perp_vol.get(perp, 0.0)
+        if pv < SYMBOL_MIN_PERP_VOLUME_M * 1e6:
+            continue
+        rows.append((pv, sym, perp))
+    rows.sort(reverse=True)
+    rows = rows[:SYMBOL_MAX_COUNT]
+    if len(rows) < 5:      # API bozuk cevap verdiyse eski listeyi koru
+        raise RuntimeError(f"evren suphe verecek kadar kucuk: {len(rows)}")
+    return [s for _, s, _ in rows], {s: p for _, s, p in rows}
+
+
+def refresh_universe_if_due(force: bool = False) -> None:
+    """SYMBOL_AUTO aciksa evreni periyodik yeniler; hata olursa eski liste kalir."""
+    global SYMBOLS, PERP_MAP, _last_universe_refresh
+    if not SYMBOL_AUTO:
+        return
+    if not force and time.time() - _last_universe_refresh < UNIVERSE_REFRESH_HOURS * 3600:
+        return
+    try:
+        syms, pmap = fetch_universe()
+        added = len(set(syms) - set(SYMBOLS))
+        removed = len(set(SYMBOLS) - set(syms))
+        SYMBOLS, PERP_MAP = syms, pmap
+        _last_universe_refresh = time.time()
+        print(f"evren guncellendi: {len(syms)} sembol "
+              f"(perp>={SYMBOL_MIN_PERP_VOLUME_M:g}M$, "
+              f"spot>={SYMBOL_MIN_SPOT_VOLUME_M:g}M$, +{added}/-{removed})",
+              flush=True)
+    except Exception as e:
+        print(f"uyari: evren guncellenemedi, mevcut {len(SYMBOLS)} sembol "
+              f"kullanilmaya devam: {e}", file=sys.stderr, flush=True)
 
 # --------------------------------------------------------------------------
 # tarama
@@ -324,6 +478,13 @@ def scan_symbol(symbol: str, state: ScanState) -> list[dict]:
                 "note": "negatif funding yiginlanmasi (short squeeze adayi)",
                 "horizon_hours": 72,
             })
+
+    if signals:
+        sigma = realized_sigma1h(closes)
+        for sig in signals:
+            ref = build_ref_levels(sig["strategy"], sig["price"], sigma)
+            if ref:
+                sig["ref"] = ref
     return signals
 
 # --------------------------------------------------------------------------
@@ -343,6 +504,28 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
     return rows
 
 
+def _ref_lines(sig: dict) -> list[str]:
+    """Referans seviyeleri — iki kanal icin ortak duz-metin satirlar."""
+    ref = sig.get("ref")
+    if not ref:
+        return []
+    lines = [
+        "— Referans seviyeleri (mekanik; tavsiye degil) —",
+        f"Giris ref: {ref['entry_ref']}",
+        f"Zaman cikisi: ~{ref['time_exit_hours']}h (backtest'te dogrulanan tek cikis kurali)",
+        f"24 ay tarihce (N={ref['hist_n']}, kazanma %{ref['hist_winrate_pct']}):",
+        f"  medyan → {ref['median_price']} ({ref['hist_median_pct']:+.2f}%)",
+        f"  kotu %10 → {ref['q10_price']} ({ref['hist_q10_pct']:+.2f}%)",
+        f"  iyi %10 → {ref['q90_price']} ({ref['hist_q90_pct']:+.2f}%)",
+    ]
+    if "sigma_h_pct" in ref:
+        lines.append(f"Tipik dalgalanma (±1σ, {ref['time_exit_hours']}h): "
+                     f"±{ref['sigma_h_pct']}%")
+    lines.append("Fiyat-bazli stop/hedef backtest'te TEST EDILMEDI; "
+                 "kaldirac kayiplari ve tasfiye riskini buyutur.")
+    return lines
+
+
 def send_telegram_message(sig: dict) -> None:
     """Telegram Bot API ile sinyal gonderir. Anahtar yoksa sessizce atlar;
     hata olursa uyarir ama tarama dongusunu ASLA durdurmaz."""
@@ -359,6 +542,11 @@ def send_telegram_message(sig: dict) -> None:
     lines += [f"{label}: {_html.escape(val)}"
               for label, val in _signal_detail_rows(sig)]
     lines.append(_html.escape(sig["note"]))
+    ref_lines = _ref_lines(sig)
+    if ref_lines:
+        lines.append("")
+        lines += [f"<i>{_html.escape(l)}</i>" if l.startswith(("—", "Fiyat-bazli"))
+                  else _html.escape(l) for l in ref_lines]
     lines.append(f"<i>{_html.escape(sig['bar_time'])}</i>")
     try:
         r = requests.post(
@@ -369,6 +557,35 @@ def send_telegram_message(sig: dict) -> None:
         r.raise_for_status()
     except requests.RequestException as e:
         print(f"uyari: Telegram gonderilemedi: {e}", file=sys.stderr, flush=True)
+
+
+def _email_ref_block(sig: dict) -> str:
+    ref = sig.get("ref")
+    if not ref:
+        return ""
+    sigma = (f'<tr><td style="padding:3px 12px 3px 0;color:#666">Tipik dalgalanma (±1σ)</td>'
+             f'<td style="padding:3px 0">±{ref["sigma_h_pct"]}%</td></tr>'
+             if "sigma_h_pct" in ref else "")
+    return f"""
+    <h3 style="margin:14px 0 4px;font-size:14px;color:#333">
+      Referans seviyeleri <span style="font-weight:normal;color:#888">(mekanik; tavsiye degil)</span></h3>
+    <table style="font-size:13px;border-collapse:collapse">
+      <tr><td style="padding:3px 12px 3px 0;color:#666">Giris ref</td>
+          <td style="padding:3px 0"><b>{ref['entry_ref']}</b></td></tr>
+      <tr><td style="padding:3px 12px 3px 0;color:#666">Zaman cikisi</td>
+          <td style="padding:3px 0"><b>~{ref['time_exit_hours']} saat</b> (backtest'te dogrulanan tek cikis kurali)</td></tr>
+      <tr><td style="padding:3px 12px 3px 0;color:#666">Medyan (24 ay, N={ref['hist_n']})</td>
+          <td style="padding:3px 0">{ref['median_price']} ({ref['hist_median_pct']:+.2f}%)</td></tr>
+      <tr><td style="padding:3px 12px 3px 0;color:#666">Kotu %10</td>
+          <td style="padding:3px 0">{ref['q10_price']} ({ref['hist_q10_pct']:+.2f}%)</td></tr>
+      <tr><td style="padding:3px 12px 3px 0;color:#666">Iyi %10</td>
+          <td style="padding:3px 0">{ref['q90_price']} ({ref['hist_q90_pct']:+.2f}%)</td></tr>
+      <tr><td style="padding:3px 12px 3px 0;color:#666">Kazanma orani (tarihsel)</td>
+          <td style="padding:3px 0">%{ref['hist_winrate_pct']}</td></tr>
+      {sigma}
+    </table>
+    <p style="font-size:12px;color:#a33;margin:6px 0 0">Fiyat-bazli stop/hedef
+    backtest'te test edilmedi; kaldirac kayiplari ve tasfiye riskini buyutur.</p>"""
 
 
 def _email_html(sig: dict) -> str:
@@ -391,6 +608,7 @@ def _email_html(sig: dict) -> str:
       <tr><td style="padding:4px 12px 4px 0;color:#666">Zaman</td><td style="padding:4px 0">{_html.escape(sig['bar_time'])}</td></tr>
     </table>
     <p style="font-size:13px;color:#444;margin:8px 0 0">{_html.escape(sig['note'])}</p>
+    {_email_ref_block(sig)}
   </div>
   <p style="font-size:11px;color:#999;margin:8px 0 0">
     signal_bot — otomatik uyari. Yatirim tavsiyesi degildir.</p>
@@ -459,13 +677,16 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
     beklenmeyen hata dongusu OLDURMEZ — 7/24 servis icin dayaniklilik."""
     global LAST_SCAN_AT, LAST_SCAN_COUNT, SCANS_COMPLETED
     state = state or ScanState()
-    print(f"signal_bot basladi: {len(SYMBOLS)} sembol, "
+    refresh_universe_if_due(force=True)     # otomatik moddaysa evreni kur
+    print(f"signal_bot basladi: {len(SYMBOLS)} sembol "
+          f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'}), "
           f"{SCAN_INTERVAL_MINUTES}dk aralik "
           f"(telegram={'acik' if ENABLE_TELEGRAM else 'kapali'}, "
           f"email={'acik' if ENABLE_EMAIL else 'kapali'})", flush=True)
     while True:
         t0 = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         try:
+            refresh_universe_if_due()
             n = scan_all(state)
             LAST_SCAN_AT = datetime.now(timezone.utc).isoformat()
             LAST_SCAN_COUNT = n

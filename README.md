@@ -32,6 +32,26 @@ ortalaması (yani piyasa sürüklenmesinden arındırılmış fazla getiri).
 - **Funding'de sembol-göreli z-skoru** (denenen yeniden tasarım): train'de
   parlak, testte çöktü → mutlak seviye eşiği korundu.
 
+## Sembol evreni (otomatik)
+
+`SYMBOLS` env'i boşsa bot evreni kendisi kurar: **USDT spot çifti + aktif
+USDⓈ-M perp'i olan coinler, perp 24h hacmine göre sıralı ilk
+`SYMBOL_MAX_COUNT` (varsayılan 120)** — perp hacmi ≥ 10M$, spot ≥ 1M$
+tabanlarıyla. Sıralama perp hacmiyle yapılır: işlem perp'te açılır ve mutlak
+spot eşiği rejime göre kırılır (ayıda spot hacimler çöker). Evren günde bir
+yenilenir; stabil/pegli varlıklar (USDC, PAXG, WBTC…) hariç.
+Bu kural araştırma evreninin tanımıyla aynıdır ("likit + hem spot hem perp") —
+eşikler likit-dışı coinlerde **doğrulanmadı**, hacim filtresi bilerek var.
+
+## Bildirimlerdeki referans seviyeleri
+
+Her sinyal, 24 aylık backtest dağılımından türetilen **mekanik referanslar**
+içerir: giriş referansı (bar kapanışı), **zaman çıkışı** (backtest'te
+doğrulanan tek çıkış kuralı: S1 ~24h, S2 ~72h, S3 ~4h), tarihsel medyan /
+kötü %10 / iyi %10 senaryolarının fiyat karşılıkları ve ±1σ dalgalanma bandı.
+**Bunlar tavsiye değildir**; fiyat-bazlı stop/hedef backtest'te test edilmedi
+ve kaldıraç kayıpları/tasfiye riskini büyütür.
+
 ## Çalıştırma (yerel)
 
 ```bash
