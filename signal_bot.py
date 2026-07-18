@@ -438,10 +438,21 @@ class ScanState:
         return True
 
 
-def scan_symbol(symbol: str, state: ScanState) -> list[dict]:
-    """Bir sembolu tarar, tetiklenen sinyal listesini dondurur."""
+def scan_symbol(symbol: str, state: ScanState,
+                snapshot: bool = False) -> list[dict]:
+    """Bir sembolu tarar, sinyal listesini dondurur.
+
+    snapshot=False (canli mod): kenar-tetikleme + cooldown uygulanir — sinyal
+      SADECE kosul False->True gectiginde uretilir (bildirim spam'i olmasin).
+    snapshot=True (--check modu): geciş aranmaz, o an AKTIF olan tum kosullar
+      raporlanir. state'e dokunmaz. "Su an uygun kurulum var mi?" sorusu icin."""
     signals = []
     now_s = time.time()
+
+    def include(strategy: str, cond: bool, cooldown: float) -> bool:
+        if snapshot:
+            return cond
+        return state.should_fire(strategy, symbol, cond, cooldown, now_s)
 
     klines = fetch_klines(symbol)
     if len(klines) < max(DIVERGENCE_LOOKBACK + DIVERGENCE_GAP,
@@ -459,7 +470,7 @@ def scan_symbol(symbol: str, state: ScanState) -> list[dict]:
     # ---- S1: oversold bullish divergence (long) ----
     s1_cond = (not math.isnan(rsi[i]) and rsi[i] <= RSI_OVERSOLD
                and bullish_divergence(closes, lows, rsi, i))
-    if state.should_fire("S1", symbol, s1_cond, S1_COOLDOWN_HOURS, now_s):
+    if include("S1", s1_cond, S1_COOLDOWN_HOURS):
         recent_spike = any(
             (not math.isnan(z)) and z >= VOLUME_ZSCORE_THRESHOLD
             for z in zs[max(0, i - CONFLUENCE_LOOKBACK_HOURS):i + 1])
@@ -479,8 +490,7 @@ def scan_symbol(symbol: str, state: ScanState) -> list[dict]:
     # Kenar-tetikleme yon gozetmeksizin hacim patlamasi uzerinde calisir
     # (arastirmada dogrulanan kompozisyon); yon filtresi SONRA uygulanir.
     s3_spike = (not math.isnan(zs[i]) and zs[i] >= VOLUME_ZSCORE_THRESHOLD)
-    if (state.should_fire("S3", symbol, s3_spike, S3_COOLDOWN_HOURS, now_s)
-            and closes[i] > opens[i]):
+    if include("S3", s3_spike, S3_COOLDOWN_HOURS) and closes[i] > opens[i]:
         signals.append({
             "strategy": "S3", "symbol": symbol, "direction": "LONG",
             "strength": "NORMAL", "bar_time": bar_ts.isoformat(),
@@ -498,7 +508,7 @@ def scan_symbol(symbol: str, state: ScanState) -> list[dict]:
         thr = FUNDING_SQUEEZE_THRESHOLD_PCT / 100.0
         last_n = fr[-FUNDING_PERSISTENCE:]
         s2_cond = all(x["rate"] <= thr for x in last_n)
-        if state.should_fire("S2", symbol, s2_cond, S2_COOLDOWN_HOURS, now_s):
+        if include("S2", s2_cond, S2_COOLDOWN_HOURS):
             signals.append({
                 "strategy": "S2", "symbol": symbol, "direction": "LONG",
                 "strength": "NORMAL",
@@ -742,11 +752,68 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
         time.sleep(period - (now % period) + 90)
 
 
+def _priority(sig: dict) -> int:
+    return {"S1+S4": 0, "S1": 1, "S3": 2, "S2": 3}.get(sig["strategy"], 9)
+
+
+def run_check() -> int:
+    """--check: O AN aktif olan tum kurulumlarin anlik goruntusu. Bildirim
+    GONDERMEZ, sadece terminale yazar; state'i kirletmez. "Istedigim an uygun
+    strateji var mi?" sorusunun dogru araci (--once degil — o kenar-tetikleme
+    oldugu icin soguk baslangicta hicbir sey gostermez)."""
+    refresh_universe_if_due(force=True)
+    print(f"anlik kontrol: {len(SYMBOLS)} sembol taraniyor "
+          f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'})...",
+          flush=True)
+    state = ScanState()
+    found: list[dict] = []
+    errors = 0
+    for sym in SYMBOLS:
+        try:
+            found += scan_symbol(sym, state, snapshot=True)
+        except requests.RequestException as e:
+            errors += 1
+            print(f"  uyari: {sym} taranamadi: {e}", file=sys.stderr, flush=True)
+        time.sleep(0.15)
+    found.sort(key=lambda s: (_priority(s), s["symbol"]))
+
+    print("=" * 66)
+    if not found:
+        print("Su an AKTIF kurulum YOK. Kosullarin hicbiri saglanmiyor — bu "
+              "normaldir; guclu kurulumlar seyrektir.")
+    else:
+        print(f"Su an AKTIF {len(found)} kurulum "
+              f"(oncelik: S1+S4 > S1 > S3 > S2):\n")
+        for sig in found:
+            print(f"● {sig['strategy']:<6} {sig['symbol']:<13}"
+                  f"{sig['direction']} ({sig['strength']})  fiyat={sig['price']}")
+            for label, val in _signal_detail_rows(sig):
+                print(f"    {label}: {val}")
+            print(f"    {sig['note']}")
+            for l in _ref_lines(sig):
+                print(f"    {l}")
+            print()
+    if errors:
+        print(f"(not: {errors}/{len(SYMBOLS)} sembol veri cekilemedi)")
+    print("=" * 66)
+    print("Not: bunlar 'su an kosul aktif' demektir, canli bildirim degil. "
+          "Yatirim tavsiyesi degildir.")
+    return len(found)
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--once", action="store_true", help="tek tarama yap ve cik")
+    ap = argparse.ArgumentParser(
+        description="Kripto sinyal botu — 3 strateji + confluence.")
+    ap.add_argument("--once", action="store_true",
+                    help="tek tarama (kenar-tetikleme) yap, bildirim gonder, cik")
+    ap.add_argument("--check", action="store_true",
+                    help="O AN aktif kurulumlari goster (bildirim yok) — "
+                         "istedigin an calistir")
     args = ap.parse_args()
-    run_forever(once=args.once)
+    if args.check:
+        run_check()
+    else:
+        run_forever(once=args.once)
 
 
 if __name__ == "__main__":

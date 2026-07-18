@@ -57,9 +57,19 @@ ve kaldıraç kayıpları/tasfiye riskini büyütür.
 ```bash
 pip install -r requirements.txt
 cp .env.example .env            # bildirim anahtarlarini doldur (opsiyonel)
-python signal_bot.py            # saatlik dongu (CLI)
-python signal_bot.py --once     # tek tarama (test)
+python signal_bot.py --check    # ŞU AN aktif kurulumlar (bildirim yok) — istedigin an calistir
+python signal_bot.py            # 7/24 dongu: saatte bir tarar, tetikte Telegram+email atar
+python signal_bot.py --once     # tek dongu adimi (kenar-tetikleme; canli davranis testi)
 ```
+
+**`--check` vs `--once` farkı (önemli):**
+- **`--check`** → "şu an uygun kurulum var mı?" sorusunun cevabı. O anda **aktif
+  olan tüm koşulları** listeler (kenar-tetikleme aranmaz), bildirim göndermez,
+  sadece terminale yazar. İstediğin an, elinle çalıştırdığın komut budur.
+- **`--once` / sürekli döngü** → *canlı bildirim* mantığı: sinyal yalnızca koşul
+  yeni **oluştuğunda** (False→True geçiş) üretilir, spam olmasın diye. Bu yüzden
+  `--once` soğuk başlangıçta çoğu zaman "0 sinyal" der — bu bir hata değil,
+  tasarım; anlık durumu görmek için `--check` kullan.
 
 Binance için API anahtarı gerekmez (yalnızca halka açık uçlar). Sinyaller
 stdout'a ve `signals.log`'a (JSONL) yazılır; ayrıca **Telegram + email**
