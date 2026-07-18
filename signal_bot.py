@@ -126,8 +126,37 @@ S3_COOLDOWN_HOURS = _env("S3_COOLDOWN_HOURS", 12)
 # --- S4: confluence ---
 CONFLUENCE_LOOKBACK_HOURS = _env("CONFLUENCE_LOOKBACK_HOURS", 24)
 
-SPOT_API = "https://api.binance.com"
-FUT_API = "https://fapi.binance.com"
+# Spot piyasa verisi icin sirali hostlar. api.binance.com bulut saglayicilarin
+# PAYLASIMLI cikis IP'lerini sik sik yasaklar (418) / ABD'yi geo-bloklar (451);
+# data-api.binance.vision ayni /api/v3 yuzeyini CDN uzerinden sunan resmi
+# halka-acik aynadir. Yasak gorulunce kalici olarak sonraki hosta gecilir.
+SPOT_HOSTS = ["https://api.binance.com", "https://data-api.binance.vision"]
+_spot_host_idx = 0
+FUT_API = "https://fapi.binance.com"   # fapi'nin aynasi yok (S2 + evren bagimli)
+_BAN_CODES = (403, 418, 429, 451)
+
+
+def _spot_get(path: str, params: dict | None = None) -> requests.Response:
+    """Spot GET; yasak/limit kodunda bir sonraki hosta gecip tekrar dener."""
+    global _spot_host_idx
+    last_exc: Exception | None = None
+    for attempt in range(len(SPOT_HOSTS)):
+        host = SPOT_HOSTS[_spot_host_idx]
+        try:
+            r = requests.get(host + path, params=params, timeout=30)
+            r.raise_for_status()
+            return r
+        except requests.HTTPError as e:
+            last_exc = e
+            code = e.response.status_code if e.response is not None else 0
+            if code in _BAN_CODES and attempt < len(SPOT_HOSTS) - 1:
+                _spot_host_idx = (_spot_host_idx + 1) % len(SPOT_HOSTS)
+                print(f"uyari: spot API {code} verdi -> "
+                      f"{SPOT_HOSTS[_spot_host_idx]} hostuna geciliyor",
+                      file=sys.stderr, flush=True)
+                continue
+            raise
+    raise last_exc  # type: ignore[misc]
 
 # --- bildirim kanallari ---
 # Degerler .env dosyasindan (yerel) veya platform secret yonetiminden (bulut)
@@ -277,10 +306,8 @@ def bullish_divergence(closes, lows, rsi, i: int) -> bool:
 
 def fetch_klines(symbol: str, limit: int = KLINE_LIMIT) -> list[dict]:
     """Kapanmis son barlar (Binance son barin acik halini dondurur -> atilir)."""
-    r = requests.get(f"{SPOT_API}/api/v3/klines",
-                     params={"symbol": symbol, "interval": "1h", "limit": limit},
-                     timeout=30)
-    r.raise_for_status()
+    r = _spot_get("/api/v3/klines",
+                  {"symbol": symbol, "interval": "1h", "limit": limit})
     rows = r.json()[:-1]          # son (henuz kapanmamis) bari at
     return [{"open_time": k[0], "open": float(k[1]), "high": float(k[2]),
              "low": float(k[3]), "close": float(k[4]), "volume": float(k[5])}
@@ -332,8 +359,7 @@ def fetch_universe() -> tuple[list[str], dict[str, str]]:
             perp_vol[t["symbol"]] = float(t.get("quoteVolume") or 0.0)
         except (TypeError, ValueError, KeyError):
             continue
-    r = requests.get(f"{SPOT_API}/api/v3/ticker/24hr", timeout=30)
-    r.raise_for_status()
+    r = _spot_get("/api/v3/ticker/24hr")
     rows = []
     for t in r.json():
         sym = t.get("symbol", "")

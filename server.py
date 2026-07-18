@@ -73,6 +73,7 @@ def health() -> dict:
         "last_scan_signal_count": bot.LAST_SCAN_COUNT,
         "recent_buffered": len(bot.RECENT_SIGNALS),
         "symbols": len(bot.SYMBOLS),
+        "spot_host_active": bot.SPOT_HOSTS[bot._spot_host_idx],
         "last_scan_errors": bot.LAST_SCAN_ERRORS,
         "error_samples": list(bot.ERROR_SAMPLES),
         "universe_last_error": bot.UNIVERSE_LAST_ERROR,
