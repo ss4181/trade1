@@ -84,9 +84,12 @@ uvicorn server:app --host 0.0.0.0 --port 8000
 
 ## 7/24 Deploy + bildirimler + iPhone
 
-- **Deploy (ücretsiz, 7/24):** Render.com web servisi. Adım adım talimatlar:
-  [DEPLOY.md](DEPLOY.md). Tarama döngüsü `server.py` içinde arka plan
-  thread'inde koşar; `/health`'i bir dış pinger (cron-job.org) uyanık tutar.
+- **7/24 çalıştırma (önerilen, ücretsiz):** evdeki Android tablet + Termux —
+  [TABLET.md](TABLET.md). (Render yolu ölü: Binance bulut paylaşımlı IP'lerini
+  yasaklıyor — 451/418; ayrıntı [DEPLOY.md](DEPLOY.md) başındaki uyarıda.)
+- **Bildirim testi:** `python signal_bot.py --test-notify` — .env'deki
+  anahtarlarla her iki kanala TEST mesajı yollar; gerçek sinyal beklemeden
+  kurulumu doğrular.
 - **Bildirimler:** her sinyal **hem Telegram hem email** ile gider (biri
   diğerinin yerine geçmez). Anti-spam tek kapıdan yönetilir (`ScanState`
   kenar-tetikleme + strateji-başı cooldown); iki kanal aynı deduplike sinyali

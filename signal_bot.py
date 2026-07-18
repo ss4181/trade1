@@ -801,6 +801,33 @@ def run_check() -> int:
     return len(found)
 
 
+def run_test_notify() -> None:
+    """--test-notify: bildirim kanallarini SAHTE, acikca TEST etiketli bir
+    sinyalle dener. Gercek sinyal beklemeden anahtarlarin dogru kuruldugunu
+    dogrulamanin tek guvenilir yolu (gercek sinyaller seyrektir)."""
+    print(f"kanallar: telegram={'ACIK' if ENABLE_TELEGRAM else 'KAPALI'} "
+          f"email={'ACIK' if ENABLE_EMAIL else 'KAPALI'}")
+    if not (ENABLE_TELEGRAM or ENABLE_EMAIL):
+        print("Iki kanal da kapali: bot klasorunde .env dosyasi yok veya "
+              "anahtar alanlari bos. .env.example'i .env olarak kopyalayip "
+              "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / RESEND_API_KEY / "
+              "NOTIFICATION_EMAIL degerlerini doldur.", file=sys.stderr)
+        return
+    sig = {
+        "strategy": "TEST", "symbol": "TESTUSDT", "direction": "LONG",
+        "strength": "NORMAL",
+        "bar_time": datetime.now(timezone.utc).isoformat(),
+        "price": 123.45,
+        "note": "BU BIR TESTTIR — bildirim kanallari calisiyor. "
+                "Gercek sinyal DEGILDIR.",
+        "horizon_hours": 0,
+    }
+    notify(sig)
+    print("Gonderildi. Telegram mesajini ve email'i kontrol et "
+          "(email icin spam klasorune de bak). Gelmediyse yukaridaki "
+          "kanal durumunu ve .env degerlerini kontrol et.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Kripto sinyal botu — 3 strateji + confluence.")
@@ -809,8 +836,13 @@ def main() -> None:
     ap.add_argument("--check", action="store_true",
                     help="O AN aktif kurulumlari goster (bildirim yok) — "
                          "istedigin an calistir")
+    ap.add_argument("--test-notify", action="store_true",
+                    help="TEST etiketli sahte sinyali Telegram+email'e gonder "
+                         "(anahtarlarin dogru kuruldugunu 10 sn'de dogrular)")
     args = ap.parse_args()
-    if args.check:
+    if args.test_notify:
+        run_test_notify()
+    elif args.check:
         run_check()
     else:
         run_forever(once=args.once)

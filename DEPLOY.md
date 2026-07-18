@@ -1,5 +1,11 @@
 # Deploy — signal_bot 7/24 (Render, ücretsiz)
 
+> ⚠️ **BU YOL ÖLÜ (2026-07-18'de doğrulandı):** Binance, Render'ın paylaşımlı
+> çıkış IP'lerini yasaklıyor — ABD bölgesi 451 (geo-block), Frankfurt 418
+> (IP banı) verdi; servis veri çekemiyor. Bu dosya tarihçe olarak duruyor.
+> **Çalışan 7/24 yolu için: [TABLET.md](TABLET.md)** (evdeki Android tablet,
+> temiz ev IP'si) veya sabit-IP'li bir VPS.
+
 Bu rehber botu **kredi kartı gerektirmeden**, bilgisayarın kapalıyken de çalışan
 bir Render web servisine kurar. Adımları sırayla yap; her adım ekran görüntüsü
 gerektirmeyecek kadar açık.
