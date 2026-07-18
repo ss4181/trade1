@@ -1,0 +1,43 @@
+bar       log=0 w=168 z=2.0 N= 8077 rate=14.96 edge4=+0.018 p4=0.068 edge24=+0.024 p24=0.018
+bar       log=0 w=168 z=2.5 N= 6508 rate=12.05 edge4=+0.026 p4=0.022 edge24=+0.049 p24=0.000
+bar       log=0 w=168 z=3.0 N= 5262 rate= 9.74 edge4=+0.048 p4=0.002 edge24=+0.069 p24=0.000
+bar       log=0 w=168 z=3.5 N= 4265 rate= 7.90 edge4=+0.100 p4=0.000 edge24=+0.112 p24=0.000
+bar       log=0 w=168 z=4.0 N= 3452 rate= 6.39 edge4=+0.124 p4=0.000 edge24=+0.147 p24=0.000
+bar       log=0 w=168 z=5.0 N= 2285 rate= 4.23 edge4=+0.121 p4=0.000 edge24=+0.154 p24=0.000
+bar       log=0 w=720 z=2.0 N= 6307 rate=11.68 edge4=+0.025 p4=0.026 edge24=+0.056 p24=0.000
+bar       log=0 w=720 z=2.5 N= 4926 rate= 9.12 edge4=+0.078 p4=0.000 edge24=+0.084 p24=0.000
+bar       log=0 w=720 z=3.0 N= 3881 rate= 7.19 edge4=+0.103 p4=0.000 edge24=+0.086 p24=0.000
+bar       log=0 w=720 z=3.5 N= 3059 rate= 5.66 edge4=+0.128 p4=0.000 edge24=+0.086 p24=0.000
+bar       log=0 w=720 z=4.0 N= 2448 rate= 4.53 edge4=+0.139 p4=0.000 edge24=+0.116 p24=0.000
+bar       log=0 w=720 z=5.0 N= 1642 rate= 3.04 edge4=+0.206 p4=0.000 edge24=+0.103 p24=0.000
+bar       log=1 w=168 z=2.0 N= 6922 rate=12.82 edge4=+0.035 p4=0.000 edge24=+0.065 p24=0.000
+bar       log=1 w=168 z=2.5 N= 3830 rate= 7.09 edge4=+0.097 p4=0.000 edge24=+0.117 p24=0.000
+bar       log=1 w=168 z=3.0 N= 1849 rate= 3.42 edge4=+0.132 p4=0.000 edge24=+0.224 p24=0.000
+bar       log=1 w=168 z=3.5 N=  808 rate= 1.50 edge4=+0.189 p4=0.000 edge24=+0.212 p24=0.000
+bar       log=1 w=168 z=4.0 N=  324 rate= 0.60 edge4=+0.210 p4=0.000 edge24=+0.154 p24=0.002
+bar       log=1 w=168 z=5.0 N=   33 rate= 0.06 edge4=-0.127 p4=0.772 edge24=-0.071 p24=0.600
+bar_up    log=0 w=168 z=2.0 N= 3963 rate= 7.34 edge4=+0.069 p4=0.000 edge24=+0.087 p24=0.000
+bar_up    log=0 w=168 z=2.5 N= 3168 rate= 5.87 edge4=+0.089 p4=0.000 edge24=+0.119 p24=0.000
+bar_up    log=0 w=168 z=3.0 N= 2503 rate= 4.64 edge4=+0.114 p4=0.000 edge24=+0.138 p24=0.000
+bar_up    log=0 w=168 z=3.5 N= 1980 rate= 3.67 edge4=+0.167 p4=0.000 edge24=+0.182 p24=0.000
+bar_up    log=0 w=168 z=4.0 N= 1568 rate= 2.90 edge4=+0.169 p4=0.000 edge24=+0.219 p24=0.000
+bar_up    log=0 w=168 z=5.0 N= 1002 rate= 1.86 edge4=+0.200 p4=0.000 edge24=+0.203 p24=0.000
+bar_down  log=0 w=168 z=2.0 N= 4114 rate= 7.62 edge4=-0.030 p4=0.974 edge24=-0.037 p24=0.982
+bar_down  log=0 w=168 z=2.5 N= 3340 rate= 6.19 edge4=-0.034 p4=0.972 edge24=-0.017 p24=0.808
+bar_down  log=0 w=168 z=3.0 N= 2759 rate= 5.11 edge4=-0.012 p4=0.716 edge24=+0.006 p24=0.398
+bar_down  log=0 w=168 z=3.5 N= 2285 rate= 4.23 edge4=+0.041 p4=0.020 edge24=+0.052 p24=0.002
+bar_down  log=0 w=168 z=4.0 N= 1884 rate= 3.49 edge4=+0.085 p4=0.000 edge24=+0.087 p24=0.000
+bar_down  log=0 w=168 z=5.0 N= 1283 rate= 2.38 edge4=+0.058 p4=0.018 edge24=+0.115 p24=0.000
+long      log=0 w=168 z=2.0 N= 8077 rate=14.96 edge4=+0.049 p4=0.000 edge24=+0.061 p24=0.000
+long      log=0 w=168 z=2.5 N= 6508 rate=12.05 edge4=+0.061 p4=0.000 edge24=+0.067 p24=0.000
+long      log=0 w=168 z=3.0 N= 5262 rate= 9.74 edge4=+0.061 p4=0.000 edge24=+0.063 p24=0.000
+long      log=0 w=168 z=3.5 N= 4265 rate= 7.90 edge4=+0.056 p4=0.002 edge24=+0.057 p24=0.000
+long      log=0 w=168 z=4.0 N= 3452 rate= 6.39 edge4=+0.031 p4=0.038 edge24=+0.053 p24=0.002
+long      log=0 w=168 z=5.0 N= 2285 rate= 4.23 edge4=+0.056 p4=0.002 edge24=+0.026 p24=0.138
+short     log=0 w=168 z=2.0 N= 8077 rate=14.96 edge4=-0.049 p4=1.000 edge24=-0.061 p24=1.000
+short     log=0 w=168 z=2.5 N= 6508 rate=12.05 edge4=-0.061 p4=1.000 edge24=-0.067 p24=1.000
+short     log=0 w=168 z=3.0 N= 5262 rate= 9.74 edge4=-0.061 p4=1.000 edge24=-0.063 p24=1.000
+short     log=0 w=168 z=3.5 N= 4265 rate= 7.90 edge4=-0.056 p4=0.998 edge24=-0.057 p24=1.000
+short     log=0 w=168 z=4.0 N= 3452 rate= 6.39 edge4=-0.031 p4=0.962 edge24=-0.053 p24=0.998
+short     log=0 w=168 z=5.0 N= 2285 rate= 4.23 edge4=-0.056 p4=0.998 edge24=-0.026 p24=0.862
+yazildi: results/s3_sweep_train.csv

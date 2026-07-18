@@ -1,0 +1,65 @@
+==== S1: RSI oversold divergence (bull) ====
+[S1 div bull 22.5/train] N=205 rate=0.38/sym/ay edge_voln24=+0.348 p_boot=0.000 edge_bp=+167 wr=0.64 (wr_edge +0.146)
+    med=+114bp q10=-478 q90=+814 | gun-kumesi: n=52 mean=+0.169 CI90=(-0.045,+0.382) p_cl=0.097 | top5 sembol payi=26%
+[S1 div bull 22.5/test] N=111 rate=0.62/sym/ay edge_voln24=+0.312 p_boot=0.006 edge_bp=+162 wr=0.59 (wr_edge +0.140)
+    med=+67bp q10=-358 q90=+894 | gun-kumesi: n=32 mean=+0.214 CI90=(-0.037,+0.462) p_cl=0.080 | top5 sembol payi=29%
+[S1 div bull 22.5/all] N=316 rate=0.44/sym/ay edge_voln24=+0.326 p_boot=0.000 edge_bp=+162 wr=0.62 (wr_edge +0.140)
+    med=+93bp q10=-460 q90=+846 | gun-kumesi: n=84 mean=+0.171 CI90=(+0.007,+0.337) p_cl=0.045 | top5 sembol payi=25%
+    2024H2: N=  53 excess=+0.885
+    2025H1: N=  88 excess=+0.186
+    2025H2: N=  58 excess=+0.150
+    2026H1: N= 111 excess=+0.261
+-- alternatif esik --
+[S1 div bull 20.0/train] N=92 rate=0.17/sym/ay edge_voln24=+0.546 p_boot=0.000 edge_bp=+284 wr=0.68 (wr_edge +0.189)
+    med=+244bp q10=-268 q90=+865 | gun-kumesi: n=25 mean=+0.251 CI90=(-0.039,+0.537) p_cl=0.081 | top5 sembol payi=28%
+[S1 div bull 20.0/test] N=44 rate=0.24/sym/ay edge_voln24=+0.359 p_boot=0.014 edge_bp=+214 wr=0.68 (wr_edge +0.234)
+    med=+110bp q10=-239 q90=+903 | gun-kumesi: n=19 mean=+0.041 CI90=(-0.276,+0.336) p_cl=0.397 | top5 sembol payi=36%
+-- atilan bear tarafi (kayit icin, mevcut bot esigi 80) --
+[S1 div bear 80/train] N=145 rate=0.27/sym/ay edge_voln24=-0.204 p_boot=0.994 edge_bp=-45 wr=0.50 (wr_edge -0.005)
+    med=+1bp q10=-714 q90=+606 | gun-kumesi: n=77 mean=-0.002 CI90=(-0.309,+0.268) p_cl=0.470 | top5 sembol payi=28%
+[S1 div bear 80/test] N=48 rate=0.27/sym/ay edge_voln24=+0.153 p_boot=0.146 edge_bp=+144 wr=0.62 (wr_edge +0.077)
+    med=+230bp q10=-491 q90=+854 | gun-kumesi: n=22 mean=+0.346 CI90=(-0.226,+0.884) p_cl=0.147 | top5 sembol payi=35%
+
+==== S2: funding squeeze (long) ====
+[S2 -0.03%/train] N=228 rate=0.42/sym/ay edge_voln72=+0.287 p_boot=0.000 edge_bp=+216 wr=0.55 (wr_edge +0.074)
+    med=+78bp q10=-955 q90=+1313 | gun-kumesi: n=174 mean=+0.261 CI90=(+0.115,+0.419) p_cl=0.003 | top5 sembol payi=70%
+[S2 -0.03%/test] N=111 rate=0.62/sym/ay edge_voln72=+0.135 p_boot=0.082 edge_bp=+69 wr=0.47 (wr_edge +0.044)
+    med=-36bp q10=-936 q90=+855 | gun-kumesi: n=66 mean=+0.048 CI90=(-0.162,+0.261) p_cl=0.347 | top5 sembol payi=59%
+[S2 -0.03%/all] N=339 rate=0.47/sym/ay edge_voln72=+0.222 p_boot=0.000 edge_bp=+155 wr=0.52 (wr_edge +0.057)
+    med=+24bp q10=-953 q90=+1198 | gun-kumesi: n=240 mean=+0.193 CI90=(+0.068,+0.322) p_cl=0.005 | top5 sembol payi=61%
+    2024H2: N=  73 excess=+0.351
+    2025H1: N=  73 excess=+0.467
+    2025H2: N=  81 excess=+0.113
+    2026H1: N= 111 excess=+0.056
+-- mevcut bot esigi -0.02 --
+[S2 -0.02%/train] N=1131 rate=2.09/sym/ay edge_voln72=+0.077 p_boot=0.016 edge_bp=+57 wr=0.51 (wr_edge +0.029)
+    med=+10bp q10=-1016 q90=+990 | gun-kumesi: n=413 mean=+0.055 CI90=(-0.030,+0.146) p_cl=0.154 | top5 sembol payi=48%
+[S2 -0.02%/test] N=532 rate=2.99/sym/ay edge_voln72=+0.050 p_boot=0.138 edge_bp=+31 wr=0.47 (wr_edge +0.046)
+    med=-43bp q10=-952 q90=+692 | gun-kumesi: n=155 mean=+0.037 CI90=(-0.089,+0.157) p_cl=0.324 | top5 sembol payi=41%
+
+==== S3: hacim anomalisi ====
+[S3 log z=3.5/train] N=808 rate=1.50/sym/ay edge_voln24=+0.212 p_boot=0.000 edge_bp=+60 wr=0.52 (wr_edge +0.013)
+    med=+16bp q10=-702 q90=+959 | gun-kumesi: n=208 mean=+0.011 CI90=(-0.130,+0.160) p_cl=0.451 | top5 sembol payi=21%
+[S3 log z=3.5/test] N=235 rate=1.31/sym/ay edge_voln24=-0.060 p_boot=0.798 edge_bp=-40 wr=0.45 (wr_edge -0.060)
+    med=-33bp q10=-627 q90=+431 | gun-kumesi: n=83 mean=+0.077 CI90=(-0.148,+0.336) p_cl=0.292 | top5 sembol payi=28%
+[S3 log z=3.5/all] N=1043 rate=1.45/sym/ay edge_voln24=+0.151 p_boot=0.000 edge_bp=+37 wr=0.50 (wr_edge -0.004)
+    med=+3bp q10=-702 q90=+859 | gun-kumesi: n=291 mean=+0.037 CI90=(-0.090,+0.161) p_cl=0.311 | top5 sembol payi=22%
+    2024H2: N= 210 excess=+0.176
+    2025H1: N= 287 excess=-0.133
+    2025H2: N= 297 excess=+0.566
+    2026H1: N= 235 excess=-0.050
+-- alternatif z=3.0 (log) --
+[S3 log z=3.0/train] N=1849 rate=3.42/sym/ay edge_voln24=+0.224 p_boot=0.000 edge_bp=+70 wr=0.54 (wr_edge +0.035)
+    med=+34bp q10=-647 q90=+817 | gun-kumesi: n=342 mean=+0.015 CI90=(-0.096,+0.122) p_cl=0.419 | top5 sembol payi=20%
+[S3 log z=3.0/test] N=568 rate=3.16/sym/ay edge_voln24=-0.028 p_boot=0.720 edge_bp=-25 wr=0.46 (wr_edge -0.043)
+    med=-21bp q10=-474 q90=+414 | gun-kumesi: n=135 mean=+0.001 CI90=(-0.129,+0.142) p_cl=0.494 | top5 sembol payi=23%
+-- mevcut bot: ham hacim z=3.0 --
+[S3 raw z=3.0/train] N=5262 rate=9.74/sym/ay edge_voln24=+0.069 p_boot=0.000 edge_bp=+19 wr=0.50 (wr_edge -0.005)
+    med=-2bp q10=-638 q90=+699 | gun-kumesi: n=490 mean=-0.007 CI90=(-0.063,+0.050) p_cl=0.574 | top5 sembol payi=18%
+[S3 raw z=3.0/test] N=1678 rate=9.36/sym/ay edge_voln24=+0.011 p_boot=0.338 edge_bp=-5 wr=0.48 (wr_edge -0.027)
+    med=-18bp q10=-472 q90=+476 | gun-kumesi: n=172 mean=+0.025 CI90=(-0.060,+0.112) p_cl=0.324 | top5 sembol payi=19%
+
+==== Ortusme (±24h ayni sembol) ====
+S1 olaylarinin S2 ile ±24h ortusmesi: 26/316 (8%)
+S1 olaylarinin S3 ile ±24h ortusmesi: 115/316 (36%)
+S2 olaylarinin S3 ile ±24h ortusmesi: 61/339 (18%)

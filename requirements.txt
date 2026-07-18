@@ -1,0 +1,6 @@
+# signal_bot 7/24 web servisi bagimliliklari.
+# Sadece bulut deploy + bildirim icin; arastirma (research/) bagimliliklari ayri.
+requests>=2.31,<3.0
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+resend>=2.0,<3.0

@@ -1,0 +1,30 @@
+# Render Blueprint — signal_bot 7/24 web servisi (ucretsiz katman).
+# Bu dosya repo kokunde oldugunda Render "Blueprint" olarak otomatik okur.
+# NOT: Render ucretsiz katmaninda 'background worker' YOK; bu yuzden tip 'web'
+# ve tarama dongusu server.py icinde arka plan thread'inde kosuyor.
+services:
+  - type: web
+    name: signal-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # --- Sirlar: degerleri Render panelinden gir (sync:false => repo'ya YAZILMAZ) ---
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: NOTIFICATION_EMAIL
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # --- Sir olmayan ayarlar ---
+      - key: SCAN_INTERVAL_MINUTES
+        value: "60"
+      - key: PYTHON_VERSION
+        value: "3.12.8"

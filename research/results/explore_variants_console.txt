@@ -1,0 +1,26 @@
+==== A) S3 bar_up (log, w=168) train->test ====
+[S3 up z=3.0/train] N=769 rate=1.42  h4: edge=+0.236 p=0.000 wr=0.55  h24: edge=+0.284 p=0.000 wr=0.54
+[S3 up z=3.0/test] N=246 rate=1.37  h4: edge=+0.253 p=0.000 wr=0.49  h24: edge=+0.100 p=0.068 wr=0.46
+[S3 up z=3.5/train] N=292 rate=0.54  h4: edge=+0.351 p=0.000 wr=0.59  h24: edge=+0.199 p=0.004 wr=0.54
+[S3 up z=3.5/test] N=95 rate=0.53  h4: edge=-0.081 p=0.766 wr=0.45  h24: edge=+0.094 p=0.176 wr=0.47
+
+==== B) S2 funding z-skoru (son 90 settlement, kendinden onceki) ====
+[S2 zf<=-2.0/train] N=1626 rate=3.01  h24: edge=-0.001 p=0.550 wr=0.50  h72: edge=+0.067 p=0.008 wr=0.53
+[S2 zf<=-2.0/test] N=599 rate=3.33  h24: edge=-0.082 p=0.968 wr=0.42  h72: edge=-0.086 p=0.962 wr=0.41
+[S2 zf<=-2.5/train] N=1089 rate=2.02  h24: edge=+0.086 p=0.014 wr=0.54  h72: edge=+0.173 p=0.000 wr=0.56
+[S2 zf<=-2.5/test] N=346 rate=1.92  h24: edge=-0.135 p=0.988 wr=0.39  h72: edge=-0.112 p=0.962 wr=0.38
+[S2 zf<=-3.0/train] N=721 rate=1.34  h24: edge=+0.053 p=0.094 wr=0.53  h72: edge=+0.175 p=0.000 wr=0.57
+[S2 zf<=-3.0/test] N=209 rate=1.16  h24: edge=-0.163 p=0.986 wr=0.39  h72: edge=-0.056 p=0.768 wr=0.40
+[S2 zf<=-4.0/train] N=302 rate=0.56  h24: edge=+0.127 p=0.018 wr=0.55  h72: edge=+0.296 p=0.000 wr=0.61
+[S2 zf<=-4.0/test] N=86 rate=0.48  h24: edge=-0.076 p=0.780 wr=0.42  h72: edge=+0.030 p=0.404 wr=0.43
+
+==== C) S1(22.5) confluence: son 24h icinde S3(log z>=3.0) var mi ====
+[S1+S3var/train] N=94 rate=0.17  h24: edge=+0.550 p=0.000 wr=0.64  h72: edge=+0.692 p=0.000 wr=0.72
+[S1 yalniz/train] N=111 rate=0.21  h24: edge=+0.167 p=0.048 wr=0.64  h72: edge=+0.285 p=0.010 wr=0.71
+[S1+S3var/test] N=50 rate=0.28  h24: edge=+0.376 p=0.006 wr=0.64  h72: edge=+0.281 p=0.020 wr=0.66
+[S1 yalniz/test] N=61 rate=0.34  h24: edge=+0.260 p=0.024 wr=0.56  h72: edge=+0.230 p=0.038 wr=0.56
+[S1+S3var/all] N=144 rate=0.20  h24: edge=+0.481 p=0.000 wr=0.64  h72: edge=+0.532 p=0.000 wr=0.70
+[S1 yalniz/all] N=172 rate=0.24  h24: edge=+0.191 p=0.008 wr=0.61  h72: edge=+0.243 p=0.000 wr=0.66
+
+Not: replay_check (scratchpad) ile bot mantigi == arastirma mantigi dogrulandi
+(4 sembol, test donemi: S1 18/18, S3 29/29 birebir ayni olaylar).

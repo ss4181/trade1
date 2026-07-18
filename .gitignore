@@ -1,0 +1,30 @@
+# sirlar — ASLA commit edilmez
+.env
+.env.*
+!.env.example
+
+# calisma ciktilari
+signals.log
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# arastirma ham verisi (scratchpad'te, repoya girmez; parquet cache buyuk)
+research/data/
+research/**/*.parquet
+
+# mobil (Expo)
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/npm-debug.*
+
+# isletim sistemi / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

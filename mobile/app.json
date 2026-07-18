@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "Signal Bot",
+    "slug": "signal-bot-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#0b1220"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.signalbot.mobile"
+    },
+    "android": {
+      "package": "com.signalbot.mobile"
+    },
+    "plugins": [
+      ["expo-notifications", { "color": "#2c7be5" }]
+    ]
+  }
+}
