@@ -7,6 +7,11 @@ services:
     name: signal-bot
     runtime: python
     plan: free
+    # Binance, ABD IP'lerini geo-blokluyor (HTTP 451). Render'in varsayilan
+    # bolgesi ABD oldugu icin bolge MUTLAKA ABD-disi olmali. Not: bolge sadece
+    # servis OLUSTURULURKEN uygulanir; mevcut ABD servisini tasimak icin
+    # servisi silip Blueprint'i yeniden uygulamak gerekir.
+    region: frankfurt
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health

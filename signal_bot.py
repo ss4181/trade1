@@ -154,6 +154,9 @@ STARTED_AT = datetime.now(timezone.utc).isoformat()
 LAST_SCAN_AT: str | None = None
 LAST_SCAN_COUNT = 0
 SCANS_COMPLETED = 0
+LAST_SCAN_ERRORS = 0                 # son taramada kac sembol hata verdi
+ERROR_SAMPLES: deque[str] = deque(maxlen=5)   # son hata mesajlari (teshis)
+UNIVERSE_LAST_ERROR: str | None = None
 
 # --------------------------------------------------------------------------
 # gostergeler
@@ -375,6 +378,8 @@ def refresh_universe_if_due(force: bool = False) -> None:
               f"spot>={SYMBOL_MIN_SPOT_VOLUME_M:g}M$, +{added}/-{removed})",
               flush=True)
     except Exception as e:
+        global UNIVERSE_LAST_ERROR
+        UNIVERSE_LAST_ERROR = f"{datetime.now(timezone.utc).isoformat()} {e}"
         print(f"uyari: evren guncellenemedi, mevcut {len(SYMBOLS)} sembol "
               f"kullanilmaya devam: {e}", file=sys.stderr, flush=True)
 
@@ -659,15 +664,23 @@ def notify(sig: dict) -> None:
 
 
 def scan_all(state: ScanState) -> int:
+    global LAST_SCAN_ERRORS
     count = 0
+    errors = 0
     for sym in SYMBOLS:
         try:
             for sig in scan_symbol(sym, state):
                 notify(sig)
                 count += 1
         except requests.RequestException as e:
+            errors += 1
+            ERROR_SAMPLES.append(f"{sym}: {e}")
             print(f"uyari: {sym} taranamadi: {e}", file=sys.stderr, flush=True)
         time.sleep(0.25)          # nazik olalim (limitin cok altindayiz)
+    LAST_SCAN_ERRORS = errors
+    if errors:
+        print(f"uyari: taramada {errors}/{len(SYMBOLS)} sembol hata verdi",
+              file=sys.stderr, flush=True)
     return count
 
 
