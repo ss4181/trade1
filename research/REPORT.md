@@ -179,7 +179,29 @@ python eval_final.py <veri_dizini>             # secilen konfig + ortusme
 python explore_variants.py <veri_dizini>       # S3-up / S2-z / confluence
 ```
 
-## 10. İzleme önerileri (bir sonraki değerlendirme için)
+## Ek A — 5m scalping araştırması (2026-07-19): NEGATİF SONUÇ
+
+**Soru:** Dakika ölçeğinde (%1-3 hedefli) işlem sinyali üretilebilir mi?
+**Veri:** Aynı 30 sembol, aynı 24 ay, 5 dakikalık spot klines (6.3M bar).
+**Yöntem:** 3 önceden-kayıtlı aday aile; gidiş-dönüş 12bp maliyet modeli
+(taker 2×5bp + spread); karar kuralı *önceden* sabit: train'de net ort > 0
+VE net medyan > 0 VE gün-kümesi p ≤ 0.05 VE N ≥ 300; geçen aile test'e
+tek atış. Sonuçlar: `results/fast_sweep_train.csv`.
+
+**Sonuç: üç aile de train'de kaldı → test'e bakılmadı, S5 eklenmedi.**
+
+| Aile | En iyi görünüm | Neden red |
+|---|---|---|
+| F1 hacim momentum (30dk) | z=5: net +44bp ama N=155, medyan −5bp, p=0.47; z=6: +287bp ama **N=14** | Brüt edge yalnız aşırı uçta; olaylar yılda sembol başına ~0.3'e düşüyor — "dakikada %1-3" tam da bu nadir kuyruklar, hasat edilemiyor |
+| F2 kaskad sıçraması (60dk) | k=3: medyan +5.5bp, p=0.005 ama **net ort −6.2bp** | Tipik gün kazandırıyor, kaskad günleri (aynı anda çok tetik) olay-ağırlıklı ortalamayı batırıyor — gerçek trader tam o günlerde korele pozisyon taşır |
+| F3 kırılım devamı (60dk) | En iyisi net +1.8bp, medyan −17bp, p=1.0 | Maliyet sonrası ölü; kazanma oranı %41-43 |
+
+**Yapısal ders:** 5dk tipik hareket ~0.24%, maliyet 0.12% — maliyet/hareket
+oranı saatlik ufkun ~6 katı. Ufuk kısaldıkça hareket √t ile küçülür, maliyet
+sabit kalır → 1m'de kapı daha da kapalı. Bu evrende, bu maliyetlerle,
+dakika-ölçeği perakende scalping edge'i **yok** (denenen aileler için).
+Test dilimi hiç kullanılmadığı için gelecekteki bir aday aynı protokole
+girebilir.
 
 1. `signals.log`'a düşen her sinyal için 4/24/72h gerçekleşen getiriyi loglayan
    küçük bir takip script'i ekleyin (canlı edge takibi).
