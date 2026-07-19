@@ -54,11 +54,15 @@ except ImportError:
 # konfigurasyon (.env ile ezilebilir; gerekceler .env.example ve README'de)
 # --------------------------------------------------------------------------
 
+_ENV_PATH = Path(__file__).parent / ".env"
+_ENV_FOUND = _ENV_PATH.exists()
+
+
 def _load_env(path: str = ".env") -> None:
     p = Path(__file__).parent / path
     if not p.exists():
         return
-    for line in p.read_text().splitlines():
+    for line in p.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -751,6 +755,18 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
           f"{SCAN_INTERVAL_MINUTES}dk aralik "
           f"(telegram={'acik' if ENABLE_TELEGRAM else 'kapali'}, "
           f"email={'acik' if ENABLE_EMAIL else 'kapali'})", flush=True)
+    if not (ENABLE_TELEGRAM or ENABLE_EMAIL):
+        if not _ENV_FOUND:
+            print(f"NOT: bildirim kanallari KAPALI cunku .env bulunamadi.\n"
+                  f"     Aranan yer: {_ENV_PATH}\n"
+                  f"     Cozum: bu klasorde `cp .env.example .env` yapip 4 "
+                  f"anahtari doldur (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, "
+                  f"RESEND_API_KEY, NOTIFICATION_EMAIL).", file=sys.stderr,
+                  flush=True)
+        else:
+            print(f"NOT: .env bulundu ({_ENV_PATH}) ama anahtarlar bos/eksik. "
+                  f"Icindeki 4 anahtarin dolu oldugundan emin ol.",
+                  file=sys.stderr, flush=True)
     while True:
         t0 = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         try:
