@@ -40,7 +40,7 @@ import sys
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -105,7 +105,12 @@ SYMBOL_MIN_PERP_VOLUME_M = _env("SYMBOL_MIN_PERP_VOLUME_M", 10.0)  # milyon $/24
 SYMBOL_MIN_SPOT_VOLUME_M = _env("SYMBOL_MIN_SPOT_VOLUME_M", 1.0)   # milyon $/24h, spot
 UNIVERSE_REFRESH_HOURS = _env("UNIVERSE_REFRESH_HOURS", 24)
 
-SCAN_INTERVAL_MINUTES = _env("SCAN_INTERVAL_MINUTES", 60)
+# 15dk tarama: sinyaller 1h bar KAPANISINDA dogar — daha sik tarama sinyal
+# setini DEGISTIRMEZ (kenar-tetikleme ayni kosulu tekrar bildirmez); kazanci
+# S2'nin (8h'lik funding) ve yeniden-baslatma sonrasi yakalamanin hizlanmasi.
+# "15dk'lik scalping sinyali" DEGILDIR — 15m/5m umuklarinda edge olmadigi
+# olculdu (research/REPORT.md Ek A/B).
+SCAN_INTERVAL_MINUTES = _env("SCAN_INTERVAL_MINUTES", 15)
 KLINE_LIMIT = _env("KLINE_LIMIT", 250)          # >= VOLUME_ZSCORE_WINDOW + 24 olmali
 SIGNAL_LOG = _env("SIGNAL_LOG", "signals.log")
 
@@ -276,6 +281,26 @@ STRATEGY_STATS = {
     "S3": {"h": 4,  "med": 0.16, "q10": -2.84, "q90": 4.16, "wr": 53, "n": 1015,
            "touch": ((1, 67), (2, 42), (3, 27)), "stopt": ((2, 33), (5, 6))},
 }
+# Guven kademeleri (arastirma kanitina gore) + bildirim esigi:
+# COK YUKSEK: S1+S4 (test p=0.006, 72h WR %66) | YUKSEK: S1 (p=0.006, 4/4
+# rejim) | ORTA: S3 (4h p<0.001 ama test'e 2. bakis serhi) | DUSUK: S2
+# (p=0.08 marjinal + sembol yogunlasmasi). NOTIFY_MIN_CONFIDENCE altindaki
+# sinyaller LOGLANIR ve API/tamponda gorunur ama Telegram/email'e GITMEZ.
+CONF_RANK = {"DUSUK": 0, "ORTA": 1, "YUKSEK": 2, "COK YUKSEK": 3}
+STRATEGY_CONF = {
+    "S1+S4": ("COK YUKSEK", "test p=0.006, 72h WR %66; en guclu sinyal"),
+    "S1":    ("YUKSEK", "test p=0.006, 4 rejimde 4/4 pozitif"),
+    "S3":    ("ORTA", "test 4h p<0.001; nihai secimde 2. bakis serhi"),
+    "S2":    ("DUSUK", "test p=0.08 marjinal; sinyaller ~5 sembolde yogun"),
+}
+NOTIFY_MIN_CONFIDENCE = _env("NOTIFY_MIN_CONFIDENCE", "ORTA").strip().upper()
+
+
+def signal_confidence(strategy: str) -> tuple[str, str]:
+    return STRATEGY_CONF.get(strategy,
+                             STRATEGY_CONF.get(strategy.split("+")[0],
+                                               ("YUKSEK", "")))
+
 # "touch"/"stopt": 5m yol analiziyle olculen tarihsel DOKUNMA olasiliklari
 # (research/results/bracket_analysis_console.txt): ufuk icinde +x% hedefe /
 # -y% seviyeye en az bir kez dokunma yuzdesi. Onemli bulgu: hedef/stop emirleri
@@ -559,8 +584,18 @@ def scan_symbol(symbol: str, state: ScanState,
     if signals:
         sigma = realized_sigma1h(closes)
         for sig in signals:
+            conf, evid = signal_confidence(sig["strategy"])
+            sig["confidence"] = conf
+            sig["confidence_note"] = evid
             ref = build_ref_levels(sig["strategy"], sig["price"], sigma)
             if ref:
+                try:
+                    base = datetime.fromisoformat(sig["bar_time"])
+                    ref["exit_by"] = (base + timedelta(
+                        hours=1 + ref["time_exit_hours"])
+                    ).strftime("%Y-%m-%d %H:%M UTC")
+                except ValueError:
+                    pass
                 sig["ref"] = ref
     return signals
 
@@ -586,10 +621,15 @@ def _ref_lines(sig: dict) -> list[str]:
     ref = sig.get("ref")
     if not ref:
         return []
-    lines = [
-        "— Referans seviyeleri (mekanik; tavsiye degil) —",
+    conf = sig.get("confidence")
+    lines = ["— Referans seviyeleri (mekanik; tavsiye degil) —"]
+    if conf:
+        lines.append(f"Guven: {conf} — {sig.get('confidence_note', '')}")
+    exit_by = f" (son: {ref['exit_by']})" if ref.get("exit_by") else ""
+    lines += [
         f"Giris ref: {ref['entry_ref']}",
-        f"Zaman cikisi: ~{ref['time_exit_hours']}h (backtest'te dogrulanan tek cikis kurali)",
+        f"Zaman cikisi: ~{ref['time_exit_hours']}h{exit_by} — "
+        "backtest'te dogrulanan tek cikis kurali",
         f"24 ay tarihce (N={ref['hist_n']}, kazanma %{ref['hist_winrate_pct']}):",
         f"  medyan → {ref['median_price']} ({ref['hist_median_pct']:+.2f}%)",
         f"  kotu %10 → {ref['q10_price']} ({ref['hist_q10_pct']:+.2f}%)",
@@ -740,15 +780,22 @@ def notify(sig: dict) -> None:
     Anti-spam UST AKISTA yapilir (ScanState.should_fire — kenar-tetikleme +
     strateji-basi cooldown): buraya ulasan her sinyal zaten tekillestirilmistir,
     dolayisiyla iki kanal ayni deduplike sinyali alir, ayri ayri sayilmaz."""
+    conf = sig.get("confidence", "YUKSEK")
+    silenced = (CONF_RANK.get(conf, 2)
+                < CONF_RANK.get(NOTIFY_MIN_CONFIDENCE, 1))
     line = (f"[{sig['bar_time']}] {sig['strategy']:<6} {sig['symbol']:<12} "
-            f"{sig['direction']} ({sig['strength']}) fiyat={sig['price']} "
-            f"~{sig['horizon_hours']}h | {sig['note']}")
+            f"{sig['direction']} ({sig['strength']}/{conf}) "
+            f"fiyat={sig['price']} ~{sig['horizon_hours']}h | {sig['note']}"
+            + ("  [SESSIZ: guven esigi alti, push gonderilmedi]" if silenced
+               else ""))
     print(line, flush=True)
     with open(Path(__file__).parent / SIGNAL_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(sig, ensure_ascii=False) + "\n")
     with _recent_lock:
         RECENT_SIGNALS.appendleft(
             {**sig, "notified_at": datetime.now(timezone.utc).isoformat()})
+    if silenced:
+        return
     send_telegram_message(sig)
     send_email_notification(sig)
 
@@ -1013,7 +1060,7 @@ def run_test_notify() -> None:
         return
     sig = {
         "strategy": "TEST", "symbol": "TESTUSDT", "direction": "LONG",
-        "strength": "NORMAL",
+        "strength": "NORMAL", "confidence": "COK YUKSEK",
         "bar_time": datetime.now(timezone.utc).isoformat(),
         "price": 123.45,
         "note": "BU BIR TESTTIR — bildirim kanallari calisiyor. "

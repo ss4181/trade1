@@ -234,6 +234,31 @@ strateji başına tek test atışı).
   muhafazakâr stop sayıldı); S2 yolları spot 5m ile yaklaşık (araştırma perp
   1h idi); ücret 10bp RT.
 
+## Ek C — Dış AI önerilerinin (Gemini/Kimi) deneysel denetimi (2026-07-19)
+
+Kullanıcının ilettiği öneri setleri aynı protokolle test edildi
+(`sweep_squeeze.py`, `explore_proposals.py` → `results/squeeze_sweep_console.txt`,
+`results/proposals_console.txt`). Kararlar:
+
+| Öneri | Deney sonucu | Karar |
+|---|---|---|
+| Gemini-1 / Kimi-S10: HTF trend/RSI filtresi (S1/S3) | S1×EMA-trend: geçen olay **0/199** (kapitülasyonda 4h EMA'lar yükselmez — botun en iyi stratejisini tamamen susturur). S1×RSI<50: 199/199 geçer (boş filtre). S3×EMA: geçen +0.199 < elenen +0.265. S3×RSI>45: geçen +0.092 ≪ elenen **+0.669** — filtre en iyi sinyalleri atıyor | **RED** (dördü de) |
+| Gemini-2 / Kimi-S9: ATR'li TP/SL (1.5/3.0) | S1: E[net] **+8bp** vs zaman çıkışı ~+167bp (olayların %58'i önce stop'a değiyor — dokunma tablolarının öngördüğü gibi). S3: +28bp vs ~+37bp | **RED** — zaman çıkışı kalır |
+| Gemini-3: Volatility Squeeze Breakout (BB⊂KC + hacim) | Train'de tek geçen konfig (L=12, zc=2.0; edge24 +0.209, p=0.022, N=108) → **testte çöktü** (h4 −0.11, h24 +0.02, WR %41-44, medyanlar negatif) | **RED** (test bakışı harcandı) |
+| Kimi-S5 (VWAP MR + ADX), S6 (rejim anahtarı), S7 (order block/FVG) | Test edilmedi: S5 short bacağı kanıtla çelişir, S6'nın "yüksek volde S1 kapat" önermesi S1'in 4/4 rejim pozitifliğiyle çelişir, S7 tanımı serbestlik-derecesi çok yüksek | **ERTELENDİ** — istenirse S5-long tek aday olarak sıradaki döngüde |
+| Kimi-S8 (Funding+OI+Basis) | Test **edilemez**: Binance OI geçmişi ~30 günle sınırlı; 24 aylık backtest kurulamaz | **RED (veri yok)** |
+| Kimi ek kurallar: backtest protokolü, min örneklem, 2. bakış yasağı | Zaten bu raporun protokolü | Uygulanıyor ✓ |
+
+**Meta-not:** İki bağımsız AI'ın önerdiği 6+ mekanizmanın tamamı ya deneyde
+çöktü ya da test edilemez çıktı. "Makul fikir" ≠ edge; bu ekin varlık sebebi
+gelecek oturumların aynı önerileri yeniden eklemeye kalkmaması.
+
+**Aynı döngüde eklenen operasyonel özellikler (eşik/mantık değişmedi):**
+tarama 60→15 dk (sinyal seti değişmez; S2 tespiti ve restart yakalama hızlanır),
+güven kademeleri (S1+S4=ÇOK YÜKSEK, S1=YÜKSEK, S3=ORTA, S2=DÜŞÜK) +
+`NOTIFY_MIN_CONFIDENCE=ORTA` (S2 push'u varsayılan sessiz — log/API'de kalır),
+bildirimlere güven satırı + son-çıkış zaman damgası.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. `signals.log`'a düşen her sinyal için 4/24/72h gerçekleşen getiriyi loglayan

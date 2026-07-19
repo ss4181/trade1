@@ -1,0 +1,9 @@
+==== A) HTF filtreleri (train) ====
+S1 x Gemini-EMA    (h=24) TUM: edge=+0.347 N=199 | GECEN: edge=+nan N=0 | ELENEN: edge=+0.347 N=199
+S1 x Kimi-RSI<50   (h=24) TUM: edge=+0.347 N=199 | GECEN: edge=+0.347 N=199 | ELENEN: edge=+nan N=0
+S3 x Gemini-EMA    (h=4) TUM: edge=+0.236 N=767 | GECEN: edge=+0.199 N=339 | ELENEN: edge=+0.265 N=428
+S3 x Kimi-RSI>45   (h=4) TUM: edge=+0.236 N=767 | GECEN: edge=+0.092 N=576 | ELENEN: edge=+0.669 N=191
+
+==== B) ATR bracket 1.5/3.0 (train) ====
+ATR-bracket S1 (train, ufuk-tavan 24h): N=205 hedef-once %26 stop-once %58 zaman %16 E[net]=+8bp (kiyas: zaman-cikisi ~+167bp)
+ATR-bracket S3 (train, ufuk-tavan 4h): N=769 hedef-once %12 stop-once %28 zaman %60 E[net]=+28bp (kiyas: zaman-cikisi ~+37bp)
