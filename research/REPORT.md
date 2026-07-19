@@ -203,6 +203,39 @@ dakika-ölçeği perakende scalping edge'i **yok** (denenen aileler için).
 Test dilimi hiç kullanılmadığı için gelecekteki bir aday aynı protokole
 girebilir.
 
+## Ek B — Zaman dilimi çeşitlendirme + hedef/stop (bracket) analizi (2026-07-19)
+
+**B1. Zaman dilimi taraması** (`sweep_timeframes.py` →
+`results/timeframe_sweep_console.txt`): S1 ve S3, 15m/30m/1h/2h/4h mumlarda
+aynı protokolle (duvar-saati ufuk/cooldown/vol-penceresi; seçim train'de,
+strateji başına tek test atışı).
+
+- **S1**: 15m'de edge NEGATİF (hızlı mumlarda ölüyor — Ek A ile tutarlı);
+  2h train'de parlak görünüp (+0.45) testte +0.27'ye geriledi — mevcut
+  1h/22.5'in testini (+0.31) GEÇEMEDİ. **Karar: 1h/22.5 kalır.**
+- **S3**: train kazananı 2h/z3.5 (+0.64) testte ÇÖKTÜ (−0.32, WR %36) —
+  uç-konfig overfit'i. **Karar: 1h/z3.0 kalır.**
+- Meta-bulgu: iki train-kazananı da testte geriledi; mevcut 1h ayarları
+  OOS'ta hâlâ en iyi. Çeşitlendirme status quo'yu doğruladı.
+
+**B2. Hedef/stop dokunma + bracket analizi** (`bracket_analysis.py`, 5m yol
+çözünürlüğü → `results/bracket_analysis_console.txt`):
+
+- Dokunma olasılıkları bildirimlere eklendi (STRATEGY_STATS): ör. S1 sonrası
+  24h'te +2%'ye dokunma %71 — ama −2%'ye dokunma da %69. Giriş anları
+  fırtınalı; kazanç kapanış dağılımından (WR %62) ve sağ kuyruktan geliyor.
+- **Bracket'ler (hedef/stop emir çiftleri) hiçbir stratejide zaman çıkışını
+  yenemedi.** S1: en iyi bracket +3bp ≈ hiç (zaman çıkışı ~+150bp net) —
+  sıkı stoplar %69-84 dokunma sıklığıyla kazananları buduyor. S2: train'in
+  en iyisi (+5/−3, +24bp) testte −61bp → red. S3: geniş (+5/−5) testte
+  +24bp ile zaman çıkışına eşdeğer, üstün değil. **Doğrulanmış çıkış kuralı
+  ZAMAN ÇIKIŞI olarak kalır; bracket önerilmez.**
+- Şerhler: dolumlar 5m bar uçlarıyla yaklaşık (aynı-bar çift dokunuşta
+  muhafazakâr stop sayıldı); S2 yolları spot 5m ile yaklaşık (araştırma perp
+  1h idi); ücret 10bp RT.
+
+## 10. İzleme önerileri (bir sonraki değerlendirme için)
+
 1. `signals.log`'a düşen her sinyal için 4/24/72h gerçekleşen getiriyi loglayan
    küçük bir takip script'i ekleyin (canlı edge takibi).
 2. S2: 3-6 ay canlı veriyle yeniden bak; edge erimeye devam ederse kaldır.

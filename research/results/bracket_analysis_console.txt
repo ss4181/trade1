@@ -1,0 +1,88 @@
+
+[S1 / train] N=205 olay (ufuk 24h)
+  Hedefe DOKUNMA olasiligi: +0.5%:  94%  +1.0%:  89%  +2.0%:  73%  +3.0%:  63%  +5.0%:  45%
+  Stop'a DOKUNMA olasiligi: -1%:  86%  -2%:  76%  -3%:  62%  -5%:  42%  -10%:  17%
+  Bracket (hedef once gelme %% / beklenen net bp):
+    1/1: %45   -18bp | 1/2: %61   -25bp | 1/3: %72   -16bp | 1/5: %77   -26bp
+    2/1: %28   -25bp | 2/2: %42   -33bp | 2/3: %53   -25bp | 2/5: %60   -24bp
+    3/1: %23   -13bp | 3/2: %34   -28bp | 3/3: %42   -22bp | 3/5: %48   -19bp
+    5/1: %16   -10bp | 5/2: %20   -33bp | 5/3: %25   -33bp | 5/5: %30   -31bp
+  En iyi bracket (net bp): hedef +5% / stop -1% -> E[net]=-10bp, hedef-once %16
+
+[S1 / all] N=316 olay (ufuk 24h)
+  Hedefe DOKUNMA olasiligi: +0.5%:  94%  +1.0%:  87%  +2.0%:  71%  +3.0%:  62%  +5.0%:  41%
+  Stop'a DOKUNMA olasiligi: -1%:  84%  -2%:  69%  -3%:  56%  -5%:  37%  -10%:  16%
+  Bracket (hedef once gelme %% / beklenen net bp):
+    1/1: %50    -9bp | 1/2: %66    -8bp | 1/3: %76    +1bp | 1/5: %79   -10bp
+    2/1: %30   -14bp | 2/2: %47    -5bp | 2/3: %56    +3bp | 2/5: %61    -3bp
+    3/1: %22   -13bp | 3/2: %35   -13bp | 3/3: %43    -6bp | 3/5: %47   -19bp
+    5/1: %13   -17bp | 5/2: %20   -24bp | 5/3: %24   -25bp | 5/5: %27   -36bp
+  En iyi bracket (net bp): hedef +2% / stop -3% -> E[net]=+3bp, hedef-once %56
+  [test tutarlilik kontrolu: train'in en iyi bracket'i +5/-1]
+    TEST: N=111 hedef-once %8 E[net]=-30bp
+
+[S1+S4 / train] N=94 olay (ufuk 24h)
+  Hedefe DOKUNMA olasiligi: +0.5%:  93%  +1.0%:  83%  +2.0%:  68%  +3.0%:  62%  +5.0%:  50%
+  Stop'a DOKUNMA olasiligi: -1%:  86%  -2%:  74%  -3%:  65%  -5%:  36%  -10%:  10%
+  Bracket (hedef once gelme %% / beklenen net bp):
+    1/1: %53    -4bp | 1/2: %67    -9bp | 1/3: %70   -25bp | 1/5: %77   -19bp
+    2/1: %29   -24bp | 2/2: %43   -34bp | 2/3: %47   -60bp | 2/5: %56   -27bp
+    3/1: %26    -8bp | 3/2: %33   -30bp | 3/3: %38   -52bp | 3/5: %49    -4bp
+    5/1: %22   +24bp | 5/2: %24   -11bp | 5/3: %29   -29bp | 5/5: %37   +23bp
+  En iyi bracket (net bp): hedef +5% / stop -1% -> E[net]=+24bp, hedef-once %22
+
+[S1+S4 / all] N=144 olay (ufuk 24h)
+  Hedefe DOKUNMA olasiligi: +0.5%:  93%  +1.0%:  84%  +2.0%:  72%  +3.0%:  65%  +5.0%:  46%
+  Stop'a DOKUNMA olasiligi: -1%:  82%  -2%:  65%  -3%:  55%  -5%:  33%  -10%:  12%
+  Bracket (hedef once gelme %% / beklenen net bp):
+    1/1: %57    +5bp | 1/2: %72    +7bp | 1/3: %76    -1bp | 1/5: %80    -4bp
+    2/1: %35    -4bp | 2/2: %53   +12bp | 2/3: %58    -2bp | 2/5: %65   +13bp
+    3/1: %28    +3bp | 3/2: %41   +10bp | 3/3: %46    -8bp | 3/5: %53    +6bp
+    5/1: %19   +18bp | 5/2: %24    +9bp | 5/3: %28    -6bp | 5/5: %33   +10bp
+  En iyi bracket (net bp): hedef +5% / stop -1% -> E[net]=+18bp, hedef-once %19
+  [test tutarlilik kontrolu: train'in en iyi bracket'i +5/-1]
+    TEST: N=50 hedef-once %12 E[net]=+7bp
+
+[S2 / train] N=228 olay (ufuk 72h)
+  Hedefe DOKUNMA olasiligi: +0.5%:  94%  +1.0%:  89%  +2.0%:  79%  +3.0%:  70%  +5.0%:  52%
+  Stop'a DOKUNMA olasiligi: -1%:  85%  -2%:  74%  -3%:  61%  -5%:  49%  -10%:  21%
+  Bracket (hedef once gelme %% / beklenen net bp):
+    1/1: %59    +8bp | 1/2: %75   +16bp | 1/3: %79   +10bp | 1/5: %84    +1bp
+    2/1: %39    +8bp | 2/2: %53    +6bp | 2/3: %64   +19bp | 2/5: %68    -7bp
+    3/1: %29    +8bp | 3/2: %42    +4bp | 3/3: %51   +16bp | 3/5: %58   -10bp
+    5/1: %20   +20bp | 5/2: %29   +17bp | 5/3: %35   +24bp | 5/5: %41    +4bp
+  En iyi bracket (net bp): hedef +5% / stop -3% -> E[net]=+24bp, hedef-once %35
+
+[S2 / all] N=339 olay (ufuk 72h)
+  Hedefe DOKUNMA olasiligi: +0.5%:  94%  +1.0%:  88%  +2.0%:  76%  +3.0%:  65%  +5.0%:  49%
+  Stop'a DOKUNMA olasiligi: -1%:  86%  -2%:  74%  -3%:  64%  -5%:  47%  -10%:  19%
+  Bracket (hedef once gelme %% / beklenen net bp):
+    1/1: %58    +5bp | 1/2: %71    +5bp | 1/3: %77    +1bp | 1/5: %83    -2bp
+    2/1: %36    -3bp | 2/2: %50    -6bp | 2/3: %59    -4bp | 2/5: %67   -17bp
+    3/1: %27    -2bp | 3/2: %40    -6bp | 3/3: %48    -8bp | 3/5: %56   -20bp
+    5/1: %18    +8bp | 5/2: %27    -0bp | 5/3: %32    -4bp | 5/5: %40    -4bp
+  En iyi bracket (net bp): hedef +5% / stop -1% -> E[net]=+8bp, hedef-once %18
+  [test tutarlilik kontrolu: train'in en iyi bracket'i +5/-3]
+    TEST: N=111 hedef-once %28 E[net]=-61bp
+
+[S3 / train] N=769 olay (ufuk 4h)
+  Hedefe DOKUNMA olasiligi: +0.5%:  83%  +1.0%:  67%  +2.0%:  43%  +3.0%:  27%  +5.0%:  14%
+  Stop'a DOKUNMA olasiligi: -1%:  61%  -2%:  35%  -3%:  21%  -5%:   7%  -10%:   1%
+  Bracket (hedef once gelme %% / beklenen net bp):
+    1/1: %49    -5bp | 1/2: %61    +2bp | 1/3: %65    +5bp | 1/5: %66    +5bp
+    2/1: %29    -0bp | 2/2: %38    +9bp | 2/3: %41   +13bp | 2/5: %42   +15bp
+    3/1: %17    -1bp | 3/2: %23    +9bp | 3/3: %25   +12bp | 3/5: %26   +12bp
+    5/1: % 9    +8bp | 5/2: %11   +20bp | 5/3: %13   +26bp | 5/5: %14   +27bp
+  En iyi bracket (net bp): hedef +5% / stop -5% -> E[net]=+27bp, hedef-once %14
+
+[S3 / all] N=1015 olay (ufuk 4h)
+  Hedefe DOKUNMA olasiligi: +0.5%:  83%  +1.0%:  67%  +2.0%:  42%  +3.0%:  27%  +5.0%:  13%
+  Stop'a DOKUNMA olasiligi: -1%:  58%  -2%:  33%  -3%:  19%  -5%:   6%  -10%:   1%
+  Bracket (hedef once gelme %% / beklenen net bp):
+    1/1: %51    +0bp | 1/2: %63    +6bp | 1/3: %66    +8bp | 1/5: %67    +8bp
+    2/1: %30    +3bp | 2/2: %38   +11bp | 2/3: %41   +14bp | 2/5: %42   +16bp
+    3/1: %18    +4bp | 3/2: %24   +11bp | 3/3: %26   +13bp | 3/5: %27   +15bp
+    5/1: % 9    +9bp | 5/2: %11   +18bp | 5/3: %12   +23bp | 5/5: %13   +26bp
+  En iyi bracket (net bp): hedef +5% / stop -5% -> E[net]=+26bp, hedef-once %13
+  [test tutarlilik kontrolu: train'in en iyi bracket'i +5/-5]
+    TEST: N=246 hedef-once %12 E[net]=+24bp

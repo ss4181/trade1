@@ -1,0 +1,38 @@
+S1 15m thr=17.5  N=  139 edge=-0.058 p=0.740 med= +41.2bp wr=0.57
+S1 15m thr=20.0  N=  347 edge=-0.056 p=0.790 med= +16.1bp wr=0.51
+S1 15m thr=22.5  N=  729 edge=-0.116 p=0.998 med= +22.0bp wr=0.52
+S1 15m thr=25.0  N= 1385 edge=-0.136 p=1.000 med= +14.9bp wr=0.51
+S3 15m thr=2.5   N= 3920 edge=+0.102 p=0.000 med=  +3.9bp wr=0.51
+S3 15m thr=3.0   N= 2067 edge=+0.124 p=0.000 med=  +7.0bp wr=0.51
+S3 15m thr=3.5   N=  856 edge=+0.226 p=0.000 med= +14.5bp wr=0.53
+S1 30m thr=17.5  N=   86 edge=+0.312 p=0.005 med=+121.6bp wr=0.63
+S1 30m thr=20.0  N=  188 edge=+0.010 p=0.422 med=  +8.4bp wr=0.51
+S1 30m thr=22.5  N=  395 edge=+0.033 p=0.270 med= +57.8bp wr=0.55
+S1 30m thr=25.0  N=  797 edge=-0.018 p=0.660 med= +16.4bp wr=0.51
+S3 30m thr=2.5   N= 2696 edge=+0.115 p=0.000 med=  +6.8bp wr=0.51
+S3 30m thr=3.0   N= 1252 edge=+0.187 p=0.000 med= +17.8bp wr=0.53
+S3 30m thr=3.5   N=  516 edge=+0.403 p=0.000 med= +35.4bp wr=0.56
+S1  1h thr=17.5  N=   28 edge=+0.941 p=0.000 med=+608.1bp wr=0.82
+S1  1h thr=20.0  N=   92 edge=+0.548 p=0.000 med=+244.0bp wr=0.68
+S1  1h thr=22.5  N=  203 edge=+0.320 p=0.000 med=+114.2bp wr=0.64
+S1  1h thr=25.0  N=  404 edge=+0.082 p=0.090 med= +90.9bp wr=0.58
+S3  1h thr=2.5   N= 1728 edge=+0.142 p=0.000 med=  +9.6bp wr=0.52
+S3  1h thr=3.0   N=  763 edge=+0.230 p=0.000 med= +22.7bp wr=0.55
+S3  1h thr=3.5   N=  291 edge=+0.353 p=0.000 med= +34.8bp wr=0.59
+S1  2h thr=17.5  N=    4 edge=+1.348 p=0.007 med=+758.5bp wr=1.00
+S1  2h thr=20.0  N=   28 edge=+1.166 p=0.000 med=+588.2bp wr=0.86
+S1  2h thr=22.5  N=   93 edge=+0.783 p=0.000 med=+278.8bp wr=0.74
+S1  2h thr=25.0  N=  204 edge=+0.450 p=0.000 med=+182.3bp wr=0.71
+S3  2h thr=2.5   N= 1031 edge=+0.236 p=0.000 med= +23.0bp wr=0.54
+S3  2h thr=3.0   N=  397 edge=+0.341 p=0.000 med= +30.6bp wr=0.56
+S3  2h thr=3.5   N=  141 edge=+0.641 p=0.000 med= +73.1bp wr=0.65
+S1  4h thr=20.0  N=    2 edge=+0.105 p=0.448 med= +35.9bp wr=1.00
+S1  4h thr=22.5  N=   14 edge=+0.338 p=0.122 med=+127.1bp wr=0.71
+S1  4h thr=25.0  N=   76 edge=+0.225 p=0.050 med=+166.1bp wr=0.66
+S3  4h thr=2.5   N=  515 edge=+0.283 p=0.000 med= +21.6bp wr=0.54
+S3  4h thr=3.0   N=  176 edge=+0.481 p=0.000 med= +35.1bp wr=0.61
+S3  4h thr=3.5   N=   42 edge=+0.334 p=0.035 med=  -5.2bp wr=0.50
+
+==== TRAIN kazananlari -> TEST (tek atis) ====
+S3: train-kazanan TF=2h thr=3.5 (train edge +0.641) -> TEST: N=56 edge=-0.318 p=0.995 med=-41.7bp wr=0.36
+S1: train-kazanan TF=2h thr=25.0 (train edge +0.450) -> TEST: N=114 edge=+0.272 p=0.010 med=+16.0bp wr=0.52

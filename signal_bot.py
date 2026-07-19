@@ -269,10 +269,18 @@ def calc_volume_zscore(volumes: list[float], window: int = VOLUME_ZSCORE_WINDOW)
 # stop/hedef HIC test edilmedi. q10/q90 sadece tarihsel dagilimin uc yuzdelik
 # dilimleri — "buradan kes/su fiyattan al" talimati degildir.
 STRATEGY_STATS = {
-    "S1": {"h": 24, "med": 0.93, "q10": -4.49, "q90": 8.83, "wr": 62, "n": 316},
-    "S2": {"h": 72, "med": 0.24, "q10": -9.09, "q90": 12.73, "wr": 52, "n": 339},
-    "S3": {"h": 4,  "med": 0.16, "q10": -2.84, "q90": 4.16, "wr": 53, "n": 1015},
+    "S1": {"h": 24, "med": 0.93, "q10": -4.49, "q90": 8.83, "wr": 62, "n": 316,
+           "touch": ((1, 87), (2, 71), (3, 62)), "stopt": ((2, 69), (5, 37))},
+    "S2": {"h": 72, "med": 0.24, "q10": -9.09, "q90": 12.73, "wr": 52, "n": 339,
+           "touch": ((1, 88), (2, 76), (3, 65)), "stopt": ((2, 74), (5, 47))},
+    "S3": {"h": 4,  "med": 0.16, "q10": -2.84, "q90": 4.16, "wr": 53, "n": 1015,
+           "touch": ((1, 67), (2, 42), (3, 27)), "stopt": ((2, 33), (5, 6))},
 }
+# "touch"/"stopt": 5m yol analiziyle olculen tarihsel DOKUNMA olasiliklari
+# (research/results/bracket_analysis_console.txt): ufuk icinde +x% hedefe /
+# -y% seviyeye en az bir kez dokunma yuzdesi. Onemli bulgu: hedef/stop emirleri
+# (bracket) backtest'te zaman cikisini YENEMEDI (S1'de belirgin zarar) — bu
+# olasiliklar bilgi amaclidir, bracket onerisi degildir.
 
 
 def _sig6(x: float) -> float:
@@ -308,6 +316,7 @@ def build_ref_levels(strategy: str, price: float,
         "median_price": _sig6(price * (1 + st["med"] / 100)),
         "q10_price": _sig6(price * (1 + st["q10"] / 100)),
         "q90_price": _sig6(price * (1 + st["q90"] / 100)),
+        "touch": st.get("touch"), "stopt": st.get("stopt"),
     }
     if sigma1h is not None:
         ref["sigma_h_pct"] = round(sigma1h * math.sqrt(st["h"]) * 100, 2)
@@ -589,8 +598,14 @@ def _ref_lines(sig: dict) -> list[str]:
     if "sigma_h_pct" in ref:
         lines.append(f"Tipik dalgalanma (±1σ, {ref['time_exit_hours']}h): "
                      f"±{ref['sigma_h_pct']}%")
-    lines.append("Fiyat-bazli stop/hedef backtest'te TEST EDILMEDI; "
-                 "kaldirac kayiplari ve tasfiye riskini buyutur.")
+    if ref.get("touch"):
+        t = " · ".join(f"+{x}% %{p}" for x, p in ref["touch"])
+        s = " · ".join(f"-{y}% %{p}" for y, p in ref["stopt"])
+        lines.append(f"Dokunma olasiliklari ({ref['time_exit_hours']}h, "
+                     f"tarihsel): {t} | {s}")
+    lines.append("Bracket (hedef/stop emri) backtest'te zaman cikisini "
+                 "YENEMEDI; dokunma olasiliklari bilgi amaclidir. Kaldirac "
+                 "kayiplari ve tasfiye riskini buyutur.")
     return lines
 
 
