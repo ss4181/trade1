@@ -182,6 +182,24 @@ ENABLE_EMAIL = bool(RESEND_API_KEY and NOTIFICATION_EMAIL)
 _truthy = lambda v: str(v).strip().lower() in ("1", "true", "yes", "on")
 TELEGRAM_COMMANDS = _env("TELEGRAM_COMMANDS", True, cast=_truthy)
 
+# Komut verebilecek + otomatik sinyalleri alacak EK chat'ler (arkadaslar).
+# Virgullu chat id listesi. Arkadasin ID'sini ogrenmesi icin: bota /myid yazsin.
+_allow_raw = _env("TELEGRAM_ALLOWED_CHAT_IDS", "")
+TELEGRAM_ALLOWED = [c.strip() for c in _allow_raw.split(",") if c.strip()]
+# Aboneler = sahip + izinli arkadaslar (otomatik sinyaller bunlara gider).
+TELEGRAM_SUBSCRIBERS: list[str] = []
+for _c in [str(TELEGRAM_CHAT_ID)] + TELEGRAM_ALLOWED:
+    if _c and _c not in TELEGRAM_SUBSCRIBERS:
+        TELEGRAM_SUBSCRIBERS.append(_c)
+# Acik mod: HERKES komut verebilir (ama otomatik sinyaller yine sadece abonelere;
+# yabancilar botu spamlarsa /check tarama kilidi korur).
+TELEGRAM_OPEN = _env("TELEGRAM_OPEN", False, cast=_truthy)
+_check_lock = threading.Lock()
+
+
+def _chat_allowed(chat_id: str) -> bool:
+    return TELEGRAM_OPEN or chat_id in TELEGRAM_SUBSCRIBERS
+
 # Mobil endpoint (server.py) icin son sinyaller — thread-guvenli halka tampon.
 RECENT_MAXLEN = _env("RECENT_MAXLEN", 100)
 RECENT_SIGNALS: deque[dict] = deque(maxlen=RECENT_MAXLEN)
@@ -598,7 +616,9 @@ def send_telegram_message(sig: dict) -> None:
         lines += [f"<i>{_html.escape(l)}</i>" if l.startswith(("—", "Fiyat-bazli"))
                   else _html.escape(l) for l in ref_lines]
     lines.append(f"<i>{_html.escape(sig['bar_time'])}</i>")
-    _telegram_send_text("\n".join(lines))
+    text = "\n".join(lines)
+    for cid in TELEGRAM_SUBSCRIBERS:          # sahip + izinli arkadaslar
+        _telegram_send_text(text, chat_id=cid)
 
 
 def _telegram_send_text(text: str, chat_id: str | None = None) -> bool:
@@ -873,8 +893,8 @@ def _format_check_for_telegram(found: list[dict], errors: int) -> str:
     return "\n".join(lines)
 
 
-def handle_telegram_command(text: str) -> None:
-    """Tek bir /komutu isler ve cevabi yapilandirilmis chat'e gonderir."""
+def handle_telegram_command(text: str, chat_id: str) -> None:
+    """Tek bir /komutu isler ve cevabi KOMUTU GONDEREN chat'e yollar."""
     cmd = text.strip().split()[0].lower().lstrip("/").split("@")[0]
     if cmd in ("start", "help"):
         _telegram_send_text(
@@ -882,9 +902,10 @@ def handle_telegram_command(text: str) -> None:
             "Komutlar:\n"
             "/check — su an aktif kurulumlar\n"
             "/status — bot durumu\n"
+            "/myid — kendi chat ID'in\n"
             "/help — bu mesaj\n\n"
             "Yeni sinyaller otomatik olarak buraya ve email'e dusecek. "
-            "Yatirim tavsiyesi degildir.")
+            "Yatirim tavsiyesi degildir.", chat_id=chat_id)
     elif cmd == "status":
         _telegram_send_text(
             "<b>Durum</b>\n"
@@ -892,16 +913,27 @@ def handle_telegram_command(text: str) -> None:
             f"Tamamlanan tarama: {SCANS_COMPLETED}\n"
             f"Son tarama: {LAST_SCAN_AT or '(henuz yok)'}\n"
             f"Son taramada hata: {LAST_SCAN_ERRORS}\n"
-            f"Email: {'acik' if ENABLE_EMAIL else 'kapali'}")
+            f"Aboneler: {len(TELEGRAM_SUBSCRIBERS)}\n"
+            f"Email: {'acik' if ENABLE_EMAIL else 'kapali'}", chat_id=chat_id)
     elif cmd == "check":
-        _telegram_send_text("🔎 Taraniyor… (birkac saniye sur)")
+        if not _check_lock.acquire(blocking=False):
+            _telegram_send_text("Zaten bir tarama suruyor, birkac saniye sonra "
+                                "tekrar dene.", chat_id=chat_id)
+            return
         try:
+            _telegram_send_text("🔎 Taraniyor… (birkac saniye sur)",
+                                chat_id=chat_id)
             found, errors = collect_active_setups()
-            _telegram_send_text(_format_check_for_telegram(found, errors))
+            _telegram_send_text(_format_check_for_telegram(found, errors),
+                                chat_id=chat_id)
         except Exception as e:
-            _telegram_send_text(f"Tarama sirasinda hata: {_html.escape(str(e))}")
+            _telegram_send_text(f"Tarama sirasinda hata: {_html.escape(str(e))}",
+                                chat_id=chat_id)
+        finally:
+            _check_lock.release()
     else:
-        _telegram_send_text(f"Bilinmeyen komut: /{_html.escape(cmd)}. /help yaz.")
+        _telegram_send_text(f"Bilinmeyen komut: /{_html.escape(cmd)}. /help yaz.",
+                            chat_id=chat_id)
 
 
 def telegram_command_loop() -> None:
@@ -928,10 +960,18 @@ def telegram_command_loop() -> None:
                 chat_id = str((msg.get("chat") or {}).get("id", ""))
                 if not text.startswith("/"):
                     continue
-                if chat_id != str(TELEGRAM_CHAT_ID):
-                    continue                    # yabanci -> sessizce yok say
+                cmd0 = text.strip().split()[0].lower().lstrip("/").split("@")[0]
+                if cmd0 == "myid":
+                    # herkese acik: arkadasin ID'sini ogrenip sana iletmesi icin
+                    _telegram_send_text(
+                        f"Senin chat ID'in: <code>{chat_id}</code>\n"
+                        "Botu kullanmak icin bu ID'yi bot sahibine ilet.",
+                        chat_id=chat_id)
+                    continue
+                if not _chat_allowed(chat_id):
+                    continue                    # izinsiz -> sessizce yok say
                 try:
-                    handle_telegram_command(text)
+                    handle_telegram_command(text, chat_id)
                 except Exception as e:
                     print(f"uyari: komut islenemedi ({text!r}): {e}",
                           file=sys.stderr, flush=True)

@@ -103,7 +103,26 @@ arkasında sorunsuz).
 start - bot yasiyor mu + komutlar
 check - su an aktif kurulumlar
 status - bot durumu
+myid - kendi chat ID'in
 ```
+
+### Arkadaşlarını ekleme
+
+Arkadaşların da `/check` / `/status` kullanabilsin ve otomatik sinyalleri alsın:
+
+1. Arkadaşın botu Telegram'da açıp **/myid** yazsın → bot ona chat ID'sini verir.
+2. Arkadaşın o ID'yi sana iletsin.
+3. `.env`'de `TELEGRAM_ALLOWED_CHAT_IDS`'e virgülle ekle, örn:
+   ```
+   TELEGRAM_ALLOWED_CHAT_IDS=11111111,22222222
+   ```
+4. Botu yeniden başlat (`Ctrl+C` → `python signal_bot.py`).
+
+Artık listedekiler komut verebilir **ve** yeni sinyaller onlara da düşer.
+İzin listesinde olmayan biri komut yazarsa bot yok sayar (yalnızca /myid'e
+cevap verir). Tam açık mod istersen `.env`'e `TELEGRAM_OPEN=true` — ama o zaman
+botu bulan herkes komut verebilir (otomatik sinyaller yine sadece listedekilere
+gider).
 
 ## Günlük kullanım
 

@@ -91,9 +91,13 @@ uvicorn server:app --host 0.0.0.0 --port 8000
   anahtarlarla her iki kanala TEST mesajı yollar; gerçek sinyal beklemeden
   kurulumu doğrular.
 - **Telegram komutları** (7/24 döngü çalışırken): bota `/start`, `/check`
-  (şu an aktif kurulumlar), `/status` yazabilirsin. Yalnızca yapılandırılmış
-  `TELEGRAM_CHAT_ID`'den gelen komutlar işlenir; getUpdates long-polling ile
-  çalışır (public URL/açık port gerekmez). Kapatmak: `TELEGRAM_COMMANDS=false`.
+  (şu an aktif kurulumlar), `/status`, `/myid` yazabilirsin. getUpdates
+  long-polling ile çalışır (public URL/açık port gerekmez).
+  Kapatmak: `TELEGRAM_COMMANDS=false`.
+- **Arkadaş paylaşımı:** `TELEGRAM_ALLOWED_CHAT_IDS`'e eklenen chat'ler komut
+  verebilir ve otomatik sinyalleri alır (abone). Arkadaş kendi ID'sini `/myid`
+  ile öğrenir. Listede olmayan biri yalnızca `/myid` alır, gerisi yok sayılır.
+  Tam açık mod: `TELEGRAM_OPEN=true`.
 - **Bildirimler:** her sinyal **hem Telegram hem email** ile gider (biri
   diğerinin yerine geçmez). Anti-spam tek kapıdan yönetilir (`ScanState`
   kenar-tetikleme + strateji-başı cooldown); iki kanal aynı deduplike sinyali
