@@ -740,6 +740,14 @@ def send_telegram_message(sig: dict) -> None:
         _telegram_send_text(text, chat_id=cid)
 
 
+def _redact(text: str) -> str:
+    """Hata mesajlarindan bot token'ini temizler — loglara/ekrana ASLA
+    token yazilmamali (URL icinde gelebiliyor)."""
+    if TELEGRAM_BOT_TOKEN:
+        text = text.replace(TELEGRAM_BOT_TOKEN, "***TOKEN***")
+    return text
+
+
 def _telegram_send_text(text: str, chat_id: str | None = None) -> bool:
     """Ham HTML metni Telegram'a gonderir (sinyaller + komut cevaplari ortak).
     Anahtar yoksa sessizce atlar; hata olursa uyarir, ASLA istisna firlatmaz."""
@@ -754,7 +762,8 @@ def _telegram_send_text(text: str, chat_id: str | None = None) -> bool:
         r.raise_for_status()
         return True
     except requests.RequestException as e:
-        print(f"uyari: Telegram gonderilemedi: {e}", file=sys.stderr, flush=True)
+        print(f"uyari: Telegram gonderilemedi: {_redact(str(e))}",
+              file=sys.stderr, flush=True)
         return False
 
 
@@ -1263,7 +1272,9 @@ def telegram_command_loop() -> None:
         return
     base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
     offset: int | None = None
-    print("telegram komut dinleyici basladi (/start /check /status)", flush=True)
+    conflict_streak = 0
+    print("telegram komut dinleyici basladi "
+          "(/start /check /performans /status /myid)", flush=True)
     while True:
         try:
             params = {"timeout": 30}
@@ -1294,11 +1305,26 @@ def telegram_command_loop() -> None:
                     print(f"uyari: komut islenemedi ({text!r}): {e}",
                           file=sys.stderr, flush=True)
         except requests.RequestException as e:
-            # 409 (baska bir poller ayni token'da) / ag hatasi -> bekle, dene
-            print(f"uyari: telegram getUpdates: {e}", file=sys.stderr, flush=True)
+            code = getattr(getattr(e, "response", None), "status_code", 0)
+            if code == 409:
+                conflict_streak += 1
+                if conflict_streak in (1, 10):   # spam yapma, ama net soyle
+                    print("uyari: getUpdates 409 CONFLICT — AYNI TOKEN'la "
+                          "BASKA bir bot kopyasi daha calisiyor (eski Render "
+                          "servisi silinmemis olabilir ya da tablette ikinci "
+                          "bir surec var: pgrep -af signal_bot). Kopyayi "
+                          "kapatana kadar komutlar guvenilir calismaz; "
+                          "sinyal PUSH'lari etkilenmez.", file=sys.stderr,
+                          flush=True)
+                time.sleep(30)
+                continue
+            conflict_streak = 0
+            print(f"uyari: telegram getUpdates: {_redact(str(e))}",
+                  file=sys.stderr, flush=True)
             time.sleep(5)
         except Exception as e:
-            print(f"uyari: komut dongusu: {e}", file=sys.stderr, flush=True)
+            print(f"uyari: komut dongusu: {_redact(str(e))}",
+                  file=sys.stderr, flush=True)
             time.sleep(5)
 
 
