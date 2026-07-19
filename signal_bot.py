@@ -295,6 +295,15 @@ STRATEGY_CONF = {
 }
 NOTIFY_MIN_CONFIDENCE = _env("NOTIFY_MIN_CONFIDENCE", "ORTA").strip().upper()
 
+# Bir stratejiyi TAMAMEN kapatmak icin (taranmaz, loglanmaz, API cagrisi da
+# yapilmaz): DISABLED_STRATEGIES=S2 gibi virgullu liste. NOT: varsayilan bos —
+# S2 su an "sessiz-kayit" modunda (push edilmez ama loglanir) cunku canli
+# performans olcumu (/performans) nihai kaldir/tut kararini VERIyle verecek;
+# tamamen kapatirsan o kanit birikmez.
+DISABLED_STRATEGIES = {s.strip().upper()
+                       for s in _env("DISABLED_STRATEGIES", "").split(",")
+                       if s.strip()}
+
 
 def signal_confidence(strategy: str) -> tuple[str, str]:
     return STRATEGY_CONF.get(strategy,
@@ -573,9 +582,11 @@ def scan_symbol(symbol: str, state: ScanState,
     bar_ts = datetime.fromtimestamp(klines[i]["open_time"] / 1000, tz=timezone.utc)
 
     # ---- S1: oversold bullish divergence (long) ----
-    s1_cond = (not math.isnan(rsi[i]) and rsi[i] <= RSI_OVERSOLD
+    s1_cond = ("S1" not in DISABLED_STRATEGIES
+               and not math.isnan(rsi[i]) and rsi[i] <= RSI_OVERSOLD
                and bullish_divergence(closes, lows, rsi, i))
-    if include("S1", s1_cond, S1_COOLDOWN_HOURS):
+    if "S1" not in DISABLED_STRATEGIES and include("S1", s1_cond,
+                                                   S1_COOLDOWN_HOURS):
         recent_spike = any(
             (not math.isnan(z)) and z >= VOLUME_ZSCORE_THRESHOLD
             for z in zs[max(0, i - CONFLUENCE_LOOKBACK_HOURS):i + 1])
@@ -595,7 +606,9 @@ def scan_symbol(symbol: str, state: ScanState,
     # Kenar-tetikleme yon gozetmeksizin hacim patlamasi uzerinde calisir
     # (arastirmada dogrulanan kompozisyon); yon filtresi SONRA uygulanir.
     s3_spike = (not math.isnan(zs[i]) and zs[i] >= VOLUME_ZSCORE_THRESHOLD)
-    if include("S3", s3_spike, S3_COOLDOWN_HOURS) and closes[i] > opens[i]:
+    if ("S3" not in DISABLED_STRATEGIES
+            and include("S3", s3_spike, S3_COOLDOWN_HOURS)
+            and closes[i] > opens[i]):
         signals.append({
             "strategy": "S3", "symbol": symbol, "direction": "LONG",
             "strength": "NORMAL", "bar_time": bar_ts.isoformat(),
@@ -605,10 +618,14 @@ def scan_symbol(symbol: str, state: ScanState,
         })
 
     # ---- S2: funding squeeze (long) ----
-    try:
-        fr = fetch_funding(perp_symbol(symbol), limit=FUNDING_PERSISTENCE + 1)
-    except requests.RequestException:
-        fr = []                                # perp yoksa/ulasilamazsa atla
+    if "S2" in DISABLED_STRATEGIES:
+        fr = []                                # tamamen kapali: API'ye de gitme
+    else:
+        try:
+            fr = fetch_funding(perp_symbol(symbol),
+                               limit=FUNDING_PERSISTENCE + 1)
+        except requests.RequestException:
+            fr = []                            # perp yoksa/ulasilamazsa atla
     if len(fr) >= FUNDING_PERSISTENCE:
         thr = FUNDING_SQUEEZE_THRESHOLD_PCT / 100.0
         last_n = fr[-FUNDING_PERSISTENCE:]
@@ -699,10 +716,13 @@ def send_telegram_message(sig: dict) -> None:
     if not ENABLE_TELEGRAM:
         return
     icon = "‼️" if sig.get("strength") == "STRONG" else "\U0001f514"
+    conf = sig.get("confidence")
+    head_tail = (f"({sig['strength']} · Guven: {conf})" if conf
+                 else f"({sig['strength']})")
     lines = [
         f"{icon} <b>{_html.escape(sig['strategy'])}</b> — "
         f"<b>{_html.escape(sig['symbol'])}</b> {sig['direction']} "
-        f"({sig['strength']})",
+        f"{head_tail}",
         f"Fiyat: {sig['price']}",
         f"Beklenen ufuk: ~{sig['horizon_hours']} saat",
     ]
@@ -1159,9 +1179,10 @@ def _format_check_for_telegram(found: list[dict], errors: int) -> str:
             extra = f" fund {s['funding_pct'][-1]}%"
         else:
             extra = ""
+        conf = s.get("confidence") or signal_confidence(s["strategy"])[0]
         lines.append(f"• <b>{_html.escape(s['strategy'])}</b> "
-                     f"{_html.escape(s['symbol'])} @ {s['price']}{extra} "
-                     f"→ ~{s['horizon_hours']}h")
+                     f"[{conf}] {_html.escape(s['symbol'])} @ "
+                     f"{s['price']}{extra} → ~{s['horizon_hours']}h")
     if len(found) > 25:
         lines.append(f"…ve {len(found) - 25} tane daha")
     if errors:
@@ -1192,6 +1213,9 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
             f"Tamamlanan tarama: {SCANS_COMPLETED}\n"
             f"Son tarama: {LAST_SCAN_AT or '(henuz yok)'}\n"
             f"Son taramada hata: {LAST_SCAN_ERRORS}\n"
+            f"Push esigi: {NOTIFY_MIN_CONFIDENCE}+ "
+            f"(alti sessiz-kayit) · Kapali: "
+            f"{', '.join(sorted(DISABLED_STRATEGIES)) or 'yok'}\n"
             f"Aboneler: {len(TELEGRAM_SUBSCRIBERS)}\n"
             f"Email: {'acik' if ENABLE_EMAIL else 'kapali'}", chat_id=chat_id)
     elif cmd in ("performans", "performance", "perf"):

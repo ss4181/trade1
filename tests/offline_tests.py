@@ -13,6 +13,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import signal_bot as bot  # noqa: E402
 
+# testler modulu monkeypatch'ler; orijinalleri sakla ki sonraki testler
+# oncekilerin sahtelerini cagirmasin
+ORIG = {
+    "send_tg": bot.send_telegram_message,
+    "tg_text": bot._telegram_send_text,
+}
+
 PASS = 0
 
 
@@ -145,6 +152,50 @@ def test_command_security():
     ok("telegram izin listesi guvenligi")
 
 
+def test_disabled_strategies_and_header():
+    # S2 kapaliyken: S2 kosulu saglansa bile sinyal uretilmemeli, funding
+    # API'sine hic gidilmemeli
+    called = {"funding": 0}
+
+    def fake_funding(symbol, limit=3):
+        called["funding"] += 1
+        return [{"time": i, "rate": -0.01} for i in range(3)]  # derin negatif
+
+    bot.fetch_funding = fake_funding
+    bot.fetch_klines = lambda symbol, limit=250: [
+        {"open_time": i * 3600000, "open": 100, "high": 101, "low": 99,
+         "close": 100, "volume": 10} for i in range(250)]
+    bot.DISABLED_STRATEGIES = {"S2"}
+    st = bot.ScanState()
+    bot.scan_symbol("XUSDT", st, snapshot=True)
+    sigs = bot.scan_symbol("XUSDT", st, snapshot=True)
+    assert called["funding"] == 0, "S2 kapaliyken funding cekilmemeli"
+    assert not any(s["strategy"] == "S2" for s in sigs)
+    bot.DISABLED_STRATEGIES = set()
+    sigs2 = bot.scan_symbol("XUSDT", st, snapshot=True)
+    assert any(s["strategy"] == "S2" for s in sigs2), "acikken S2 uretilmeli"
+    # telegram basliginda guven kademesi gorunmeli
+    captured = {}
+
+    class FR:
+        def raise_for_status(self): pass
+    bot.ENABLE_TELEGRAM = True
+    bot.TELEGRAM_BOT_TOKEN = "X"
+    bot.TELEGRAM_CHAT_ID = "1"
+    bot.TELEGRAM_SUBSCRIBERS = ["1"]
+    bot.send_telegram_message = ORIG["send_tg"]     # onceki sahteyi kaldir
+    bot._telegram_send_text = ORIG["tg_text"]
+    bot.requests.post = (lambda url, json=None, timeout=None:
+                         captured.update(json) or FR())
+    bot.send_telegram_message({"strategy": "S1", "symbol": "BTCUSDT",
+                               "direction": "LONG", "strength": "NORMAL",
+                               "confidence": "YUKSEK", "price": 1,
+                               "bar_time": "t", "note": "n",
+                               "horizon_hours": 24})
+    assert "Guven: YUKSEK" in captured["text"].splitlines()[0]
+    ok("strateji kapatma anahtari + baslikta guven")
+
+
 def test_perf_formatting():
     txt = bot._format_performance({"n_total": 0})
     assert "olgunlasmis" in txt
@@ -165,6 +216,7 @@ def main():
         test_notify_gating_and_push_flag()
         test_state_persistence(td)
         test_ref_lines()
+        test_disabled_strategies_and_header()
         test_command_security()
         test_perf_formatting()
     print(f"\nHEPSI GECTI ({PASS} test)")
