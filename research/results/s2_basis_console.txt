@@ -1,0 +1,4 @@
+baseline       N= 227 edge72=+0.287 p=0.000 med= +78.2bp wr=0.55 top5=%70
+bazis>0.0000   N=   1 edge72=-0.706 p=0.776 med=-825.1bp wr=0.00 top5=%100
+
+SONUC: hicbir bazis esigi train kuralini gecemedi -> test'e BAKILMADI, S2 degismez.

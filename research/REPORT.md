@@ -259,6 +259,24 @@ güven kademeleri (S1+S4=ÇOK YÜKSEK, S1=YÜKSEK, S3=ORTA, S2=DÜŞÜK) +
 `NOTIFY_MIN_CONFIDENCE=ORTA` (S2 push'u varsayılan sessiz — log/API'de kalır),
 bildirimlere güven satırı + son-çıkış zaman damgası.
 
+## Ek D — S2 bazis filtresi denemesi (2026-07-19): MEKANİK OLARAK BOŞ
+
+Hipotez: negatif funding + perp spot'a primli (bazis>0) = "gerçek" squeeze.
+Sonuç (`sweep_s2_basis.py` → `results/s2_basis_console.txt`): train'de 227
+S2 olayının **yalnızca 1'inde** bazis > 0 — filtre fiilen boş küme. Sebep
+yapısal: funding oranı zaten premium/bazisten TÜRETİLİR; üst üste derin
+negatif funding ≈ perp'in spot altında işlem görmesi demek. "Negatif funding
+ama pozitif bazis" durumu tanım gereği neredeyse imkânsız. (Tek istisna olay
+da −%8.3 ile kapanmış.)
+
+**S2 iyileştirme yollarının bilançosu — hepsi denendi:**
+eşik/persistence taraması (mevcut ayar optimum), sembol-göreli funding
+z-skoru (testte çöktü, §4), bazis filtresi (mekanik boş, bu ek), OI+bazis
+kombinasyonu (OI geçmişi ~30 gün — test edilemez, Ek C), ATR bracket
+(testte −61bp, Ek B). **Eldeki veriyle S2'yi iyileştirmenin yolu kalmadı.**
+Kalan tek plan yürürlükte: sessiz-kayıt + `/performans` canlı ölçümü;
+30+ olgun canlı S2 sinyali birikince kaldır/tut kararı veriyle verilecek.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip
