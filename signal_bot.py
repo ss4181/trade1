@@ -474,12 +474,56 @@ def refresh_universe_if_due(force: bool = False) -> None:
 # tarama
 # --------------------------------------------------------------------------
 
+STATE_FILE = Path(__file__).parent / ".bot_state.json"
+
+
 class ScanState:
-    """Kenar-tetikleme + cooldown icin bellek: ayni kosul streak'i tek sinyal."""
+    """Kenar-tetikleme + cooldown icin bellek: ayni kosul streak'i tek sinyal.
+    Restart'ta kaybolmasin diye diske yazilir/yuklenir (save/load)."""
 
     def __init__(self):
         self.prev_cond: dict[tuple[str, str], bool] = {}
         self.last_fire: dict[tuple[str, str], float] = {}
+
+    def save(self) -> None:
+        try:
+            data = {
+                "prev_cond": {f"{k[0]}|{k[1]}": v
+                              for k, v in self.prev_cond.items()},
+                "last_fire": {f"{k[0]}|{k[1]}": v
+                              for k, v in self.last_fire.items()},
+                "recent": list(RECENT_SIGNALS),
+            }
+            tmp = STATE_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False),
+                           encoding="utf-8")
+            tmp.replace(STATE_FILE)          # atomik: yarim dosya kalmaz
+        except OSError as e:
+            print(f"uyari: durum kaydedilemedi: {e}", file=sys.stderr, flush=True)
+
+    @classmethod
+    def load(cls) -> "ScanState":
+        st = cls()
+        if not STATE_FILE.exists():
+            return st
+        try:
+            data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            for k, v in data.get("prev_cond", {}).items():
+                a, _, b = k.partition("|")
+                st.prev_cond[(a, b)] = bool(v)
+            for k, v in data.get("last_fire", {}).items():
+                a, _, b = k.partition("|")
+                st.last_fire[(a, b)] = float(v)
+            with _recent_lock:
+                for sig in data.get("recent", []):
+                    RECENT_SIGNALS.append(sig)   # kayit sirasi: yeni->eski
+            print(f"durum yuklendi: {len(st.prev_cond)} kosul, "
+                  f"{len(st.last_fire)} cooldown, "
+                  f"{len(RECENT_SIGNALS)} tamponlanmis sinyal", flush=True)
+        except (OSError, ValueError, KeyError) as e:
+            print(f"uyari: durum dosyasi okunamadi, sifirdan: {e}",
+                  file=sys.stderr, flush=True)
+        return st
 
     def should_fire(self, strategy: str, symbol: str, cond: bool,
                     cooldown_hours: float, now_s: float) -> bool:
@@ -773,7 +817,7 @@ def send_email_notification(sig: dict) -> None:
         print(f"uyari: email gonderilemedi: {e}", file=sys.stderr, flush=True)
 
 
-def notify(sig: dict) -> None:
+def notify(sig: dict, push: bool = True) -> None:
     """Tek sinyal cikis noktasi: stdout + JSONL log + mobil tampon + Telegram
     + email. Sinyaller HER IKI kanala da (Telegram VE email) gonderilir.
 
@@ -782,12 +826,13 @@ def notify(sig: dict) -> None:
     dolayisiyla iki kanal ayni deduplike sinyali alir, ayri ayri sayilmaz."""
     conf = sig.get("confidence", "YUKSEK")
     silenced = (CONF_RANK.get(conf, 2)
-                < CONF_RANK.get(NOTIFY_MIN_CONFIDENCE, 1))
+                < CONF_RANK.get(NOTIFY_MIN_CONFIDENCE, 1)) or not push
+    tag = ("  [SESSIZ: guven esigi alti]" if silenced and push else
+           ("  [TOPLU OZETTE: tarama-basi tavan]" if not push else ""))
     line = (f"[{sig['bar_time']}] {sig['strategy']:<6} {sig['symbol']:<12} "
             f"{sig['direction']} ({sig['strength']}/{conf}) "
             f"fiyat={sig['price']} ~{sig['horizon_hours']}h | {sig['note']}"
-            + ("  [SESSIZ: guven esigi alti, push gonderilmedi]" if silenced
-               else ""))
+            + tag)
     print(line, flush=True)
     with open(Path(__file__).parent / SIGNAL_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(sig, ensure_ascii=False) + "\n")
@@ -800,15 +845,19 @@ def notify(sig: dict) -> None:
     send_email_notification(sig)
 
 
+# Firtina gunu duzeni: tek taramada en fazla bu kadar sinyal AYRINTILI push
+# edilir (oncelik sirasiyla); fazlasi tek toplu mesajda ozetlenir. Piyasa
+# geneli cokuslerde 10+ ayri bildirim yerine duzenli akis.
+MAX_PUSH_PER_SCAN = _env("MAX_PUSH_PER_SCAN", 6)
+
+
 def scan_all(state: ScanState) -> int:
     global LAST_SCAN_ERRORS
-    count = 0
     errors = 0
+    collected: list[dict] = []
     for sym in SYMBOLS:
         try:
-            for sig in scan_symbol(sym, state):
-                notify(sig)
-                count += 1
+            collected += scan_symbol(sym, state)
         except requests.RequestException as e:
             errors += 1
             ERROR_SAMPLES.append(f"{sym}: {e}")
@@ -818,7 +867,64 @@ def scan_all(state: ScanState) -> int:
     if errors:
         print(f"uyari: taramada {errors}/{len(SYMBOLS)} sembol hata verdi",
               file=sys.stderr, flush=True)
-    return count
+    collected.sort(key=lambda s: (_priority(s), s["symbol"]))
+    overflow = []
+    pushed = 0
+    for sig in collected:
+        conf_ok = (CONF_RANK.get(sig.get("confidence", "YUKSEK"), 2)
+                   >= CONF_RANK.get(NOTIFY_MIN_CONFIDENCE, 1))
+        if conf_ok and pushed >= MAX_PUSH_PER_SCAN:
+            overflow.append(sig)
+            notify(sig, push=False)
+        else:
+            notify(sig)
+            if conf_ok:
+                pushed += 1
+    if overflow:
+        lines = [f"⚠️ Ayni taramada +{len(overflow)} sinyal daha "
+                 f"(piyasa geneli hareket olabilir):"]
+        lines += [f"• {s['strategy']} {s['symbol']} @ {s['price']} "
+                  f"(~{s['horizon_hours']}h)" for s in overflow[:20]]
+        lines.append("Detaylar log ve /signals/latest icinde.")
+        _telegram_send_text("\n".join(_html.escape(l) if i else l
+                                      for i, l in enumerate(lines)))
+    state.save()                  # restart'ta cooldown/tampon kaybolmasin
+    return len(collected)
+
+
+# Gunluk yasam sinyali: her gun bu UTC saatinden sonraki ilk taramada tek
+# satirlik ozet gonderilir. Gelmezse botun oldugunu anlarsin (sessiz olum
+# sigortasi). Kapatmak: DAILY_SUMMARY_HOUR_UTC=-1
+DAILY_SUMMARY_HOUR_UTC = _env("DAILY_SUMMARY_HOUR_UTC", 6)   # 06 UTC = 09 TR
+_last_summary_day: str | None = None
+
+
+def _maybe_daily_summary() -> None:
+    global _last_summary_day
+    if DAILY_SUMMARY_HOUR_UTC < 0 or not ENABLE_TELEGRAM:
+        return
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    if now.hour < DAILY_SUMMARY_HOUR_UTC or _last_summary_day == today:
+        return
+    _last_summary_day = today
+    cutoff = now - timedelta(hours=24)
+    by_strat: dict[str, int] = {}
+    with _recent_lock:
+        for s in RECENT_SIGNALS:
+            try:
+                if datetime.fromisoformat(s.get("notified_at", "")) >= cutoff:
+                    by_strat[s["strategy"]] = by_strat.get(s["strategy"], 0) + 1
+            except ValueError:
+                continue
+    sig_txt = (", ".join(f"{k}:{v}" for k, v in sorted(by_strat.items()))
+               or "yok")
+    _telegram_send_text(
+        f"☀️ <b>Gunluk ozet</b> — bot calisiyor.\n"
+        f"Son 24h sinyal: {sig_txt}\n"
+        f"Toplam tarama: {SCANS_COMPLETED} · evren: {len(SYMBOLS)} sembol · "
+        f"son taramada hata: {LAST_SCAN_ERRORS}\n"
+        f"Anlik kontrol: /check · canli sonuclar: /performans")
 
 
 def run_forever(once: bool = False, state: ScanState | None = None) -> None:
@@ -826,7 +932,7 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
     thread'inde cagirir (web servisini bloklamadan). Bir tarama cyklusundeki
     beklenmeyen hata dongusu OLDURMEZ — 7/24 servis icin dayaniklilik."""
     global LAST_SCAN_AT, LAST_SCAN_COUNT, SCANS_COMPLETED
-    state = state or ScanState()
+    state = state or ScanState.load()       # restart sonrasi kaldigi yerden
     refresh_universe_if_due(force=True)     # otomatik moddaysa evreni kur
     # Telegram komut dinleyicisini yalnizca surekli modda baslat (--once'ta degil)
     if ENABLE_TELEGRAM and TELEGRAM_COMMANDS and not once:
@@ -858,6 +964,7 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             LAST_SCAN_COUNT = n
             SCANS_COMPLETED += 1
             print(f"[{t0}] tarama bitti: {n} sinyal", flush=True)
+            _maybe_daily_summary()
         except Exception as e:  # tek dongu hatasi 7/24 servisi dusurmemeli
             print(f"hata: tarama dongusunde beklenmeyen hata: {e}",
                   file=sys.stderr, flush=True)
@@ -926,6 +1033,115 @@ def run_check() -> int:
     return len(found)
 
 
+# --------------------------------------------------------------------------
+# canli performans takibi (REPORT §10.1): gerceklesen sonuc vs backtest
+# --------------------------------------------------------------------------
+PERF_CACHE_FILE = Path(__file__).parent / ".perf_cache.json"
+PERF_MAX_SIGNALS = _env("PERF_MAX_SIGNALS", 60)
+
+
+def fetch_klines_at(symbol: str, start_ms: int, limit: int) -> list[dict]:
+    r = _spot_get("/api/v3/klines", {"symbol": symbol, "interval": "1h",
+                                     "startTime": start_ms, "limit": limit})
+    return [{"open_time": k[0], "open": float(k[1]), "close": float(k[4])}
+            for k in r.json()]
+
+
+def realized_performance(max_signals: int = None) -> dict:
+    """signals.log'daki OLGUNLASMIS sinyallerin gerceklesen getirisini olcer
+    (giris: sinyal barindan sonraki barin acilisi; cikis: ufuk sonundaki
+    kapanis — arastirmayla birebir ayni tanim). Sonuclar diske cachelenir."""
+    max_signals = max_signals or PERF_MAX_SIGNALS
+    log_path = Path(__file__).parent / SIGNAL_LOG
+    if not log_path.exists():
+        return {"error": "signals.log yok — henuz sinyal uretilmedi"}
+    cache = {}
+    if PERF_CACHE_FILE.exists():
+        try:
+            cache = json.loads(PERF_CACHE_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cache = {}
+    now = datetime.now(timezone.utc)
+    rows = []
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        try:
+            sig = json.loads(line)
+        except ValueError:
+            continue
+        if sig.get("strategy", "").startswith("TEST"):
+            continue
+        try:
+            bar_t = datetime.fromisoformat(sig["bar_time"])
+        except (KeyError, ValueError):
+            continue
+        h = int(sig.get("horizon_hours") or 0)
+        if h <= 0 or bar_t + timedelta(hours=h + 2) > now:
+            continue                       # henuz olgunlasmadi
+        rows.append((bar_t, sig))
+    rows = rows[-max_signals:]
+    per_strat: dict[str, list[float]] = {}
+    fetch_errors = 0
+    for bar_t, sig in rows:
+        key = f"{sig['bar_time']}|{sig['symbol']}|{sig['strategy']}"
+        h = int(sig["horizon_hours"])
+        if key in cache:
+            ret = cache[key]
+        else:
+            try:
+                ks = fetch_klines_at(sig["symbol"],
+                                     int(bar_t.timestamp() * 1000), h + 2)
+                if len(ks) < h + 1:
+                    continue
+                ret = (ks[h]["close"] / ks[1]["open"] - 1) * 100
+                cache[key] = ret
+                time.sleep(0.1)
+            except requests.RequestException:
+                fetch_errors += 1
+                continue
+        per_strat.setdefault(sig["strategy"].split("+")[0], []).append(ret)
+    try:
+        PERF_CACHE_FILE.write_text(json.dumps(cache), encoding="utf-8")
+    except OSError:
+        pass
+    out = {"n_total": sum(len(v) for v in per_strat.values()),
+           "fetch_errors": fetch_errors, "strategies": {}}
+    for s, rets in sorted(per_strat.items()):
+        arr = sorted(rets)
+        med = arr[len(arr) // 2]
+        bt = STRATEGY_STATS.get(s, {})
+        out["strategies"][s] = {
+            "n": len(rets),
+            "median_pct": round(med, 2),
+            "mean_pct": round(sum(rets) / len(rets), 2),
+            "winrate_pct": round(100 * sum(1 for r in rets if r > 0) / len(rets)),
+            "bt_median_pct": bt.get("med"), "bt_winrate_pct": bt.get("wr"),
+        }
+    return out
+
+
+def _format_performance(perf: dict) -> str:
+    if "error" in perf:
+        return perf["error"]
+    if perf["n_total"] == 0:
+        return ("Henuz olgunlasmis sinyal yok (sinyaller ufuk suresi dolunca "
+                "olculebilir hale gelir).")
+    lines = [f"<b>Canli performans</b> (son {perf['n_total']} olgun sinyal; "
+             "giris/cikis tanimi backtest ile ayni):"]
+    for s, d in perf["strategies"].items():
+        cmp_med = (f" (backtest medyan {d['bt_median_pct']:+.2f}%)"
+                   if d.get("bt_median_pct") is not None else "")
+        cmp_wr = (f" (backtest %{d['bt_winrate_pct']})"
+                  if d.get("bt_winrate_pct") is not None else "")
+        lines.append(f"• <b>{s}</b>: N={d['n']} medyan {d['median_pct']:+.2f}%"
+                     f"{cmp_med} · isabet %{d['winrate_pct']}{cmp_wr} · "
+                     f"ort {d['mean_pct']:+.2f}%")
+    if perf["fetch_errors"]:
+        lines.append(f"({perf['fetch_errors']} sinyal veri hatasindan olculemedi)")
+    lines.append("\n<i>Kucuk N'de medyan/isabet cok oynak olur; 30+ sinyalden "
+                 "once yargiya varma. Yatirim tavsiyesi degildir.</i>")
+    return "\n".join(lines)
+
+
 def _format_check_for_telegram(found: list[dict], errors: int) -> str:
     """/check cevabini kompakt HTML olarak bicimler (Telegram 4096 char siniri
     icin ilk 25 ile sinirli; detay/referans terminal --check'te)."""
@@ -963,6 +1179,7 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
             "🤖 <b>Signal Bot</b> calisiyor.\n\n"
             "Komutlar:\n"
             "/check — su an aktif kurulumlar\n"
+            "/performans — canli sonuclar vs backtest\n"
             "/status — bot durumu\n"
             "/myid — kendi chat ID'in\n"
             "/help — bu mesaj\n\n"
@@ -977,6 +1194,21 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
             f"Son taramada hata: {LAST_SCAN_ERRORS}\n"
             f"Aboneler: {len(TELEGRAM_SUBSCRIBERS)}\n"
             f"Email: {'acik' if ENABLE_EMAIL else 'kapali'}", chat_id=chat_id)
+    elif cmd in ("performans", "performance", "perf"):
+        if not _check_lock.acquire(blocking=False):
+            _telegram_send_text("Baska bir islem suruyor, birazdan tekrar dene.",
+                                chat_id=chat_id)
+            return
+        try:
+            _telegram_send_text("📊 Olculuyor… (gecmis veriler cekiliyor)",
+                                chat_id=chat_id)
+            _telegram_send_text(_format_performance(realized_performance()),
+                                chat_id=chat_id)
+        except Exception as e:
+            _telegram_send_text(f"Olcum hatasi: {_html.escape(str(e))}",
+                                chat_id=chat_id)
+        finally:
+            _check_lock.release()
     elif cmd == "check":
         if not _check_lock.acquire(blocking=False):
             _telegram_send_text("Zaten bir tarama suruyor, birkac saniye sonra "

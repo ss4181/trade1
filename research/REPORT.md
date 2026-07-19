@@ -261,8 +261,11 @@ bildirimlere güven satırı + son-çıkış zaman damgası.
 
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
-1. `signals.log`'a düşen her sinyal için 4/24/72h gerçekleşen getiriyi loglayan
-   küçük bir takip script'i ekleyin (canlı edge takibi).
+1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip
+   script'i ekleyin~~ → **UYGULANDI (2026-07-19):** `realized_performance()` +
+   Telegram `/performans` komutu — olgunlaşan her sinyalin gerçek getirisini
+   ölçüp backtest medyanı/isabetiyle karşılaştırır. 30+ olgun sinyal birikince
+   S2/S3 kararlarını bu veriyle gözden geçir.
 2. S2: 3-6 ay canlı veriyle yeniden bak; edge erimeye devam ederse kaldır.
 3. S3: "orta güven" — 3 ay canlı isabet takibi; 4h edge kaybolursa kaldır.
 4. Eşikleri yeniden kalibre ederken bu penceredeki train/test protokolünü koru;

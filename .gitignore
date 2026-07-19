@@ -6,6 +6,8 @@
 # calisma ciktilari
 signals.log
 *.log
+.bot_state.json
+.perf_cache.json
 
 # python
 __pycache__/

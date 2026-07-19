@@ -1,0 +1,174 @@
+"""Cevrimdisi test paketi — ag/anahtar GEREKMEZ, ~5 saniyede biter.
+
+Her degisiklikten sonra calistir:  python tests/offline_tests.py
+Botun kritik davranislarini dogrular; hepsi gecmeden push etme.
+"""
+
+import json
+import math
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import signal_bot as bot  # noqa: E402
+
+PASS = 0
+
+
+def ok(name):
+    global PASS
+    PASS += 1
+    print(f"  ok  {name}")
+
+
+def test_confidence():
+    assert bot.signal_confidence("S1+S4")[0] == "COK YUKSEK"
+    assert bot.signal_confidence("S1")[0] == "YUKSEK"
+    assert bot.signal_confidence("S3")[0] == "ORTA"
+    assert bot.signal_confidence("S2")[0] == "DUSUK"
+    ok("guven kademeleri")
+
+
+def test_zero_division_guards():
+    z = bot.calc_volume_zscore([10.0])
+    assert math.isnan(z[0])
+    assert bot.realized_sigma1h([100.0, 101.0]) is None
+    assert bot.calc_rsi([1.0] * 5) == [math.nan] * 5 or all(
+        math.isnan(x) for x in bot.calc_rsi([1.0] * 5))
+    ok("sifir-bolme korumalari")
+
+
+def test_snapshot_isolation():
+    st = bot.ScanState()
+    bot.fetch_klines = lambda symbol, limit=250: [
+        {"open_time": i * 3600000, "open": 100, "high": 101, "low": 99,
+         "close": 100, "volume": 10} for i in range(250)]
+    bot.fetch_funding = lambda symbol, limit=3: [
+        {"time": i, "rate": -0.001} for i in range(3)]
+    bot.scan_symbol("TESTUSDT", st, snapshot=True)
+    assert not st.prev_cond and not st.last_fire
+    bot.scan_symbol("TESTUSDT", st, snapshot=False)
+    assert st.prev_cond
+    ok("snapshot izolasyonu / canli state")
+
+
+def test_notify_gating_and_push_flag():
+    pushed = []
+    bot.send_telegram_message = lambda s: pushed.append(("tg", s["strategy"]))
+    bot.send_email_notification = lambda s: pushed.append(("em", s["strategy"]))
+    bot.RECENT_SIGNALS.clear()
+    base = {"direction": "LONG", "strength": "NORMAL", "price": 1,
+            "bar_time": "2026-07-19T12:00:00+00:00", "note": "n",
+            "horizon_hours": 24, "symbol": "X"}
+    bot.notify({**base, "strategy": "S2", "confidence": "DUSUK"})
+    bot.notify({**base, "strategy": "S1", "confidence": "YUKSEK"})
+    bot.notify({**base, "strategy": "S1", "confidence": "YUKSEK"}, push=False)
+    assert len(bot.RECENT_SIGNALS) == 3          # hepsi tamponda
+    assert pushed == [("tg", "S1"), ("em", "S1")]  # yalniz 1 push
+    ok("guven esigi + push bayragi")
+
+
+def test_state_persistence(tmpdir):
+    bot.STATE_FILE = Path(tmpdir) / "state.json"
+    bot.RECENT_SIGNALS.clear()
+    st = bot.ScanState()
+    st.prev_cond[("S1", "BTCUSDT")] = True
+    st.last_fire[("S3", "ETHUSDT")] = 123.0
+    bot.RECENT_SIGNALS.appendleft({"strategy": "S1", "symbol": "BTCUSDT",
+                                   "notified_at": "2026-07-19T12:00:00+00:00"})
+    st.save()
+    bot.RECENT_SIGNALS.clear()
+    st2 = bot.ScanState.load()
+    assert st2.prev_cond[("S1", "BTCUSDT")] is True
+    assert st2.last_fire[("S3", "ETHUSDT")] == 123.0
+    assert len(bot.RECENT_SIGNALS) == 1
+    ok("durum kaliciligi (save/load)")
+
+
+def test_ref_lines():
+    ref = bot.build_ref_levels("S1+S4", 62931.99, 0.006)
+    ref["exit_by"] = "2026-07-20 13:00 UTC"
+    sig = {"strategy": "S1+S4", "symbol": "BTCUSDT", "direction": "LONG",
+           "strength": "STRONG", "confidence": "COK YUKSEK",
+           "confidence_note": "test p=0.006", "price": 62931.99,
+           "bar_time": "2026-07-19T12:00:00+00:00", "rsi": 21.4,
+           "note": "x", "horizon_hours": 24, "ref": ref}
+    lines = bot._ref_lines(sig)
+    joined = "\n".join(lines)
+    for must in ("Guven: COK YUKSEK", "son: 2026-07-20 13:00 UTC",
+                 "Dokunma olasiliklari", "medyan"):
+        assert must in joined, must
+    assert "Referans" in bot._email_html(sig)
+    ok("bildirim referans satirlari")
+
+
+def test_command_security():
+    bot.ENABLE_TELEGRAM = True
+    bot.TELEGRAM_BOT_TOKEN = "X"
+    bot.TELEGRAM_CHAT_ID = "111"
+    bot.TELEGRAM_SUBSCRIBERS = ["111", "222"]
+    bot.TELEGRAM_OPEN = False
+    handled, replies = [], []
+    bot.handle_telegram_command = lambda text, chat_id: handled.append(
+        (text, chat_id))
+    bot._telegram_send_text = lambda text, chat_id=None: replies.append(chat_id)
+
+    class R:
+        def __init__(s, d): s._d = d
+        def raise_for_status(s): pass
+        def json(s): return s._d
+    calls = {"n": 0}
+
+    def fake_get(url, params=None, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return R({"result": [
+                {"update_id": 1, "message": {"text": "/check",
+                                             "chat": {"id": 111}}},
+                {"update_id": 2, "message": {"text": "/check",
+                                             "chat": {"id": 999}}},
+                {"update_id": 3, "message": {"text": "/myid",
+                                             "chat": {"id": 999}}},
+                {"update_id": 4, "message": {"text": "/status",
+                                             "chat": {"id": 222}}},
+            ]})
+        raise KeyboardInterrupt
+
+    bot.requests.get = fake_get
+    try:
+        bot.telegram_command_loop()
+    except KeyboardInterrupt:
+        pass
+    assert [c for _, c in handled] == ["111", "222"]   # yabanci komut islenmedi
+    assert replies == ["999"]                          # yabanci sadece /myid aldi
+    ok("telegram izin listesi guvenligi")
+
+
+def test_perf_formatting():
+    txt = bot._format_performance({"n_total": 0})
+    assert "olgunlasmis" in txt
+    txt = bot._format_performance({
+        "n_total": 5, "fetch_errors": 0,
+        "strategies": {"S1": {"n": 5, "median_pct": 1.1, "mean_pct": 1.5,
+                              "winrate_pct": 60, "bt_median_pct": 0.93,
+                              "bt_winrate_pct": 62}}})
+    assert "S1" in txt and "backtest medyan" in txt
+    ok("performans bicimlendirme")
+
+
+def main():
+    with tempfile.TemporaryDirectory() as td:
+        test_confidence()
+        test_zero_division_guards()
+        test_snapshot_isolation()
+        test_notify_gating_and_push_flag()
+        test_state_persistence(td)
+        test_ref_lines()
+        test_command_security()
+        test_perf_formatting()
+    print(f"\nHEPSI GECTI ({PASS} test)")
+
+
+if __name__ == "__main__":
+    main()

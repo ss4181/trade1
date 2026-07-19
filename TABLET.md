@@ -90,7 +90,11 @@ gitmene gerek yok. Botunla sohbete şunları yaz:
 
 - **/start** veya **/help** — bot yaşıyor mu + komut listesi
 - **/check** — şu an aktif kurulumları getirir (birkaç saniye sürer)
+- **/performans** — gerçekleşen sinyal sonuçları vs backtest beklentisi
 - **/status** — kaç tarama yapıldı, son tarama ne zaman, hata var mı
+
+Ayrıca her gün saat ~09:00'da (TR) tek satırlık **günlük özet** gelir — bu
+mesaj gelmiyorsa bot ölmüş demektir (Termux'u kontrol et).
 
 Güvenlik: bot yalnızca **senin** chat'inden (`.env`'deki `TELEGRAM_CHAT_ID`)
 gelen komutlara cevap verir; botu bulan bir yabancı komut veremez. Bu, açık
@@ -102,6 +106,7 @@ arkasında sorunsuz).
 ```
 start - bot yasiyor mu + komutlar
 check - su an aktif kurulumlar
+performans - canli sonuclar vs backtest
 status - bot durumu
 myid - kendi chat ID'in
 ```
