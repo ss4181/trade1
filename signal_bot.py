@@ -173,6 +173,11 @@ EMAIL_FROM = _env("EMAIL_FROM", "Signal Bot <onboarding@resend.dev>")
 ENABLE_TELEGRAM = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
 ENABLE_EMAIL = bool(RESEND_API_KEY and NOTIFICATION_EMAIL)
 
+# Telegram'dan komut dinleme (/start /check /status). getUpdates long-polling
+# ile — dis-baglanti oldugu icin ev NAT'i arkasinda public URL olmadan calisir.
+_truthy = lambda v: str(v).strip().lower() in ("1", "true", "yes", "on")
+TELEGRAM_COMMANDS = _env("TELEGRAM_COMMANDS", True, cast=_truthy)
+
 # Mobil endpoint (server.py) icin son sinyaller — thread-guvenli halka tampon.
 RECENT_MAXLEN = _env("RECENT_MAXLEN", 100)
 RECENT_SIGNALS: deque[dict] = deque(maxlen=RECENT_MAXLEN)
@@ -589,15 +594,25 @@ def send_telegram_message(sig: dict) -> None:
         lines += [f"<i>{_html.escape(l)}</i>" if l.startswith(("—", "Fiyat-bazli"))
                   else _html.escape(l) for l in ref_lines]
     lines.append(f"<i>{_html.escape(sig['bar_time'])}</i>")
+    _telegram_send_text("\n".join(lines))
+
+
+def _telegram_send_text(text: str, chat_id: str | None = None) -> bool:
+    """Ham HTML metni Telegram'a gonderir (sinyaller + komut cevaplari ortak).
+    Anahtar yoksa sessizce atlar; hata olursa uyarir, ASLA istisna firlatmaz."""
+    if not ENABLE_TELEGRAM:
+        return False
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": "\n".join(lines),
+            json={"chat_id": chat_id or TELEGRAM_CHAT_ID, "text": text,
                   "parse_mode": "HTML", "disable_web_page_preview": True},
             timeout=15)
         r.raise_for_status()
+        return True
     except requests.RequestException as e:
         print(f"uyari: Telegram gonderilemedi: {e}", file=sys.stderr, flush=True)
+        return False
 
 
 def _email_ref_block(sig: dict) -> str:
@@ -727,6 +742,10 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
     global LAST_SCAN_AT, LAST_SCAN_COUNT, SCANS_COMPLETED
     state = state or ScanState()
     refresh_universe_if_due(force=True)     # otomatik moddaysa evreni kur
+    # Telegram komut dinleyicisini yalnizca surekli modda baslat (--once'ta degil)
+    if ENABLE_TELEGRAM and TELEGRAM_COMMANDS and not once:
+        threading.Thread(target=telegram_command_loop, name="tg-commands",
+                         daemon=True).start()
     print(f"signal_bot basladi: {len(SYMBOLS)} sembol "
           f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'}), "
           f"{SCAN_INTERVAL_MINUTES}dk aralik "
@@ -756,15 +775,10 @@ def _priority(sig: dict) -> int:
     return {"S1+S4": 0, "S1": 1, "S3": 2, "S2": 3}.get(sig["strategy"], 9)
 
 
-def run_check() -> int:
-    """--check: O AN aktif olan tum kurulumlarin anlik goruntusu. Bildirim
-    GONDERMEZ, sadece terminale yazar; state'i kirletmez. "Istedigim an uygun
-    strateji var mi?" sorusunun dogru araci (--once degil — o kenar-tetikleme
-    oldugu icin soguk baslangicta hicbir sey gostermez)."""
-    refresh_universe_if_due(force=True)
-    print(f"anlik kontrol: {len(SYMBOLS)} sembol taraniyor "
-          f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'})...",
-          flush=True)
+def collect_active_setups() -> tuple[list[dict], int]:
+    """O an aktif olan tum kurulumlari (snapshot) toplar, oncelige gore
+    siralar. (found, hata_sayisi) doner. Yazdirmaz — hem --check hem Telegram
+    /check bunu kullanir. Evreni yenilemez (cagiran karar verir)."""
     state = ScanState()
     found: list[dict] = []
     errors = 0
@@ -776,6 +790,19 @@ def run_check() -> int:
             print(f"  uyari: {sym} taranamadi: {e}", file=sys.stderr, flush=True)
         time.sleep(0.15)
     found.sort(key=lambda s: (_priority(s), s["symbol"]))
+    return found, errors
+
+
+def run_check() -> int:
+    """--check: O AN aktif olan tum kurulumlarin anlik goruntusu. Bildirim
+    GONDERMEZ, sadece terminale yazar; state'i kirletmez. "Istedigim an uygun
+    strateji var mi?" sorusunun dogru araci (--once degil — o kenar-tetikleme
+    oldugu icin soguk baslangicta hicbir sey gostermez)."""
+    refresh_universe_if_due(force=True)
+    print(f"anlik kontrol: {len(SYMBOLS)} sembol taraniyor "
+          f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'})...",
+          flush=True)
+    found, errors = collect_active_setups()
 
     print("=" * 66)
     if not found:
@@ -799,6 +826,106 @@ def run_check() -> int:
     print("Not: bunlar 'su an kosul aktif' demektir, canli bildirim degil. "
           "Yatirim tavsiyesi degildir.")
     return len(found)
+
+
+def _format_check_for_telegram(found: list[dict], errors: int) -> str:
+    """/check cevabini kompakt HTML olarak bicimler (Telegram 4096 char siniri
+    icin ilk 25 ile sinirli; detay/referans terminal --check'te)."""
+    if not found:
+        return ("Su an <b>aktif kurulum yok</b>. Kosullarin hicbiri "
+                "saglanmiyor — normaldir, guclu kurulumlar seyrektir.")
+    lines = [f"<b>Su an {len(found)} aktif kurulum</b> "
+             f"(oncelik S1+S4&gt;S1&gt;S3&gt;S2):"]
+    for s in found[:25]:
+        if "rsi" in s:
+            extra = f" RSI {s['rsi']}"
+        elif "volume_logz" in s:
+            extra = f" z {s['volume_logz']}"
+        elif "funding_pct" in s:
+            extra = f" fund {s['funding_pct'][-1]}%"
+        else:
+            extra = ""
+        lines.append(f"• <b>{_html.escape(s['strategy'])}</b> "
+                     f"{_html.escape(s['symbol'])} @ {s['price']}{extra} "
+                     f"→ ~{s['horizon_hours']}h")
+    if len(found) > 25:
+        lines.append(f"…ve {len(found) - 25} tane daha")
+    if errors:
+        lines.append(f"(not: {errors} sembol cekilemedi)")
+    lines.append("\n<i>Detay/referans: terminalde --check. "
+                 "Yatirim tavsiyesi degildir.</i>")
+    return "\n".join(lines)
+
+
+def handle_telegram_command(text: str) -> None:
+    """Tek bir /komutu isler ve cevabi yapilandirilmis chat'e gonderir."""
+    cmd = text.strip().split()[0].lower().lstrip("/").split("@")[0]
+    if cmd in ("start", "help"):
+        _telegram_send_text(
+            "🤖 <b>Signal Bot</b> calisiyor.\n\n"
+            "Komutlar:\n"
+            "/check — su an aktif kurulumlar\n"
+            "/status — bot durumu\n"
+            "/help — bu mesaj\n\n"
+            "Yeni sinyaller otomatik olarak buraya ve email'e dusecek. "
+            "Yatirim tavsiyesi degildir.")
+    elif cmd == "status":
+        _telegram_send_text(
+            "<b>Durum</b>\n"
+            f"Sembol: {len(SYMBOLS)} ({'otomatik' if SYMBOL_AUTO else 'statik'})\n"
+            f"Tamamlanan tarama: {SCANS_COMPLETED}\n"
+            f"Son tarama: {LAST_SCAN_AT or '(henuz yok)'}\n"
+            f"Son taramada hata: {LAST_SCAN_ERRORS}\n"
+            f"Email: {'acik' if ENABLE_EMAIL else 'kapali'}")
+    elif cmd == "check":
+        _telegram_send_text("🔎 Taraniyor… (birkac saniye sur)")
+        try:
+            found, errors = collect_active_setups()
+            _telegram_send_text(_format_check_for_telegram(found, errors))
+        except Exception as e:
+            _telegram_send_text(f"Tarama sirasinda hata: {_html.escape(str(e))}")
+    else:
+        _telegram_send_text(f"Bilinmeyen komut: /{_html.escape(cmd)}. /help yaz.")
+
+
+def telegram_command_loop() -> None:
+    """getUpdates long-polling ile /komutlari dinler. GUVENLIK: yalnizca
+    yapilandirilmis TELEGRAM_CHAT_ID'den gelen mesajlara cevap verir (botu
+    bulan bir yabanci komut veremez). Dis-baglanti oldugu icin ev NAT'i
+    arkasinda, public URL/acik port olmadan calisir."""
+    if not ENABLE_TELEGRAM:
+        return
+    base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    offset: int | None = None
+    print("telegram komut dinleyici basladi (/start /check /status)", flush=True)
+    while True:
+        try:
+            params = {"timeout": 30}
+            if offset is not None:
+                params["offset"] = offset
+            r = requests.get(f"{base}/getUpdates", params=params, timeout=45)
+            r.raise_for_status()
+            for upd in r.json().get("result", []):
+                offset = upd["update_id"] + 1
+                msg = upd.get("message") or upd.get("edited_message") or {}
+                text = msg.get("text", "") or ""
+                chat_id = str((msg.get("chat") or {}).get("id", ""))
+                if not text.startswith("/"):
+                    continue
+                if chat_id != str(TELEGRAM_CHAT_ID):
+                    continue                    # yabanci -> sessizce yok say
+                try:
+                    handle_telegram_command(text)
+                except Exception as e:
+                    print(f"uyari: komut islenemedi ({text!r}): {e}",
+                          file=sys.stderr, flush=True)
+        except requests.RequestException as e:
+            # 409 (baska bir poller ayni token'da) / ag hatasi -> bekle, dene
+            print(f"uyari: telegram getUpdates: {e}", file=sys.stderr, flush=True)
+            time.sleep(5)
+        except Exception as e:
+            print(f"uyari: komut dongusu: {e}", file=sys.stderr, flush=True)
+            time.sleep(5)
 
 
 def run_test_notify() -> None:

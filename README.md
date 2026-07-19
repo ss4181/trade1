@@ -90,6 +90,10 @@ uvicorn server:app --host 0.0.0.0 --port 8000
 - **Bildirim testi:** `python signal_bot.py --test-notify` — .env'deki
   anahtarlarla her iki kanala TEST mesajı yollar; gerçek sinyal beklemeden
   kurulumu doğrular.
+- **Telegram komutları** (7/24 döngü çalışırken): bota `/start`, `/check`
+  (şu an aktif kurulumlar), `/status` yazabilirsin. Yalnızca yapılandırılmış
+  `TELEGRAM_CHAT_ID`'den gelen komutlar işlenir; getUpdates long-polling ile
+  çalışır (public URL/açık port gerekmez). Kapatmak: `TELEGRAM_COMMANDS=false`.
 - **Bildirimler:** her sinyal **hem Telegram hem email** ile gider (biri
   diğerinin yerine geçmez). Anti-spam tek kapıdan yönetilir (`ScanState`
   kenar-tetikleme + strateji-başı cooldown); iki kanal aynı deduplike sinyali

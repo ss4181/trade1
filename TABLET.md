@@ -83,12 +83,34 @@ One UI arka plan uygulamalarını agresif kapatır. İkisini de yap:
 
 Tableti prize takılı ve Wi-Fi açık tut.
 
+## Telegram'dan komutla kontrol (tablete hiç dokunmadan)
+
+Bot çalışırken **Telegram'dan bota komut yazabilirsin** — tabletin başına
+gitmene gerek yok. Botunla sohbete şunları yaz:
+
+- **/start** veya **/help** — bot yaşıyor mu + komut listesi
+- **/check** — şu an aktif kurulumları getirir (birkaç saniye sürer)
+- **/status** — kaç tarama yapıldı, son tarama ne zaman, hata var mı
+
+Güvenlik: bot yalnızca **senin** chat'inden (`.env`'deki `TELEGRAM_CHAT_ID`)
+gelen komutlara cevap verir; botu bulan bir yabancı komut veremez. Bu, açık
+port/public URL gerektirmez (bot Telegram'a *dışarı* bağlanır — ev interneti
+arkasında sorunsuz).
+
+İstersen komutların Telegram'da menü olarak çıkması için: BotFather'a
+`/setcommands` yaz, botunu seç, şunu yapıştır:
+```
+start - bot yasiyor mu + komutlar
+check - su an aktif kurulumlar
+status - bot durumu
+```
+
 ## Günlük kullanım
 
 - Sinyaller kendiliğinden Telegram + email'e gelir; tablete dokunman gerekmez.
-- Anlık kontrol istersen Termux'ta `Ctrl+C` ile döngüyü durdurup
-  `python signal_bot.py --check` çalıştır, sonra `python signal_bot.py` ile
-  döngüyü tekrar başlat. (Telefondan Telegram'a bakmak çoğu zaman yeterli.)
+- Anlık kontrol için artık en kolayı: Telegram'dan **/check** yaz. (Alternatif:
+  Termux'ta `Ctrl+C` → `python signal_bot.py --check` → tekrar
+  `python signal_bot.py`.)
 - Tablet yeniden başlarsa Termux'u açıp `cd trade1 && termux-wakelock &&
   python signal_bot.py` yazman yeterli. (Tam otomatik istersen F-Droid'den
   **Termux:Boot** eklentisi kurulabilir — opsiyonel.)
