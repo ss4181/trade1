@@ -210,6 +210,73 @@ RECENT_MAXLEN = _env("RECENT_MAXLEN", 100)
 RECENT_SIGNALS: deque[dict] = deque(maxlen=RECENT_MAXLEN)
 _recent_lock = threading.Lock()
 
+# Piyasa arsivi: her saat evrenin OI + bazis + fiyat fotografi. Amac gelecek
+# arastirma: Binance OI gecmisi ~30 gunle sinirli oldugu icin OI-tabanli
+# hipotezler (REPORT Ek C: S8) test EDILEMIYORDU — kendi arsivimiz 3-6 ayda
+# bunu test edilebilir yapar. Kapatmak: ARCHIVE_MARKET_DATA=false
+ARCHIVE_MARKET_DATA = _env("ARCHIVE_MARKET_DATA", True,
+                           cast=lambda v: str(v).strip().lower()
+                           in ("1", "true", "yes", "on"))
+LAST_SPOT_CLOSE: dict[str, float] = {}   # scan_symbol doldurur (arsiv icin)
+_last_archive_hour: str | None = None
+ARCHIVE_DIR = Path(__file__).parent      # market_archive_YYYY-MM.jsonl buraya
+
+
+def archive_market_state() -> None:
+    """Saatte bir: evrendeki her sembol icin OI + perp fiyati + spot kapanis
+    + bazis fotografini aylik JSONL dosyasina ekler (~5MB/ay). Basarisizlik
+    sessizce atlanir — arsiv, tarama dongusunu ASLA aksatmamali."""
+    global _last_archive_hour
+    if not ARCHIVE_MARKET_DATA:
+        return
+    now = datetime.now(timezone.utc)
+    hour_key = now.strftime("%Y-%m-%dT%H")
+    if _last_archive_hour == hour_key:
+        return
+    try:
+        r = requests.get(f"{FUT_API}/fapi/v1/ticker/price", timeout=30)
+        r.raise_for_status()
+        perp_px = {}
+        for t in r.json():
+            try:
+                perp_px[t["symbol"]] = float(t["price"])
+            except (TypeError, ValueError, KeyError):
+                continue
+    except requests.RequestException as e:
+        print(f"uyari: arsiv perp fiyatlari alinamadi: {e}",
+              file=sys.stderr, flush=True)
+        return
+    _last_archive_hour = hour_key
+    lines = []
+    for sym in list(SYMBOLS):
+        perp = perp_symbol(sym)
+        oi = None
+        try:
+            r = requests.get(f"{FUT_API}/fapi/v1/openInterest",
+                             params={"symbol": perp}, timeout=15)
+            r.raise_for_status()
+            oi = float(r.json().get("openInterest") or 0)
+        except (requests.RequestException, TypeError, ValueError):
+            pass
+        spot = LAST_SPOT_CLOSE.get(sym)
+        px = perp_px.get(perp)
+        scale = 1000.0 if perp.startswith("1000") and not \
+            sym.startswith("1000") else 1.0
+        basis = (round(px / (spot * scale) - 1, 6)
+                 if spot and px and spot > 0 else None)
+        lines.append(json.dumps(
+            {"t": now.isoformat(timespec="minutes"), "sym": sym,
+             "spot": spot, "perp_px": px, "basis": basis, "oi": oi},
+            ensure_ascii=False))
+        time.sleep(0.1)
+    try:
+        path = ARCHIVE_DIR / f"market_archive_{now.strftime('%Y-%m')}.jsonl"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        print(f"piyasa arsivi: {len(lines)} sembol kaydedildi", flush=True)
+    except OSError as e:
+        print(f"uyari: arsiv yazilamadi: {e}", file=sys.stderr, flush=True)
+
 # Servis saglik durumu (server.py /health endpoint'i okur).
 STARTED_AT = datetime.now(timezone.utc).isoformat()
 LAST_SCAN_AT: str | None = None
@@ -577,6 +644,7 @@ def scan_symbol(symbol: str, state: ScanState,
     opens = [k["open"] for k in klines]
     vols = [k["volume"] for k in klines]
     i = len(klines) - 1                       # son KAPANMIS bar
+    LAST_SPOT_CLOSE[symbol] = closes[i]       # saatlik piyasa arsivi icin
     rsi = calc_rsi(closes)
     zs = calc_volume_zscore(vols)
     bar_ts = datetime.fromtimestamp(klines[i]["open_time"] / 1000, tz=timezone.utc)
@@ -948,12 +1016,28 @@ def _maybe_daily_summary() -> None:
                 continue
     sig_txt = (", ".join(f"{k}:{v}" for k, v in sorted(by_strat.items()))
                or "yok")
+    perf_line = ""
+    try:
+        perf = realized_performance(max_signals=30)
+        if perf.get("n_total"):
+            parts = [f"{s} medyan {d['median_pct']:+.2f}% / isabet "
+                     f"%{d['winrate_pct']}"
+                     for s, d in perf["strategies"].items()]
+            perf_line = "\nOlgun sinyal karnesi: " + " · ".join(parts)
+    except Exception:
+        perf_line = ""                      # karne alinamazsa ozet yine gitsin
     _telegram_send_text(
         f"☀️ <b>Gunluk ozet</b> — bot calisiyor.\n"
-        f"Son 24h sinyal: {sig_txt}\n"
+        f"Son 24h sinyal: {sig_txt}{perf_line}\n"
         f"Toplam tarama: {SCANS_COMPLETED} · evren: {len(SYMBOLS)} sembol · "
         f"son taramada hata: {LAST_SCAN_ERRORS}\n"
         f"Anlik kontrol: /check · canli sonuclar: /performans")
+    if now.weekday() == 0:                  # pazartesi: tam karne
+        try:
+            _telegram_send_text("📊 <b>Haftalik karne</b>\n"
+                                + _format_performance(realized_performance()))
+        except Exception:
+            pass
 
 
 def run_forever(once: bool = False, state: ScanState | None = None) -> None:
@@ -993,6 +1077,7 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             LAST_SCAN_COUNT = n
             SCANS_COMPLETED += 1
             print(f"[{t0}] tarama bitti: {n} sinyal", flush=True)
+            archive_market_state()
             _maybe_daily_summary()
         except Exception as e:  # tek dongu hatasi 7/24 servisi dusurmemeli
             print(f"hata: tarama dongusunde beklenmeyen hata: {e}",

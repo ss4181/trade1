@@ -135,9 +135,38 @@ gider).
 - Anlık kontrol için artık en kolayı: Telegram'dan **/check** yaz. (Alternatif:
   Termux'ta `Ctrl+C` → `python signal_bot.py --check` → tekrar
   `python signal_bot.py`.)
-- Tablet yeniden başlarsa Termux'u açıp `cd trade1 && termux-wakelock &&
-  python signal_bot.py` yazman yeterli. (Tam otomatik istersen F-Droid'den
-  **Termux:Boot** eklentisi kurulabilir — opsiyonel.)
+- Tablet yeniden başlarsa: ya aşağıdaki **Otomatik başlatma**yı kur (önerilir)
+  ya da Termux'u açıp `cd trade1 && termux-wakelock && python signal_bot.py`.
+
+## Otomatik başlatma (Termux:Boot — önerilir)
+
+Tablet yeniden başladığında bot kendiliğinden kalksın:
+
+1. F-Droid'den **Termux:Boot** uygulamasını kur ve **bir kez aç** (şart —
+   açmazsan Android boot iznini vermez).
+2. Termux'ta:
+   ```bash
+   mkdir -p ~/.termux/boot
+   cp ~/trade1/termux/boot-signal-bot.sh ~/.termux/boot/
+   chmod +x ~/.termux/boot/boot-signal-bot.sh
+   ```
+3. Test: tableti yeniden başlat → 1-2 dk sonra Telegram'dan `/status` at →
+   cevap geliyorsa otomatik başlatma çalışıyor. Çıktılar `~/trade1/bot.out.log`
+   dosyasına yazılır.
+
+> ⚠️ **409 uyarısı:** Boot betiği kuruluyken bot açılışta zaten çalışıyor
+> olur — elle **ikinci kopya başlatma** (Telegram 409 Conflict verir). Elle
+> başlatmadan önce `pgrep -af signal_bot` ile kontrol et; çalışan varsa önce
+> `pkill -f signal_bot.py`.
+
+## Piyasa arşivi (otomatik — gelecek araştırma verisi)
+
+Bot her saat, evrendeki tüm sembollerin **open interest + bazis + fiyat**
+fotoğrafını `market_archive_YYYY-MM.jsonl` dosyalarına kaydeder (~5MB/ay).
+Amaç: Binance OI geçmişini sadece ~30 gün sakladığı için OI-tabanlı strateji
+fikirleri (REPORT Ek C'deki S8 gibi) test edilemiyordu — bu arşiv 3-6 ay
+birikince kendi verimizle test edilebilir olacaklar. Kapatmak istersen:
+`.env`'e `ARCHIVE_MARKET_DATA=false`. Bu dosyaları silme; araştırma sermayesi.
 
 ## Sınırlar
 

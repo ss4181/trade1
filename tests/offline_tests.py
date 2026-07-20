@@ -196,6 +196,62 @@ def test_disabled_strategies_and_header():
     ok("strateji kapatma anahtari + baslikta guven")
 
 
+def test_market_archiver(tmpdir):
+    bot.ARCHIVE_DIR = Path(tmpdir)
+    bot.ARCHIVE_MARKET_DATA = True
+    bot._last_archive_hour = None
+    bot.SYMBOLS = ["PEPEUSDT", "BTCUSDT"]
+    bot.PERP_MAP = {"PEPEUSDT": "1000PEPEUSDT"}
+    bot.LAST_SPOT_CLOSE.update({"PEPEUSDT": 0.000002, "BTCUSDT": 60000.0})
+
+    class R:
+        def __init__(s, d): s._d = d
+        def raise_for_status(s): pass
+        def json(s): return s._d
+
+    def fake_get(url, params=None, timeout=None):
+        if "ticker/price" in url:
+            return R([{"symbol": "1000PEPEUSDT", "price": "0.002002"},
+                      {"symbol": "BTCUSDT", "price": "60060"}])
+        if "openInterest" in url:
+            return R({"openInterest": "12345.6"})
+        raise AssertionError(url)
+
+    bot.requests.get = fake_get
+    bot.time.sleep = lambda s: None
+    bot.archive_market_state()
+    files = list(Path(tmpdir).glob("market_archive_*.jsonl"))
+    assert len(files) == 1
+    rows = [json.loads(l) for l in files[0].read_text(
+        encoding="utf-8").splitlines()]
+    assert len(rows) == 2
+    pepe = next(r for r in rows if r["sym"] == "PEPEUSDT")
+    # 1000'lik kontrat olcegi: 0.002002/(0.000002*1000)-1 = +0.001
+    assert abs(pepe["basis"] - 0.001) < 1e-6
+    assert pepe["oi"] == 12345.6
+    # ayni saat icinde ikinci cagri yazmamali
+    bot.archive_market_state()
+    assert len(files[0].read_text(encoding="utf-8").splitlines()) == 2
+    ok("piyasa arsivi (1000x olcek + saat kilidi)")
+
+
+def test_daily_summary_includes_perf():
+    sent = []
+    bot._telegram_send_text = lambda text, chat_id=None: sent.append(text)
+    bot.ENABLE_TELEGRAM = True
+    bot.DAILY_SUMMARY_HOUR_UTC = 0
+    bot._last_summary_day = None
+    bot.realized_performance = lambda max_signals=30: {
+        "n_total": 4, "fetch_errors": 0,
+        "strategies": {"S1": {"n": 4, "median_pct": 1.2, "mean_pct": 1.0,
+                              "winrate_pct": 75, "bt_median_pct": 0.93,
+                              "bt_winrate_pct": 62}}}
+    bot._maybe_daily_summary()
+    assert sent and "Gunluk ozet" in sent[0]
+    assert "karne" in sent[0] and "+1.20%" in sent[0]
+    ok("gunluk ozette olgun sinyal karnesi")
+
+
 def test_perf_formatting():
     txt = bot._format_performance({"n_total": 0})
     assert "olgunlasmis" in txt
@@ -218,6 +274,8 @@ def main():
         test_ref_lines()
         test_disabled_strategies_and_header()
         test_command_security()
+        test_market_archiver(td)
+        test_daily_summary_includes_perf()
         test_perf_formatting()
     print(f"\nHEPSI GECTI ({PASS} test)")
 
