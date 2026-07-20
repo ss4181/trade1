@@ -37,10 +37,12 @@ import json
 import math
 import os
 import sys
+import socket
 import threading
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import requests
@@ -105,12 +107,12 @@ SYMBOL_MIN_PERP_VOLUME_M = _env("SYMBOL_MIN_PERP_VOLUME_M", 10.0)  # milyon $/24
 SYMBOL_MIN_SPOT_VOLUME_M = _env("SYMBOL_MIN_SPOT_VOLUME_M", 1.0)   # milyon $/24h, spot
 UNIVERSE_REFRESH_HOURS = _env("UNIVERSE_REFRESH_HOURS", 24)
 
-# 15dk tarama: sinyaller 1h bar KAPANISINDA dogar — daha sik tarama sinyal
+# 5dk tarama: sinyaller 1h bar KAPANISINDA dogar — daha sik tarama sinyal
 # setini DEGISTIRMEZ (kenar-tetikleme ayni kosulu tekrar bildirmez); kazanci
-# S2'nin (8h'lik funding) ve yeniden-baslatma sonrasi yakalamanin hizlanmasi.
-# "15dk'lik scalping sinyali" DEGILDIR — 15m/5m umuklarinda edge olmadigi
-# olculdu (research/REPORT.md Ek A/B).
-SCAN_INTERVAL_MINUTES = _env("SCAN_INTERVAL_MINUTES", 15)
+# S2'nin (8h'lik funding) tespiti, restart sonrasi yakalama ve web panosunun
+# fiyat tazeligi (LAST_SPOT_CLOSE <=5dk eski). "Scalping sinyali" DEGILDIR —
+# 15m/5m ufuklarinda edge olmadigi olculdu (research/REPORT.md Ek A/B).
+SCAN_INTERVAL_MINUTES = _env("SCAN_INTERVAL_MINUTES", 5)
 KLINE_LIMIT = _env("KLINE_LIMIT", 250)          # >= VOLUME_ZSCORE_WINDOW + 24 olmali
 SIGNAL_LOG = _env("SIGNAL_LOG", "signals.log")
 
@@ -1051,6 +1053,8 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
     if ENABLE_TELEGRAM and TELEGRAM_COMMANDS and not once:
         threading.Thread(target=telegram_command_loop, name="tg-commands",
                          daemon=True).start()
+    if not once:
+        start_dashboard()
     print(f"signal_bot basladi: {len(SYMBOLS)} sembol "
           f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'}), "
           f"{SCAN_INTERVAL_MINUTES}dk aralik "
@@ -1078,6 +1082,11 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             SCANS_COMPLETED += 1
             print(f"[{t0}] tarama bitti: {n} sinyal", flush=True)
             archive_market_state()
+            if _last_archive_hour and SCANS_COMPLETED % 12 == 0:
+                try:                       # panoda "olculuyor" kalmasin diye
+                    realized_performance(max_signals=40)
+                except Exception:
+                    pass
             _maybe_daily_summary()
         except Exception as e:  # tek dongu hatasi 7/24 servisi dusurmemeli
             print(f"hata: tarama dongusunde beklenmeyen hata: {e}",
@@ -1154,6 +1163,19 @@ PERF_CACHE_FILE = Path(__file__).parent / ".perf_cache.json"
 PERF_MAX_SIGNALS = _env("PERF_MAX_SIGNALS", 60)
 
 
+def _perf_key(sig: dict) -> str:
+    return f"{sig['bar_time']}|{sig['symbol']}|{sig['strategy']}"
+
+
+def _load_perf_cache() -> dict:
+    if PERF_CACHE_FILE.exists():
+        try:
+            return json.loads(PERF_CACHE_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+    return {}
+
+
 def fetch_klines_at(symbol: str, start_ms: int, limit: int) -> list[dict]:
     r = _spot_get("/api/v3/klines", {"symbol": symbol, "interval": "1h",
                                      "startTime": start_ms, "limit": limit})
@@ -1169,12 +1191,7 @@ def realized_performance(max_signals: int = None) -> dict:
     log_path = Path(__file__).parent / SIGNAL_LOG
     if not log_path.exists():
         return {"error": "signals.log yok — henuz sinyal uretilmedi"}
-    cache = {}
-    if PERF_CACHE_FILE.exists():
-        try:
-            cache = json.loads(PERF_CACHE_FILE.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            cache = {}
+    cache = _load_perf_cache()
     now = datetime.now(timezone.utc)
     rows = []
     for line in log_path.read_text(encoding="utf-8").splitlines():
@@ -1196,7 +1213,7 @@ def realized_performance(max_signals: int = None) -> dict:
     per_strat: dict[str, list[float]] = {}
     fetch_errors = 0
     for bar_t, sig in rows:
-        key = f"{sig['bar_time']}|{sig['symbol']}|{sig['strategy']}"
+        key = _perf_key(sig)
         h = int(sig["horizon_hours"])
         if key in cache:
             ret = cache[key]
@@ -1254,6 +1271,251 @@ def _format_performance(perf: dict) -> str:
     lines.append("\n<i>Kucuk N'de medyan/isabet cok oynak olur; 30+ sinyalden "
                  "once yargiya varma. Yatirim tavsiyesi degildir.</i>")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# web panosu (stdlib http.server — Termux'ta ek kurulum gerektirmez)
+# --------------------------------------------------------------------------
+DASHBOARD_ENABLED = _env("DASHBOARD_ENABLED", True,
+                         cast=lambda v: str(v).strip().lower()
+                         in ("1", "true", "yes", "on"))
+DASHBOARD_PORT = _env("DASHBOARD_PORT", 8181)
+
+
+def _lan_ip() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except OSError:
+        return "127.0.0.1"
+
+
+def build_dashboard_data(max_rows: int = 400) -> dict:
+    """Pano JSON'u: sinyal gecmisi (aktiflerde guncel fiyata gore anlik K/Z,
+    olgunlarda gerceklesen sonuc), strateji karneleri (backtest vs canli),
+    bot durumu. Ag cagrisi YAPMAZ — fiyatlar son taramadan (<=tarama araligi
+    eski), gerceklesenler perf cache'ten."""
+    now = datetime.now(timezone.utc)
+    cache = _load_perf_cache()
+    rows = []
+    log_path = Path(__file__).parent / SIGNAL_LOG
+    lines = []
+    if log_path.exists():
+        try:
+            lines = log_path.read_text(encoding="utf-8").splitlines()[-max_rows:]
+        except OSError:
+            lines = []
+    live_rets: dict[str, list[float]] = {}
+    for line in lines:
+        try:
+            sig = json.loads(line)
+            bar_t = datetime.fromisoformat(sig["bar_time"])
+        except (ValueError, KeyError):
+            continue
+        strat = sig.get("strategy", "?")
+        if strat.startswith("TEST"):
+            continue
+        h = int(sig.get("horizon_hours") or 0)
+        ref = sig.get("ref") or {}
+        entry = ref.get("entry_ref") or sig.get("price")
+        deadline = bar_t + timedelta(hours=1 + h)
+        matured = h > 0 and now >= bar_t + timedelta(hours=h + 2)
+        conf = sig.get("confidence") or signal_confidence(strat)[0]
+        realized = cache.get(_perf_key(sig)) if matured else None
+        cur = LAST_SPOT_CLOSE.get(sig.get("symbol", ""))
+        unreal = None
+        if not matured and cur and entry:
+            unreal = round((cur / entry - 1) * 100, 2)
+        if matured and realized is not None:
+            live_rets.setdefault(strat.split("+")[0], []).append(realized)
+        rows.append({
+            "t": sig["bar_time"], "strategy": strat, "symbol": sig.get("symbol"),
+            "confidence": conf, "strength": sig.get("strength"),
+            "entry": entry, "horizon_h": h,
+            "exit_by": deadline.strftime("%Y-%m-%d %H:%M"),
+            "status": "OLGUN" if matured else "AKTIF",
+            "remaining_h": (None if matured
+                            else max(0, round((deadline - now).total_seconds()
+                                              / 3600, 1))),
+            "cur_price": cur if not matured else None,
+            "pnl_pct": realized if matured else unreal,
+            "pnl_kind": "gerceklesen" if matured else "anlik",
+            "silenced": CONF_RANK.get(conf, 2) < CONF_RANK.get(
+                NOTIFY_MIN_CONFIDENCE, 1),
+            "note": sig.get("note", ""),
+        })
+    rows.reverse()
+    strategies = []
+    for key in ("S1+S4", "S1", "S3", "S2"):
+        bt = STRATEGY_STATS.get(key.split("+")[0], {})
+        conf, evid = signal_confidence(key)
+        lr = live_rets.get(key.split("+")[0], [])
+        strategies.append({
+            "name": key, "confidence": conf, "evidence": evid,
+            "pushed": CONF_RANK.get(conf, 2) >= CONF_RANK.get(
+                NOTIFY_MIN_CONFIDENCE, 1),
+            "bt_h": bt.get("h"), "bt_med": bt.get("med"), "bt_wr": bt.get("wr"),
+            "bt_q10": bt.get("q10"), "bt_q90": bt.get("q90"), "bt_n": bt.get("n"),
+            "live_n": len(lr),
+            "live_med": (round(sorted(lr)[len(lr) // 2], 2) if lr else None),
+            "live_wr": (round(100 * sum(1 for r in lr if r > 0) / len(lr))
+                        if lr else None),
+        })
+    return {
+        "now": now.isoformat(timespec="seconds"),
+        "status": {
+            "scans": SCANS_COMPLETED, "last_scan": LAST_SCAN_AT,
+            "errors": LAST_SCAN_ERRORS, "symbols": len(SYMBOLS),
+            "interval_min": SCAN_INTERVAL_MINUTES,
+            "min_conf": NOTIFY_MIN_CONFIDENCE,
+            "disabled": sorted(DISABLED_STRATEGIES),
+            "started": STARTED_AT,
+        },
+        "strategies": strategies,
+        "signals": rows,
+    }
+
+
+DASHBOARD_HTML = """<!doctype html><html lang="tr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Signal Bot Panosu</title><style>
+:root{--bg:#0b1220;--card:#111a2e;--line:#22304f;--tx:#eaf0fb;--mut:#8aa0c6;
+--up:#2ecc71;--dn:#e06c6c;--bl:#2c7be5}
+*{box-sizing:border-box;margin:0}body{background:var(--bg);color:var(--tx);
+font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;padding:14px;max-width:1100px;margin:0 auto}
+h1{font-size:20px;margin-bottom:8px}.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.chip{background:var(--card);border:1px solid var(--line);border-radius:14px;
+padding:3px 10px;font-size:12px;color:var(--mut)}.chip b{color:var(--tx)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+.card h3{font-size:15px;display:flex;justify-content:space-between;align-items:center}
+.badge{font-size:10px;border-radius:8px;padding:2px 7px;font-weight:700}
+.b3{background:#1d4ed8}.b2{background:#0e7490}.b1{background:#a16207}.b0{background:#7f1d1d}
+.card .row{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-top:5px}
+.card .row b{color:var(--tx)}.off{opacity:.55}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center}
+select,input{background:var(--card);color:var(--tx);border:1px solid var(--line);
+border-radius:8px;padding:6px 8px;font-size:13px}
+.tablewrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:760px}
+th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--mut);font-weight:600;position:sticky;top:0;background:var(--card)}
+.up{color:var(--up);font-weight:700}.dn{color:var(--dn);font-weight:700}
+.tag{font-size:10px;border:1px solid var(--line);border-radius:6px;padding:1px 5px;color:var(--mut)}
+.foot{color:#5b6b88;font-size:11px;margin-top:12px;line-height:1.6}
+@media(max-width:600px){body{padding:8px}}
+</style></head><body>
+<h1>📡 Signal Bot Panosu</h1>
+<div class="chips" id="chips">yükleniyor…</div>
+<div class="cards" id="cards"></div>
+<div class="ctrl">
+ Strateji <select id="fStrat"><option value="">hepsi</option>
+ <option>S1+S4</option><option>S1</option><option>S3</option><option>S2</option></select>
+ Durum <select id="fStat"><option value="">hepsi</option>
+ <option>AKTIF</option><option>OLGUN</option></select>
+ Pozisyon $ <input id="fNot" type="number" value="100" min="1" style="width:84px">
+ <span class="chip" id="cnt"></span>
+</div>
+<div class="tablewrap"><table><thead><tr>
+<th>Zaman (UTC)</th><th>Strateji</th><th>Güven</th><th>Sembol</th><th>Giriş ref</th>
+<th>Son çıkış</th><th>Durum</th><th>K/Z %</th><th>K/Z $</th><th>Not</th>
+</tr></thead><tbody id="rows"></tbody></table></div>
+<div class="foot">K/Z tanımı: <b>AKTİF</b> satırlarda güncel fiyata göre anlık fark
+(fiyat en fazla tarama aralığı kadar eski), <b>OLGUN</b> satırlarda ufuk sonunda
+gerçekleşen sonuç (backtest ile aynı tanım: giriş = sinyal barından sonraki açılış,
+çıkış = ufuk kapanışı). Ücretler (~%0,1 gidiş-dönüş) düşülmemiştir. "SESSİZ" =
+güven eşiği altında; loglandı ama push edilmedi. Bu bir izleme panosudur — sinyaller
+mekanik istatistiklerdir, yatırım tavsiyesi değildir; geçmiş performans geleceği
+garanti etmez. Sayfa 60 sn'de bir kendini yeniler.</div>
+<script>
+const B={3:"b3",2:"b2",1:"b1",0:"b0"},R={"COK YUKSEK":3,"YUKSEK":2,"ORTA":1,"DUSUK":0};
+const fp=x=>x==null?"—":Number(x).toPrecision(6).replace(/\\.?0+$/,"");
+const fpc=x=>x==null?'<span class="tag">ölçülüyor</span>':
+ `<span class="${x>=0?'up':'dn'}">${x>=0?'+':''}${x.toFixed(2)}%</span>`;
+let D=null;
+function draw(){if(!D)return;const s=D.status;
+ document.getElementById("chips").innerHTML=
+  `<span class="chip">⏱ tarama <b>${s.interval_min}dk</b></span>`+
+  `<span class="chip">son tarama <b>${(s.last_scan||"—").slice(11,16)}</b></span>`+
+  `<span class="chip">evren <b>${s.symbols}</b></span>`+
+  `<span class="chip">hata <b>${s.errors}</b></span>`+
+  `<span class="chip">push eşiği <b>${s.min_conf}+</b></span>`+
+  `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`;
+ document.getElementById("cards").innerHTML=D.strategies.map(x=>{
+  const live=x.live_n?`<b>${x.live_med>=0?'+':''}${x.live_med}%</b> / %${x.live_wr} (N=${x.live_n})`:"henüz yok";
+  return `<div class="card ${x.pushed?'':'off'}"><h3>${x.name}
+   <span class="badge ${B[R[x.confidence]]}">${x.confidence}</span></h3>
+   <div class="row"><span>Backtest (${x.bt_h}h)</span><b>${x.bt_med>=0?'+':''}${x.bt_med}% / %${x.bt_wr} (N=${x.bt_n})</b></div>
+   <div class="row"><span>Canlı</span><span>${live}</span></div>
+   <div class="row"><span>Kötü %10 / İyi %10</span><b>${x.bt_q10}% / +${x.bt_q90}%</b></div>
+   <div class="row"><span>Push</span><b>${x.pushed?"açık":"SESSİZ"}</b></div>
+   <div class="row" style="font-size:11px">${x.evidence}</div></div>`}).join("");
+ const fs=document.getElementById("fStrat").value,ft=document.getElementById("fStat").value,
+ not=+document.getElementById("fNot").value||100;
+ const rows=D.signals.filter(r=>(!fs||r.strategy===fs)&&(!ft||r.status===ft));
+ document.getElementById("cnt").textContent=rows.length+" sinyal";
+ document.getElementById("rows").innerHTML=rows.map(r=>{
+  const usd=r.pnl_pct==null?"—":`<span class="${r.pnl_pct>=0?'up':'dn'}">${(r.pnl_pct*not/100).toFixed(2)}$</span>`;
+  const st=r.status==="AKTIF"?`AKTİF <span class="tag">${r.remaining_h}h kaldı</span>`:"OLGUN";
+  return `<tr><td>${r.t.slice(0,16).replace("T"," ")}</td>
+  <td><b>${r.strategy}</b>${r.silenced?' <span class="tag">SESSİZ</span>':''}</td>
+  <td><span class="badge ${B[R[r.confidence]]}">${r.confidence}</span></td>
+  <td>${r.symbol}</td><td>${fp(r.entry)}</td><td>${r.exit_by}</td><td>${st}</td>
+  <td>${fpc(r.pnl_pct)}</td><td>${usd}</td>
+  <td style="white-space:normal;min-width:180px;color:var(--mut)">${r.note}</td></tr>`}).join("")
+  ||'<tr><td colspan="10" style="color:var(--mut)">kayıt yok</td></tr>';}
+async function load(){try{const r=await fetch("/api/dashboard");D=await r.json();draw();}
+ catch(e){document.getElementById("chips").innerHTML='<span class="chip">bağlantı hatası</span>';}}
+["fStrat","fStat","fNot"].forEach(id=>document.getElementById(id).addEventListener("input",draw));
+load();setInterval(load,60000);
+</script></body></html>"""
+
+
+class _DashHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith("/api/dashboard"):
+            try:
+                body = json.dumps(build_dashboard_data(),
+                                  ensure_ascii=False).encode("utf-8")
+                ct = "application/json; charset=utf-8"
+            except Exception as e:
+                body = json.dumps({"error": str(e)}).encode("utf-8")
+                ct = "application/json; charset=utf-8"
+        elif self.path in ("/", "/index.html"):
+            body = DASHBOARD_HTML.encode("utf-8")
+            ct = "text/html; charset=utf-8"
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ct)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):          # erisim loglariyla konsolu bogma
+        pass
+
+
+def start_dashboard() -> None:
+    """Panoyu arka plan thread'inde baslatir (yalniz surekli modda)."""
+    if not DASHBOARD_ENABLED:
+        return
+    try:
+        srv = ThreadingHTTPServer(("0.0.0.0", DASHBOARD_PORT), _DashHandler)
+    except OSError as e:
+        print(f"uyari: pano baslatilamadi (port {DASHBOARD_PORT}): {e}",
+              file=sys.stderr, flush=True)
+        return
+    threading.Thread(target=srv.serve_forever, name="dashboard",
+                     daemon=True).start()
+    print(f"web panosu: http://{_lan_ip()}:{DASHBOARD_PORT}  "
+          f"(ayni Wi-Fi'daki telefon/bilgisayardan ac)", flush=True)
 
 
 def _format_check_for_telegram(found: list[dict], errors: int) -> str:

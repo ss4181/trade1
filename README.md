@@ -94,6 +94,9 @@ uvicorn server:app --host 0.0.0.0 --port 8000
   (şu an aktif kurulumlar), `/status`, `/myid` yazabilirsin. getUpdates
   long-polling ile çalışır (public URL/açık port gerekmez).
   Kapatmak: `TELEGRAM_COMMANDS=false`.
+- **Web panosu:** bot çalışırken `http://<cihaz-ip>:8181` (yalnız yerel ağ) —
+  sinyal geçmişi, aktiflerde anlık K/Z, olgunlarda gerçekleşen sonuç,
+  backtest-vs-canlı strateji karneleri. Ayrıntı: [TABLET.md](TABLET.md).
 - **Arkadaş paylaşımı:** `TELEGRAM_ALLOWED_CHAT_IDS`'e eklenen chat'ler komut
   verebilir ve otomatik sinyalleri alır (abone). Arkadaş kendi ID'sini `/myid`
   ile öğrenir. Listede olmayan biri yalnızca `/myid` alır, gerisi yok sayılır.

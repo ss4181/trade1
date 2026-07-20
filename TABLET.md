@@ -159,6 +159,27 @@ Tablet yeniden başladığında bot kendiliğinden kalksın:
 > başlatmadan önce `pgrep -af signal_bot` ile kontrol et; çalışan varsa önce
 > `pkill -f signal_bot.py`.
 
+## Web panosu (telefondan/bilgisayardan izleme)
+
+Bot çalışırken tablet, ev ağında bir izleme sayfası sunar:
+
+1. Tabletin IP'sini öğren — Termux'ta:
+   ```bash
+   ifconfig 2>/dev/null | grep -A1 wlan0 | grep inet
+   ```
+   (ya da bot başlarken yazdığı `web panosu: http://...` satırına bak.)
+2. **Aynı Wi-Fi'daki** telefonunun/bilgisayarının tarayıcısında aç:
+   `http://<tablet-ip>:8181` — telefonda yer imlerine ekle.
+
+Panoda: geçmiş + güncel tüm sinyaller (sessize alınanlar dahil, etiketli),
+giriş referansı ve son çıkış zamanı, **AKTİF** sinyallerde güncel fiyata göre
+anlık kâr/zarar, **OLGUN** sinyallerde gerçekleşen sonuç, pozisyon tutarı
+girişiyle $ karşılığı, strateji kartlarında backtest-vs-canlı karneler ve bot
+durum çipleri. 60 sn'de bir kendini yeniler.
+
+> Güvenlik: sayfa yalnızca ev ağında görünür (internete açık değil, şifre de
+> yok). Modeminde port yönlendirme yapıp internete AÇMA.
+
 ## Piyasa arşivi (otomatik — gelecek araştırma verisi)
 
 Bot her saat, evrendeki tüm sembollerin **open interest + bazis + fiyat**

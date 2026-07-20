@@ -252,6 +252,41 @@ def test_daily_summary_includes_perf():
     ok("gunluk ozette olgun sinyal karnesi")
 
 
+def test_dashboard_data(tmpdir):
+    log = Path(tmpdir) / "sig.log"
+    old_t = (bot.datetime.now(bot.timezone.utc)
+             - bot.timedelta(hours=40)).isoformat()
+    new_t = (bot.datetime.now(bot.timezone.utc)
+             - bot.timedelta(hours=2)).isoformat()
+    olgun = {"strategy": "S1", "symbol": "AAAUSDT", "direction": "LONG",
+             "strength": "NORMAL", "confidence": "YUKSEK", "bar_time": old_t,
+             "price": 100.0, "note": "x", "horizon_hours": 24,
+             "ref": {"entry_ref": 100.0}}
+    aktif = {"strategy": "S3", "symbol": "BBBUSDT", "direction": "LONG",
+             "strength": "NORMAL", "confidence": "ORTA", "bar_time": new_t,
+             "price": 200.0, "note": "y", "horizon_hours": 4,
+             "ref": {"entry_ref": 200.0}}
+    log.write_text(json.dumps(olgun) + "\n" + json.dumps(aktif) + "\n",
+                   encoding="utf-8")
+    bot.SIGNAL_LOG = str(log)                      # mutlak yol: parent'i ezer
+    bot.PERF_CACHE_FILE = Path(tmpdir) / "pc.json"
+    bot.PERF_CACHE_FILE.write_text(
+        json.dumps({bot._perf_key(olgun): 2.5}), encoding="utf-8")
+    bot.LAST_SPOT_CLOSE.update({"BBBUSDT": 210.0})
+    d = bot.build_dashboard_data()
+    rows = {r["symbol"]: r for r in d["signals"]}
+    assert rows["AAAUSDT"]["status"] == "OLGUN"
+    assert rows["AAAUSDT"]["pnl_pct"] == 2.5       # cache'ten gerceklesen
+    assert rows["BBBUSDT"]["status"] == "AKTIF"
+    assert abs(rows["BBBUSDT"]["pnl_pct"] - 5.0) < 0.01   # 210/200-1
+    assert rows["BBBUSDT"]["remaining_h"] is not None
+    s1 = next(s for s in d["strategies"] if s["name"] == "S1")
+    assert s1["live_n"] == 1 and s1["live_med"] == 2.5
+    assert d["status"]["interval_min"] == bot.SCAN_INTERVAL_MINUTES
+    assert "Signal Bot" in bot.DASHBOARD_HTML
+    ok("pano verisi (aktif anlik K/Z + olgun gerceklesen + canli karne)")
+
+
 def test_perf_formatting():
     txt = bot._format_performance({"n_total": 0})
     assert "olgunlasmis" in txt
@@ -276,6 +311,7 @@ def main():
         test_command_security()
         test_market_archiver(td)
         test_daily_summary_includes_perf()
+        test_dashboard_data(td)
         test_perf_formatting()
     print(f"\nHEPSI GECTI ({PASS} test)")
 
