@@ -283,8 +283,70 @@ def test_dashboard_data(tmpdir):
     s1 = next(s for s in d["strategies"] if s["name"] == "S1")
     assert s1["live_n"] == 1 and s1["live_med"] == 2.5
     assert d["status"]["interval_min"] == bot.SCAN_INTERVAL_MINUTES
-    assert "Signal Bot" in bot.DASHBOARD_HTML
-    ok("pano verisi (aktif anlik K/Z + olgun gerceklesen + canli karne)")
+    # zenginlestirilmis alanlar: docs (tiklanabilir strateji) + why (neden geldi)
+    assert "S1" in d["docs"] and "Nasil" in d["docs"]["S1"]["how"] or \
+        "calisir" in d["docs"]["S1"]["how"] or d["docs"]["S1"]["how"]
+    assert d["docs"]["S1+S4"]["title"]
+    aktif_row = rows["BBBUSDT"]
+    assert "Log-hacim z-skoru" in aktif_row["why"]      # S3 aciklamasi
+    assert "RSI(14)" in rows["AAAUSDT"]["why"]           # S1 aciklamasi
+    # sablon + iki fetch modu
+    assert "{{DATA_URL}}" in bot.DASHBOARD_HTML_TEMPLATE
+    assert '"/api/dashboard"' in bot.dashboard_html()
+    assert '"./data.json"' in bot.dashboard_html("./data.json")
+    ok("pano verisi + docs/why + sablon (LAN & Pages fetch)")
+
+
+def test_github_publish():
+    calls = []
+
+    class R:
+        def __init__(s, code=200, js=None):
+            s.status_code = code
+            s._js = js or {}
+        def raise_for_status(s):
+            if s.status_code >= 400:
+                raise bot.requests.HTTPError(f"HTTP {s.status_code}")
+        def json(s): return s._js
+    bot.GITHUB_TOKEN = "ghsecret"
+    bot.GITHUB_REPO = "u/r"
+    bot.PUBLISH_ENABLED = True
+    bot._last_publish = 0.0
+    bot._gh_sha = None
+    bot.build_dashboard_data = lambda: {"ok": 1}
+
+    def fake_get(url, params=None, timeout=None, headers=None):
+        calls.append(("GET", url))
+        if url.endswith("/git/ref/heads/gh-pages"):
+            return R(404)                   # pages branch yok -> olustur
+        if url.endswith("/repos/u/r"):
+            return R(200, {"default_branch": "main"})
+        if url.endswith("/git/ref/heads/main"):
+            return R(200, {"object": {"sha": "mainsha"}})
+        return R(404)                       # contents: dosya yok
+    def fake_post(url, json=None, timeout=None, headers=None):
+        calls.append(("POST", url, json.get("ref")))
+        return R(201, {})
+    def fake_put(url, json=None, timeout=None, headers=None):
+        calls.append(("PUT", url, json.get("branch")))
+        assert "ghsecret" in headers["Authorization"]
+        assert "content" in json and "message" in json
+        return R(200, {"content": {"sha": "newsha"}})
+    bot.requests.get = fake_get
+    bot.requests.post = fake_post
+    bot.requests.put = fake_put
+    bot.publish_to_github(force=True)
+    # branch olusturma cagrisi yapildi mi
+    assert any(c[0] == "POST" and c[2] == "refs/heads/gh-pages" for c in calls)
+    puts = [c for c in calls if c[0] == "PUT"]
+    # ilk yayinda hem index.html hem data.json yazilmali, dogru branch'e
+    paths = {c[1].rsplit("/", 1)[-1] for c in puts}
+    assert "index.html" in paths and "data.json" in paths
+    assert all(c[2] == "gh-pages" for c in puts)
+    assert bot._gh_sha == "newsha"
+    # token loglarda sizmamali
+    assert bot._redact("hata ghsecret var") == "hata ***TOKEN*** var"
+    ok("github pages yayini (index+data, dogru branch, token redakte)")
 
 
 def test_perf_formatting():
@@ -312,6 +374,7 @@ def main():
         test_market_archiver(td)
         test_daily_summary_includes_perf()
         test_dashboard_data(td)
+        test_github_publish()
         test_perf_formatting()
     print(f"\nHEPSI GECTI ({PASS} test)")
 

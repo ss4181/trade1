@@ -32,6 +32,7 @@ Bagimliliklar: requests (pip install requests). API anahtari GEREKMEZ
 from __future__ import annotations
 
 import argparse
+import base64
 import html as _html
 import json
 import math
@@ -202,6 +203,18 @@ for _c in [str(TELEGRAM_CHAT_ID)] + TELEGRAM_ALLOWED:
 # yabancilar botu spamlarsa /check tarama kilidi korur).
 TELEGRAM_OPEN = _env("TELEGRAM_OPEN", False, cast=_truthy)
 _check_lock = threading.Lock()
+
+# --- GitHub Pages yayini (panoyu her yerden erisilebilir yapar) ---
+# Bot, pano verisini periyodik olarak GitHub'a data.json olarak yazar; statik
+# sayfa onu ceker. Kurulum: TABLET.md "Her yerden erisim (GitHub Pages)".
+# GITHUB_TOKEN: fine-grained PAT (yalniz bu repoda Contents: read/write).
+GITHUB_TOKEN = _env("GITHUB_TOKEN", "")
+GITHUB_REPO = _env("GITHUB_REPO", "")            # "kullanici/repo"
+GITHUB_PAGES_BRANCH = _env("GITHUB_PAGES_BRANCH", "gh-pages")
+PUBLISH_INTERVAL_MIN = _env("PUBLISH_INTERVAL_MIN", 15)
+PUBLISH_ENABLED = bool(GITHUB_TOKEN and GITHUB_REPO)
+_last_publish = 0.0
+_gh_sha: str | None = None
 
 
 def _chat_allowed(chat_id: str) -> bool:
@@ -811,10 +824,11 @@ def send_telegram_message(sig: dict) -> None:
 
 
 def _redact(text: str) -> str:
-    """Hata mesajlarindan bot token'ini temizler — loglara/ekrana ASLA
-    token yazilmamali (URL icinde gelebiliyor)."""
-    if TELEGRAM_BOT_TOKEN:
-        text = text.replace(TELEGRAM_BOT_TOKEN, "***TOKEN***")
+    """Hata mesajlarindan sirlari temizler — loglara/ekrana ASLA token
+    yazilmamali (URL/header icinde gelebiliyor)."""
+    for secret in (TELEGRAM_BOT_TOKEN, GITHUB_TOKEN):
+        if secret:
+            text = text.replace(secret, "***TOKEN***")
     return text
 
 
@@ -1055,6 +1069,11 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
                          daemon=True).start()
     if not once:
         start_dashboard()
+        if PUBLISH_ENABLED:
+            user = GITHUB_REPO.split("/")[0]
+            repo = GITHUB_REPO.split("/")[-1]
+            print(f"GitHub Pages yayini ACIK ({PUBLISH_INTERVAL_MIN}dk'da bir): "
+                  f"https://{user}.github.io/{repo}/", flush=True)
     print(f"signal_bot basladi: {len(SYMBOLS)} sembol "
           f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'}), "
           f"{SCAN_INTERVAL_MINUTES}dk aralik "
@@ -1082,6 +1101,7 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             SCANS_COMPLETED += 1
             print(f"[{t0}] tarama bitti: {n} sinyal", flush=True)
             archive_market_state()
+            publish_to_github()
             if _last_archive_hour and SCANS_COMPLETED % 12 == 0:
                 try:                       # panoda "olculuyor" kalmasin diye
                     realized_performance(max_signals=40)
@@ -1281,6 +1301,102 @@ DASHBOARD_ENABLED = _env("DASHBOARD_ENABLED", True,
                          in ("1", "true", "yes", "on"))
 DASHBOARD_PORT = _env("DASHBOARD_PORT", 8181)
 
+# Strateji ansiklopedisi — panoda karta tiklayinca acilan detay. Tumu 24 aylik
+# backtest (research/REPORT.md) bulgularina dayanir.
+STRATEGY_DOCS = {
+    "S1+S4": {
+        "title": "S1+S4 — Hacimli Kapitulasyon Dibi (en guclu sinyal)",
+        "how": "S1'in (RSI asiri satim + bullish divergence donusu) uzerine, "
+               "son 24 saatte S3 duzeyinde (log-hacim z>=3) bir hacim "
+               "patlamasi eklendiginde olusur. Yani hem satis ivmesi tukeniyor "
+               "hem de olaganustu hacimle 'teslimiyet' yasaniyor — panik dibi.",
+        "entry": "RSI(14)<=22.5 + fiyat yeni dip ama RSI daha yuksek "
+                 "(divergence) + son 24s icinde log-hacim z>=3.0.",
+        "exit": "Zaman cikisi ~24-72 saat. Backtest'te dogrulanan TEK cikis "
+                "kurali budur; fiyat-bazli stop/hedef edge'i azaltir (Ek B).",
+        "stats": "Test (ayi rejimi): edge +0.38 vol, p=0.006, 72h kazanma %66. "
+                 "Dort rejimin dordunde pozitif. Seyrek: ayda ~6 kez.",
+        "risk": "En guvenilir kurulum ama yine de garanti degil; kotu %10 "
+                "senaryosu ~-4.5%. Kaldirac bu sayiyi carpar.",
+    },
+    "S1": {
+        "title": "S1 — RSI Asiri Satim + Bullish Divergence (donus)",
+        "how": "Bir coin sert satildiginda RSI 'asiri satim' bolgesine iner. "
+               "Fiyat yeni bir dip yaparken RSI onceki dipten YUKSEK kalirsa, "
+               "buna 'bullish divergence' denir: satici gucu tukeniyor demektir "
+               "-> yukari donus adayi.",
+        "entry": "RSI(14) <= 22.5 VE fiyat son ~60 barin dibinin altinda VE o "
+                 "eski dibe gore RSI daha yuksek (uyumsuzluk).",
+        "exit": "Zaman cikisi ~24 saat.",
+        "stats": "Test: edge +0.31 vol, p=0.006, kazanma %62, medyan +0.93%. "
+                 "En saglam tekil strateji; 4 rejimde 4/4 pozitif.",
+        "risk": "Kotu %10: -4.5%. Dusen bicaga erken girmek — divergence sarti "
+                "tam bunu suzmek icin var ama kusursuz degil.",
+    },
+    "S3": {
+        "title": "S3 — Hacim Anomalisi (kisa vadeli momentum)",
+        "how": "Olaganustu hacimle gelen bir YESIL mum, kisa vadede alicilarin "
+               "kontrolu ele aldigini gosterir; momentumun birkac saat devam "
+               "etme egilimi vardir. Hacim, ham degil LOG-donusumlu z-skorla "
+               "olculur (ham hacim asiri gurultuluydu).",
+        "entry": "log1p(hacim) z-skoru >= 3.0 (168 saatlik pencereye gore) VE "
+                 "bar yesil (kapanis > acilis).",
+        "exit": "Zaman cikisi ~4 saat (kisa ufuk).",
+        "stats": "Test: 4h edge +0.25 vol, p<0.001. AMA medyani +0.16% — "
+                 "ucretlere yakin; 'orta guven' (nihai secimde 2. bakis serhi).",
+        "risk": "Kotu %10: -2.8%. Tek basina zayif bir islem; daha cok "
+                "'momentum var' bilgisidir. Pump'in tepesine girme riski.",
+    },
+    "S2": {
+        "title": "S2 — Funding Squeeze (en dusuk guven)",
+        "how": "Vadeli piyasada short'lar cok kalabaliksa, 'funding' negatif "
+               "olur: short'lar long'lara para oder. Bu kalabalik bazen "
+               "sikisip fiyati yukari iter (short squeeze). Ust uste 2 negatif "
+               "funding, kaliciligi teyit eder.",
+        "entry": "Son 2 funding orani <= -0.03%.",
+        "exit": "Zaman cikisi ~72 saat.",
+        "stats": "Test: edge +0.14, p=0.08 — istatistiksel esigi GECEMEDI "
+                 "(marjinal). Sinyaller ~5 sembolde yogunlasiyor.",
+        "risk": "EN RISKLI: kotu %10 = -9.1% (en derin kuyruk). Bu yuzden "
+                "varsayilan olarak telefonuna PUSH EDILMEZ (sessiz-kayit); "
+                "panoda ve /performans'ta gorunur. Iyilestirme yollari tukendi "
+                "(REPORT Ek D); canli veri birikince kaldir/tut karari verilecek.",
+    },
+}
+
+
+def _signal_why(sig: dict) -> str:
+    """Bu sinyalin TAM OLARAK hangi kosullarla tetiklendigini duz Turkce anlatir
+    (panoda satira tiklayinca acilir)."""
+    strat = sig.get("strategy", "")
+    base = strat.split("+")[0]
+    p = []
+    if base == "S1":
+        rsi = sig.get("rsi")
+        p.append(f"RSI(14) = {rsi}: asiri satim esigi {RSI_OVERSOLD}'in altinda.")
+        p.append("Fiyat son ~60 barin dibinin altina indi ama RSI o dipten "
+                 "daha yuksek kaldi (bullish divergence = satis ivmesi tukeniyor).")
+        if "+S4" in strat:
+            p.append(f"AYRICA son {CONFLUENCE_LOOKBACK_HOURS}s icinde log-hacim "
+                     f"z >= {VOLUME_ZSCORE_THRESHOLD} hacim patlamasi vardi "
+                     "(hacimli kapitulasyon) -> STRONG'a yukseltildi.")
+    elif base == "S3":
+        z = sig.get("volume_logz")
+        p.append(f"Log-hacim z-skoru = {z}: {VOLUME_ZSCORE_THRESHOLD} esigini "
+                 f"asti ({VOLUME_ZSCORE_WINDOW}s ortalamasina gore olaganustu "
+                 "hacim).")
+        p.append("Bar YESIL kapandi (kapanis > acilis) -> alici yonlu momentum, "
+                 "kisa vadeli devam beklentisi.")
+    elif base == "S2":
+        fp = sig.get("funding_pct") or []
+        vals = ", ".join(f"{x}%" for x in fp)
+        p.append(f"Son {FUNDING_PERSISTENCE} funding orani ({vals}) "
+                 f"{FUNDING_SQUEEZE_THRESHOLD_PCT}% esiginin altinda: short'lar "
+                 "long'lara oduyor -> kalabalik short, sikisma adayi.")
+    conf, evid = signal_confidence(strat)
+    p.append(f"Guven: {conf} — {evid}.")
+    return " ".join(p)
+
 
 def _lan_ip() -> str:
     try:
@@ -1346,6 +1462,12 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "silenced": CONF_RANK.get(conf, 2) < CONF_RANK.get(
                 NOTIFY_MIN_CONFIDENCE, 1),
             "note": sig.get("note", ""),
+            "why": _signal_why(sig),
+            "detail": _signal_detail_rows(sig),      # (etiket, deger) ciftleri
+            "ref": {k: ref.get(k) for k in
+                    ("median_price", "q10_price", "q90_price", "sigma_h_pct",
+                     "hist_median_pct", "hist_q10_pct", "hist_q90_pct",
+                     "touch", "stopt")} if ref else None,
         })
     rows.reverse()
     strategies = []
@@ -1375,42 +1497,54 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "started": STARTED_AT,
         },
         "strategies": strategies,
+        "docs": STRATEGY_DOCS,
         "signals": rows,
     }
 
 
-DASHBOARD_HTML = """<!doctype html><html lang="tr"><head>
+DASHBOARD_HTML_TEMPLATE = """<!doctype html><html lang="tr"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Signal Bot Panosu</title><style>
 :root{--bg:#0b1220;--card:#111a2e;--line:#22304f;--tx:#eaf0fb;--mut:#8aa0c6;
 --up:#2ecc71;--dn:#e06c6c;--bl:#2c7be5}
 *{box-sizing:border-box;margin:0}body{background:var(--bg);color:var(--tx);
 font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;padding:14px;max-width:1100px;margin:0 auto}
-h1{font-size:20px;margin-bottom:8px}.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+h1{font-size:20px;margin-bottom:4px}.sub{color:var(--mut);font-size:12px;margin-bottom:12px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
 .chip{background:var(--card);border:1px solid var(--line);border-radius:14px;
 padding:3px 10px;font-size:12px;color:var(--mut)}.chip b{color:var(--tx)}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:14px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
-.card h3{font-size:15px;display:flex;justify-content:space-between;align-items:center}
-.badge{font-size:10px;border-radius:8px;padding:2px 7px;font-weight:700}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;cursor:pointer;transition:border-color .15s}
+.card:hover{border-color:var(--bl)}.card h3{font-size:15px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.badge{font-size:10px;border-radius:8px;padding:2px 7px;font-weight:700;white-space:nowrap}
 .b3{background:#1d4ed8}.b2{background:#0e7490}.b1{background:#a16207}.b0{background:#7f1d1d}
 .card .row{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-top:5px}
-.card .row b{color:var(--tx)}.off{opacity:.55}
-.ctrl{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center}
+.card .row b{color:var(--tx)}.off{opacity:.55}.hint{color:var(--bl);font-size:11px;margin-top:7px}
+.doc{background:var(--card);border:1px solid var(--bl);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.doc h2{font-size:16px;margin-bottom:8px}.doc p{font-size:13px;margin:6px 0;color:#c7d3ea}
+.doc p b{color:var(--bl)}.doc .x{float:right;cursor:pointer;color:var(--mut)}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center;font-size:13px}
 select,input{background:var(--card);color:var(--tx);border:1px solid var(--line);
 border-radius:8px;padding:6px 8px;font-size:13px}
 .tablewrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:12px}
-table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:760px}
+table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:820px}
 th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--mut);font-weight:600;position:sticky;top:0;background:var(--card)}
+tr.sig{cursor:pointer}tr.sig:hover td{background:#16203a}
 .up{color:var(--up);font-weight:700}.dn{color:var(--dn);font-weight:700}
 .tag{font-size:10px;border:1px solid var(--line);border-radius:6px;padding:1px 5px;color:var(--mut)}
+.drawer td{background:#0d1526;white-space:normal}
+.why{font-size:13px;color:#c7d3ea;line-height:1.55;margin-bottom:8px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font-size:12px;color:var(--mut);max-width:520px}
+.kv b{color:var(--tx)}
 .foot{color:#5b6b88;font-size:11px;margin-top:12px;line-height:1.6}
 @media(max-width:600px){body{padding:8px}}
 </style></head><body>
 <h1>📡 Signal Bot Panosu</h1>
+<div class="sub">Karta veya sinyal satırına tıkla → nasıl çalıştığını / neden geldiğini gösterir.</div>
 <div class="chips" id="chips">yükleniyor…</div>
 <div class="cards" id="cards"></div>
+<div id="docWrap"></div>
 <div class="ctrl">
  Strateji <select id="fStrat"><option value="">hepsi</option>
  <option>S1+S4</option><option>S1</option><option>S3</option><option>S2</option></select>
@@ -1423,19 +1557,44 @@ th{color:var(--mut);font-weight:600;position:sticky;top:0;background:var(--card)
 <th>Zaman (UTC)</th><th>Strateji</th><th>Güven</th><th>Sembol</th><th>Giriş ref</th>
 <th>Son çıkış</th><th>Durum</th><th>K/Z %</th><th>K/Z $</th><th>Not</th>
 </tr></thead><tbody id="rows"></tbody></table></div>
-<div class="foot">K/Z tanımı: <b>AKTİF</b> satırlarda güncel fiyata göre anlık fark
-(fiyat en fazla tarama aralığı kadar eski), <b>OLGUN</b> satırlarda ufuk sonunda
-gerçekleşen sonuç (backtest ile aynı tanım: giriş = sinyal barından sonraki açılış,
-çıkış = ufuk kapanışı). Ücretler (~%0,1 gidiş-dönüş) düşülmemiştir. "SESSİZ" =
-güven eşiği altında; loglandı ama push edilmedi. Bu bir izleme panosudur — sinyaller
-mekanik istatistiklerdir, yatırım tavsiyesi değildir; geçmiş performans geleceği
-garanti etmez. Sayfa 60 sn'de bir kendini yeniler.</div>
+<div class="foot" id="foot"></div>
 <script>
+const DATA_URL="{{DATA_URL}}";
 const B={3:"b3",2:"b2",1:"b1",0:"b0"},R={"COK YUKSEK":3,"YUKSEK":2,"ORTA":1,"DUSUK":0};
+const esc=s=>(s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const fp=x=>x==null?"—":Number(x).toPrecision(6).replace(/\\.?0+$/,"");
 const fpc=x=>x==null?'<span class="tag">ölçülüyor</span>':
  `<span class="${x>=0?'up':'dn'}">${x>=0?'+':''}${x.toFixed(2)}%</span>`;
-let D=null;
+let D=null,openDoc=null,openRow=null;
+function toggleDoc(name){openDoc=openDoc===name?null:name;drawDoc();}
+function drawDoc(){const w=document.getElementById("docWrap");
+ if(!openDoc||!D.docs||!D.docs[openDoc]){w.innerHTML="";return;}
+ const d=D.docs[openDoc];
+ w.innerHTML=`<div class="doc"><span class="x" onclick="toggleDoc(null)">✕ kapat</span>
+  <h2>${esc(d.title)}</h2>
+  <p><b>Nasıl çalışır:</b> ${esc(d.how)}</p>
+  <p><b>Giriş koşulu:</b> ${esc(d.entry)}</p>
+  <p><b>Çıkış:</b> ${esc(d.exit)}</p>
+  <p><b>Backtest:</b> ${esc(d.stats)}</p>
+  <p><b>Risk:</b> ${esc(d.risk)}</p></div>`;
+ w.scrollIntoView({behavior:"smooth",block:"nearest"});}
+function drawer(r){const rf=r.ref||{};
+ const touch=(rf.touch||[]).map(t=>`+${t[0]}% → %${t[1]}`).join(" · ");
+ const stopt=(rf.stopt||[]).map(t=>`-${t[0]}% → %${t[1]}`).join(" · ");
+ let ref="";
+ if(rf.median_price!=null)ref=`<div class="kv">
+  <span>Tarihsel medyan senaryo</span><b>${fp(rf.median_price)} (${rf.hist_median_pct>=0?'+':''}${rf.hist_median_pct}%)</b>
+  <span>Kötü %10 senaryo</span><b>${fp(rf.q10_price)} (${rf.hist_q10_pct}%)</b>
+  <span>İyi %10 senaryo</span><b>${fp(rf.q90_price)} (+${rf.hist_q90_pct}%)</b>
+  ${rf.sigma_h_pct!=null?`<span>Tipik dalgalanma (±1σ)</span><b>±${rf.sigma_h_pct}%</b>`:""}
+  ${touch?`<span>Hedefe dokunma olasılığı</span><b>${touch}</b>`:""}
+  ${stopt?`<span>Stop'a dokunma olasılığı</span><b>${stopt}</b>`:""}
+ </div>`;
+ const det=(r.detail||[]).map(d=>`${esc(d[0])}: <b>${esc(d[1])}</b>`).join(" · ");
+ return `<div class="why">🔍 <b>Neden geldi:</b> ${esc(r.why)}</div>
+  ${det?`<div class="kv" style="margin-bottom:8px"><span>Ölçümler</span><b>${det}</b></div>`:""}
+  ${ref}
+  <div style="font-size:11px;color:var(--mut);margin-top:8px">Fiyat senaryoları 24 aylık dağılımdan; emir seviyesi değil. Fiyat-bazlı stop/hedef backtest'te zaman çıkışını yenemedi.</div>`;}
 function draw(){if(!D)return;const s=D.status;
  document.getElementById("chips").innerHTML=
   `<span class="chip">⏱ tarama <b>${s.interval_min}dk</b></span>`+
@@ -1446,32 +1605,47 @@ function draw(){if(!D)return;const s=D.status;
   `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`;
  document.getElementById("cards").innerHTML=D.strategies.map(x=>{
   const live=x.live_n?`<b>${x.live_med>=0?'+':''}${x.live_med}%</b> / %${x.live_wr} (N=${x.live_n})`:"henüz yok";
-  return `<div class="card ${x.pushed?'':'off'}"><h3>${x.name}
+  return `<div class="card ${x.pushed?'':'off'}" onclick="toggleDoc('${x.name}')"><h3>${x.name}
    <span class="badge ${B[R[x.confidence]]}">${x.confidence}</span></h3>
    <div class="row"><span>Backtest (${x.bt_h}h)</span><b>${x.bt_med>=0?'+':''}${x.bt_med}% / %${x.bt_wr} (N=${x.bt_n})</b></div>
    <div class="row"><span>Canlı</span><span>${live}</span></div>
    <div class="row"><span>Kötü %10 / İyi %10</span><b>${x.bt_q10}% / +${x.bt_q90}%</b></div>
    <div class="row"><span>Push</span><b>${x.pushed?"açık":"SESSİZ"}</b></div>
-   <div class="row" style="font-size:11px">${x.evidence}</div></div>`}).join("");
+   <div class="hint">▸ nasıl çalışır (tıkla)</div></div>`}).join("");
+ drawDoc();
  const fs=document.getElementById("fStrat").value,ft=document.getElementById("fStat").value,
  not=+document.getElementById("fNot").value||100;
  const rows=D.signals.filter(r=>(!fs||r.strategy===fs)&&(!ft||r.status===ft));
  document.getElementById("cnt").textContent=rows.length+" sinyal";
- document.getElementById("rows").innerHTML=rows.map(r=>{
+ document.getElementById("rows").innerHTML=rows.map((r,i)=>{
   const usd=r.pnl_pct==null?"—":`<span class="${r.pnl_pct>=0?'up':'dn'}">${(r.pnl_pct*not/100).toFixed(2)}$</span>`;
   const st=r.status==="AKTIF"?`AKTİF <span class="tag">${r.remaining_h}h kaldı</span>`:"OLGUN";
-  return `<tr><td>${r.t.slice(0,16).replace("T"," ")}</td>
-  <td><b>${r.strategy}</b>${r.silenced?' <span class="tag">SESSİZ</span>':''}</td>
-  <td><span class="badge ${B[R[r.confidence]]}">${r.confidence}</span></td>
-  <td>${r.symbol}</td><td>${fp(r.entry)}</td><td>${r.exit_by}</td><td>${st}</td>
-  <td>${fpc(r.pnl_pct)}</td><td>${usd}</td>
-  <td style="white-space:normal;min-width:180px;color:var(--mut)">${r.note}</td></tr>`}).join("")
-  ||'<tr><td colspan="10" style="color:var(--mut)">kayıt yok</td></tr>';}
-async function load(){try{const r=await fetch("/api/dashboard");D=await r.json();draw();}
+  const main=`<tr class="sig" data-i="${i}"><td>${r.t.slice(0,16).replace("T"," ")}</td>
+   <td><b>${r.strategy}</b>${r.silenced?' <span class="tag">SESSİZ</span>':''}</td>
+   <td><span class="badge ${B[R[r.confidence]]}">${r.confidence}</span></td>
+   <td>${r.symbol}</td><td>${fp(r.entry)}</td><td>${r.exit_by}</td><td>${st}</td>
+   <td>${fpc(r.pnl_pct)}</td><td>${usd}</td>
+   <td style="white-space:normal;min-width:170px;color:var(--mut)">▸ ${esc(r.note)}</td></tr>`;
+  const dr=`<tr class="drawer" data-d="${i}" ${openRow===r.t+r.symbol?"":"hidden"}><td colspan="10">${drawer(r)}</td></tr>`;
+  return main+dr}).join("")
+  ||'<tr><td colspan="10" style="color:var(--mut)">kayıt yok</td></tr>';
+ document.getElementById("foot").innerHTML=D.foot||FOOT;}
+const FOOT='K/Z tanımı: <b>AKTİF</b> satırlarda güncel fiyata göre anlık fark (fiyat en fazla tarama aralığı kadar eski), <b>OLGUN</b> satırlarda ufuk sonunda gerçekleşen sonuç (giriş = sinyal barından sonraki açılış, çıkış = ufuk kapanışı). Ücretler (~%0,1 gidiş-dönüş) düşülmemiştir. "SESSİZ" = güven eşiği altında; loglandı ama push edilmedi. Bu bir izleme panosudur — sinyaller mekanik istatistiklerdir, yatırım tavsiyesi değildir; geçmiş performans geleceği garanti etmez.';
+document.getElementById("rows").addEventListener("click",e=>{
+ const tr=e.target.closest("tr.sig");if(!tr)return;
+ const rows=D.signals.filter(r=>{const fs=document.getElementById("fStrat").value,
+  ft=document.getElementById("fStat").value;return(!fs||r.strategy===fs)&&(!ft||r.status===ft)});
+ const r=rows[+tr.dataset.i];const key=r.t+r.symbol;openRow=openRow===key?null:key;draw();});
+async function load(){try{const r=await fetch(DATA_URL,{cache:"no-store"});D=await r.json();
+ if(!D.foot)D.foot=FOOT;draw();}
  catch(e){document.getElementById("chips").innerHTML='<span class="chip">bağlantı hatası</span>';}}
 ["fStrat","fStat","fNot"].forEach(id=>document.getElementById(id).addEventListener("input",draw));
 load();setInterval(load,60000);
 </script></body></html>"""
+
+
+def dashboard_html(data_url: str = "/api/dashboard") -> str:
+    return DASHBOARD_HTML_TEMPLATE.replace("{{DATA_URL}}", data_url)
 
 
 class _DashHandler(BaseHTTPRequestHandler):
@@ -1485,7 +1659,7 @@ class _DashHandler(BaseHTTPRequestHandler):
                 body = json.dumps({"error": str(e)}).encode("utf-8")
                 ct = "application/json; charset=utf-8"
         elif self.path in ("/", "/index.html"):
-            body = DASHBOARD_HTML.encode("utf-8")
+            body = dashboard_html().encode("utf-8")
             ct = "text/html; charset=utf-8"
         else:
             self.send_response(404)
@@ -1516,6 +1690,89 @@ def start_dashboard() -> None:
                      daemon=True).start()
     print(f"web panosu: http://{_lan_ip()}:{DASHBOARD_PORT}  "
           f"(ayni Wi-Fi'daki telefon/bilgisayardan ac)", flush=True)
+
+
+def _gh_put_file(path: str, content_b: bytes, message: str,
+                 sha: str | None) -> str | None:
+    """GitHub Contents API ile dosya olustur/guncelle; yeni sha doner."""
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+    payload = {"message": message, "branch": GITHUB_PAGES_BRANCH,
+               "content": base64.b64encode(content_b).decode("ascii")}
+    if sha:
+        payload["sha"] = sha
+    r = requests.put(url, json=payload, timeout=30, headers={
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json"})
+    r.raise_for_status()
+    return r.json().get("content", {}).get("sha")
+
+
+def _gh_headers() -> dict:
+    return {"Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json"}
+
+
+def _gh_get_sha(path: str) -> str | None:
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+    r = requests.get(url, params={"ref": GITHUB_PAGES_BRANCH}, timeout=30,
+                     headers=_gh_headers())
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return r.json().get("sha")
+
+
+def _gh_ensure_branch() -> None:
+    """Pages branch'i yoksa varsayilan branch'ten olusturur (self-bootstrap —
+    kullanicinin git ile branch acmasina gerek yok)."""
+    base = f"https://api.github.com/repos/{GITHUB_REPO}"
+    h = _gh_headers()
+    r = requests.get(f"{base}/git/ref/heads/{GITHUB_PAGES_BRANCH}",
+                     headers=h, timeout=30)
+    if r.status_code == 200:
+        return
+    if r.status_code != 404:
+        r.raise_for_status()
+    repo = requests.get(base, headers=h, timeout=30)
+    repo.raise_for_status()
+    default = repo.json().get("default_branch", "main")
+    ref = requests.get(f"{base}/git/ref/heads/{default}", headers=h, timeout=30)
+    ref.raise_for_status()
+    sha = ref.json()["object"]["sha"]
+    cr = requests.post(f"{base}/git/refs", headers=h, timeout=30,
+                       json={"ref": f"refs/heads/{GITHUB_PAGES_BRANCH}",
+                             "sha": sha})
+    cr.raise_for_status()
+    print(f"GitHub: '{GITHUB_PAGES_BRANCH}' branch'i olusturuldu", flush=True)
+
+
+def publish_to_github(force: bool = False) -> None:
+    """Pano verisini GitHub Pages branch'ine data.json olarak yazar (ve ilk
+    kez index.html'i olusturur). Basarisizlik tarama dongusunu ASLA aksatmaz.
+    ONEMLI: yayimlanan JSON'da SIR YOK (sinyaller + fiyatlar + istatistik;
+    token/chat-id/anahtar icermez)."""
+    global _last_publish, _gh_sha
+    if not PUBLISH_ENABLED:
+        return
+    if not force and time.time() - _last_publish < PUBLISH_INTERVAL_MIN * 60:
+        return
+    _last_publish = time.time()
+    try:
+        data = json.dumps(build_dashboard_data(), ensure_ascii=False).encode("utf-8")
+        if _gh_sha is None:
+            _gh_ensure_branch()           # branch yoksa olustur
+            _gh_sha = _gh_get_sha("data.json")
+            if _gh_sha is None:            # ilk yayin: index.html'i de kur
+                _gh_put_file("index.html",
+                             dashboard_html("./data.json").encode("utf-8"),
+                             "dashboard: index.html", _gh_get_sha("index.html"))
+        _gh_sha = _gh_put_file("data.json", data,
+                               f"data {datetime.now(timezone.utc):%Y-%m-%d %H:%M}",
+                               _gh_sha)
+    except requests.RequestException as e:
+        _gh_sha = None                     # sha bayatlamis olabilir -> yeniden al
+        print(f"uyari: GitHub Pages yayini basarisiz: {_redact(str(e))}",
+              file=sys.stderr, flush=True)
 
 
 def _format_check_for_telegram(found: list[dict], errors: int) -> str:

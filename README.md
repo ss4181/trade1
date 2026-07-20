@@ -96,7 +96,11 @@ uvicorn server:app --host 0.0.0.0 --port 8000
   Kapatmak: `TELEGRAM_COMMANDS=false`.
 - **Web panosu:** bot çalışırken `http://<cihaz-ip>:8181` (yalnız yerel ağ) —
   sinyal geçmişi, aktiflerde anlık K/Z, olgunlarda gerçekleşen sonuç,
-  backtest-vs-canlı strateji karneleri. Ayrıntı: [TABLET.md](TABLET.md).
+  backtest-vs-canlı strateji karneleri. **Strateji kartına** tıkla → nasıl
+  çalışır; **sinyal satırına** tıkla → neden geldi. Ayrıntı: [TABLET.md](TABLET.md).
+- **Her yerden erişim (GitHub Pages):** `GITHUB_TOKEN`+`GITHUB_REPO`
+  tanımlıysa bot panoyu `https://<kullanıcı>.github.io/<repo>/` adresine
+  yayımlar (public). Kurulum: [TABLET.md](TABLET.md) "Her yerden erişim".
 - **Arkadaş paylaşımı:** `TELEGRAM_ALLOWED_CHAT_IDS`'e eklenen chat'ler komut
   verebilir ve otomatik sinyalleri alır (abone). Arkadaş kendi ID'sini `/myid`
   ile öğrenir. Listede olmayan biri yalnızca `/myid` alır, gerisi yok sayılır.

@@ -178,7 +178,61 @@ girişiyle $ karşılığı, strateji kartlarında backtest-vs-canlı karneler v
 durum çipleri. 60 sn'de bir kendini yeniler.
 
 > Güvenlik: sayfa yalnızca ev ağında görünür (internete açık değil, şifre de
-> yok). Modeminde port yönlendirme yapıp internete AÇMA.
+> yok). Modeminde port yönlendirme yapıp internete AÇMA — internetten erişim
+> için aşağıdaki GitHub Pages yolunu kullan (o güvenli).
+
+Panoda **strateji kartına** tıklayınca o stratejinin nasıl çalıştığı (giriş
+koşulu, çıkış, backtest, risk) açılır; **sinyal satırına** tıklayınca o
+bildirimin tam olarak hangi koşullarla geldiği ("Neden geldi") + fiyat
+senaryoları açılır.
+
+## Her yerden erişim (GitHub Pages — evden uzaktayken de)
+
+LAN panosu sadece ev ağında çalışır. Telefonun mobil veriyle her yerden
+erişebilmen için bot, pano verisini GitHub'a yazar ve GitHub ücretsiz bir
+sayfa olarak sunar. **Not:** bu sayfa herkese açık olur (sen "sorun yok"
+dedin); içinde sır yoktur (sadece sinyaller + fiyatlar — token/chat-id/anahtar
+ASLA yayımlanmaz, `.env` gitignore'da).
+
+**1) GitHub'da fine-grained token oluştur** (dar yetkili, güvenli):
+- [github.com/settings/tokens](https://github.com/settings/tokens) →
+  **Fine-grained tokens** → **Generate new token**.
+- **Repository access** → *Only select repositories* → `trade1`.
+- **Permissions** → *Repository permissions* → **Contents** → **Read and write**.
+- Süre (expiration) uzun seç (örn. 1 yıl). **Generate** → token'ı kopyala.
+
+**2) Tablette `.env`'e ekle:**
+```bash
+cd ~/trade1
+nano .env
+```
+Şu iki satırı ekle (token değerini yapıştır; `GITHUB_REPO` seninki):
+```
+GITHUB_TOKEN=github_pat_...
+GITHUB_REPO=ss4181/trade1
+```
+Kaydet (`Ctrl+O`, Enter, `Ctrl+X`), botu yeniden başlat:
+```bash
+python signal_bot.py
+```
+Açılışta `GitHub Pages yayini ACIK ... https://ss4181.github.io/trade1/`
+satırını görmelisin. Bot ilk taramada `gh-pages` branch'ini **otomatik
+oluşturur** ve `index.html` + `data.json` yazar (senin git ile uğraşman
+gerekmez).
+
+**3) Repo'yu public yap + Pages'i aç** (ücretsiz Pages public repo ister):
+- GitHub'da repo → **Settings** → **General** → en altta **Change visibility**
+  → **Public** (onayla). *(Kod zaten sır içermiyor; `.env` yüklenmez.)*
+- Repo → **Settings** → **Pages** → **Source: Deploy from a branch** →
+  Branch: **gh-pages** / **(root)** → **Save**.
+- 1-2 dk sonra `https://ss4181.github.io/trade1/` her yerden açılır (mobil
+  veriyle de). Telefonda ana ekrana kısayol ekleyebilirsin.
+
+Pano orada ~15 dakikada bir güncellenir (bot her yayında GitHub'a yazar).
+Daha sık/seyrek istersen `.env`'e `PUBLISH_INTERVAL_MIN=10` gibi ekle.
+
+> İptal etmek istersen: `.env`'den `GITHUB_TOKEN`'ı sil → bot artık yayımlamaz;
+> istersen GitHub'da token'ı da revoke et ve repo'yu tekrar private yap.
 
 ## Piyasa arşivi (otomatik — gelecek araştırma verisi)
 
