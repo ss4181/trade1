@@ -35,6 +35,8 @@ import argparse
 import base64
 import html as _html
 import json
+import re
+import subprocess
 import math
 import os
 import sys
@@ -207,12 +209,42 @@ _check_lock = threading.Lock()
 # --- GitHub Pages yayini (panoyu her yerden erisilebilir yapar) ---
 # Bot, pano verisini periyodik olarak GitHub'a data.json olarak yazar; statik
 # sayfa onu ceker. Kurulum: TABLET.md "Her yerden erisim (GitHub Pages)".
-# GITHUB_TOKEN: fine-grained PAT (yalniz bu repoda Contents: read/write).
-GITHUB_TOKEN = _env("GITHUB_TOKEN", "")
-GITHUB_REPO = _env("GITHUB_REPO", "")            # "kullanici/repo"
+# GITHUB_TOKEN: fine-grained PAT (yalniz bu repoda Contents: read/WRITE).
+# Kolaylik: repo adi ve (URL'e gomuluyse) token, git remote'undan otomatik
+# turetilir — boylece cogu durumda sadece yazma-yetkili token yeter.
+
+
+def _git_remote_info() -> tuple[str, str]:
+    """(repo 'sahip/ad', token) — git remote origin URL'inden turetir.
+    Basarisiz olursa ('', '') doner. Token'i ASLA loglamaz."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(Path(__file__).parent),
+             "config", "--get", "remote.origin.url"],
+            capture_output=True, text=True, timeout=5)
+        url = (out.stdout or "").strip()
+    except (OSError, subprocess.SubprocessError):
+        return "", ""
+    if not url:
+        return "", ""
+    token = ""
+    m = re.search(r"https://([^@/]+)@", url)     # https://[user:]token@github...
+    if m:
+        token = m.group(1).split(":")[-1]
+    path = re.sub(r"\.git$", "", re.sub(r"^.*github\.com[:/]", "", url)).strip("/")
+    parts = path.split("/")
+    repo = "/".join(parts[-2:]) if len(parts) >= 2 else ""
+    return repo, token
+
+
+_git_repo, _git_token = _git_remote_info()
+GITHUB_TOKEN = _env("GITHUB_TOKEN", "") or _git_token
+GITHUB_REPO = _env("GITHUB_REPO", "") or _git_repo
 GITHUB_PAGES_BRANCH = _env("GITHUB_PAGES_BRANCH", "gh-pages")
 PUBLISH_INTERVAL_MIN = _env("PUBLISH_INTERVAL_MIN", 15)
-PUBLISH_ENABLED = bool(GITHUB_TOKEN and GITHUB_REPO)
+# Yayin, ancak token ACIKCA verildiyse (env ya da URL'e gomulu) acilir.
+PUBLISH_ENABLED = _env("PUBLISH_ENABLED", bool(GITHUB_TOKEN and GITHUB_REPO),
+                       cast=_truthy)
 _last_publish = 0.0
 _gh_sha: str | None = None
 
@@ -1751,7 +1783,7 @@ def publish_to_github(force: bool = False) -> None:
     kez index.html'i olusturur). Basarisizlik tarama dongusunu ASLA aksatmaz.
     ONEMLI: yayimlanan JSON'da SIR YOK (sinyaller + fiyatlar + istatistik;
     token/chat-id/anahtar icermez)."""
-    global _last_publish, _gh_sha
+    global _last_publish, _gh_sha, PUBLISH_ENABLED
     if not PUBLISH_ENABLED:
         return
     if not force and time.time() - _last_publish < PUBLISH_INTERVAL_MIN * 60:
@@ -1771,8 +1803,18 @@ def publish_to_github(force: bool = False) -> None:
                                _gh_sha)
     except requests.RequestException as e:
         _gh_sha = None                     # sha bayatlamis olabilir -> yeniden al
-        print(f"uyari: GitHub Pages yayini basarisiz: {_redact(str(e))}",
-              file=sys.stderr, flush=True)
+        code = getattr(getattr(e, "response", None), "status_code", 0)
+        if code in (401, 403, 404):
+            PUBLISH_ENABLED = False        # tekrar tekrar denemesin (log spam)
+            print("uyari: GitHub yayini KAPATILDI — token yetersiz. "
+                  f"(HTTP {code}) Yayimlama icin token'in bu repoda "
+                  "'Contents: read and WRITE' yetkisi olmali. 'git pull' icin "
+                  "kullandigin okuma-yetkili token yazamaz. .env'e yazma-yetkili "
+                  "bir GITHUB_TOKEN ekleyip botu yeniden baslat.",
+                  file=sys.stderr, flush=True)
+        else:
+            print(f"uyari: GitHub Pages yayini basarisiz: {_redact(str(e))}",
+                  file=sys.stderr, flush=True)
 
 
 def _format_check_for_telegram(found: list[dict], errors: int) -> str:

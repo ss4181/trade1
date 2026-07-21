@@ -201,15 +201,19 @@ ASLA yayımlanmaz, `.env` gitignore'da).
 - **Permissions** → *Repository permissions* → **Contents** → **Read and write**.
 - Süre (expiration) uzun seç (örn. 1 yıl). **Generate** → token'ı kopyala.
 
+> **"Zaten `git pull` yapabiliyorum, token'ım var" —** o token büyük olasılıkla
+> yalnız **okuma** yetkili (git pull için yeterli). Yayımlama **yazma** ister;
+> bot okuma-token'ıyla `403` alıp yayını kapatır ve sana net uyarı yazar. Yani
+> yukarıdaki adımda **yazma-yetkili** bir token oluştur.
+
 **2) Tablette `.env`'e ekle:**
 ```bash
 cd ~/trade1
 nano .env
 ```
-Şu iki satırı ekle (token değerini yapıştır; `GITHUB_REPO` seninki):
+Tek satır yeter — **repo adı git remote'undan otomatik bulunur**:
 ```
 GITHUB_TOKEN=github_pat_...
-GITHUB_REPO=ss4181/trade1
 ```
 Kaydet (`Ctrl+O`, Enter, `Ctrl+X`), botu yeniden başlat:
 ```bash
