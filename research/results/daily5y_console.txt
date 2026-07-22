@@ -1,0 +1,20 @@
+panel: 24 sembol, 59829 gunluk bar
+
+D1 (25.0, None) N=  12 edge7g=+0.629 p=0.048 p_gun=0.000 med= +589.3bp wr=0.92 gun=10
+D1 (25.0, 1.0)  N=   9 edge7g=+0.990 p=0.020 p_gun=0.000 med= +630.0bp wr=1.00 gun=7
+D1 (30.0, None) N= 117 edge7g=+0.117 p=0.140 p_gun=0.431 med= +247.4bp wr=0.62 gun=71
+D1 (30.0, 1.0)  N=  60 edge7g=+0.252 p=0.052 p_gun=0.132 med= +354.6bp wr=0.68 gun=37
+D1 (35.0, None) N= 310 edge7g=-0.002 p=0.482 p_gun=0.738 med= +162.7bp wr=0.57 gun=166
+D1 (35.0, 1.0)  N= 137 edge7g=+0.070 p=0.255 p_gun=0.380 med= +275.3bp wr=0.62 gun=77
+D2 25.0         N= 151 edge7g=+0.249 p=0.015 p_gun=0.010 med= +450.0bp wr=0.64 gun=65
+D2 30.0         N= 441 edge7g=+0.092 p=0.048 p_gun=0.448 med= +198.9bp wr=0.60 gun=152
+D3 2.0          N= 904 edge3g=+0.191 p=0.000 p_gun=0.040 med=  +68.5bp wr=0.53 gun=510
+D3 2.5          N= 407 edge3g=+0.219 p=0.000 p_gun=0.029 med=   +4.7bp wr=0.50 gun=272
+
+==== TRAIN kazananlari -> TEST (aile basi tek atis) ====
+D2 25.0 TEST h=3g: N=62 edge=+0.038 p=0.370 p_gun=0.398 med=+173.7bp wr=0.58
+D2 25.0 TEST h=7g: N=61 edge=-0.019 p=0.590 p_gun=0.423 med=+260.6bp wr=0.52 <-- birincil
+D2 25.0 TEST h=14g: N=59 edge=+0.098 p=0.225 p_gun=0.454 med=+61.3bp wr=0.53
+D3 2.5 TEST h=3g: N=80 edge=+0.148 p=0.135 p_gun=0.228 med=-4.2bp wr=0.46 <-- birincil
+D3 2.5 TEST h=7g: N=80 edge=-0.006 p=0.522 p_gun=0.590 med=-500.8bp wr=0.39
+D3 2.5 TEST h=14g: N=79 edge=-0.153 p=0.905 p_gun=0.929 med=-658.4bp wr=0.34

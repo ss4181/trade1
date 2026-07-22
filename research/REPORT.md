@@ -277,6 +277,28 @@ kombinasyonu (OI geçmişi ~30 gün — test edilemez, Ek C), ATR bracket
 Kalan tek plan yürürlükte: sessiz-kayıt + `/performans` canlı ölçümü;
 30+ olgun canlı S2 sinyali birikince kaldır/tut kararı veriyle verilecek.
 
+## Ek E — 5+ yıllık günlük-mum araştırması (2026-07): HİÇBİRİ GEÇEMEDİ
+
+**Soru:** Günlük mumlarda (kullanıcının önerdiği S1-günlük dahil) doğrulanabilir
+strateji var mı? **Veri:** 24 majör, 2019-01→2026-06 (~60K günlük bar; COVID
+çöküşü + 2021 çifte boğa + 2022 çöküş + 2023 yatay + 2024 boğa + 2025-26 ayı).
+**Split:** train <2025-01 (6y), test 2025-01→2026-06 (18 ay, aile başı tek atış).
+Sonuçlar: `results/daily5y_console.txt`, script `sweep_daily5y.py`.
+
+| Aile | Train | Test | Karar |
+|---|---|---|---|
+| D1 günlük S1 (RSI div ± hacim) | OS=25: **N=12** (wr %92, med +5.9% — ama 6 yılda 12 olay!); N≥100 sağlayan tek konfig (OS=30, N=117) p=0.14 | — (kural geçilmedi) | **KANIT YETERSİZ** — günlük divergence yapısal olarak çok seyrek; N=12'nin parlaklığı 10-konfig seçim etkisi + 2020/2022 kuşak-dipleri örneklemi |
+| D2 sade günlük oversold (RSI≤25) | N=151, edge +0.25, p=0.015, gün-p=0.010 ✅ | 7g: **−0.019 (p=0.59)** ❌ | **RED** — train'i geçti, testte çöktü |
+| D3 günlük hacim patlaması (z≥2.5) | N=407, edge +0.22, p<0.001, gün-p=0.03 ✅ | 3g: +0.15 (p=0.14) ns; 14g: −0.15, wr %34 ❌ | **RED** |
+
+**Sonuç: bota hiçbir günlük strateji eklenmedi; 1h S1/S1+S4 tek OOS-doğrulamalı
+sinyaller olarak kalıyor.** Bu, "train kazananı testte geriler" deseninin
+DÖRDÜNCÜ bağımsız gözlemi (1h TF taraması, squeeze, bracket, şimdi günlük) —
+2025-26 rejimi uzun-yönlü ortalama-dönüşe günlük ölçekte de düşmanca. Ayrıca
+pratik not: günlük sinyaller doğrulansaydı bile yılda ~2-25 uyarı üretirdi —
+uyarı botu kullanım amacına zaten uygun değil. D1'in N=12 kuyruğu ileride
+(daha fazla borsa/sembol/yıl verisiyle) yeniden ziyarete değer tek iz.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip
