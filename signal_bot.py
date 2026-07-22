@@ -436,6 +436,20 @@ def _sig6(x: float) -> float:
     return float(f"{x:.6g}")
 
 
+def _fmt_price(x) -> str:
+    """Fiyati OKUNUR bicimde yazar — bilimsel gosterim ASLA kullanilmaz.
+    (2.79e-06 yerine 0.00000279; kullanicilar e-06'yi 'hata' saniyordu.)"""
+    if x is None:
+        return "?"
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    if x >= 1:
+        return f"{x:.6g}"
+    return f"{x:.10f}".rstrip("0").rstrip(".") or "0"
+
+
 def realized_sigma1h(closes: list[float], window: int = 168) -> float | None:
     """Son `window` saatlik log-getirinin std'si (arastirmadaki vol tanimi)."""
     lo = max(1, len(closes) - window)
@@ -753,7 +767,10 @@ def scan_symbol(symbol: str, state: ScanState,
                     last_n[-1]["time"] / 1000, tz=timezone.utc).isoformat(),
                 "price": closes[i],
                 "funding_pct": [round(x["rate"] * 100, 4) for x in last_n],
-                "note": "negatif funding yiginlanmasi (short squeeze adayi)",
+                "note": ("negatif funding yiginlanmasi (short squeeze adayi)"
+                         + (f" — perp'te {perp_symbol(symbol)} olarak islem "
+                            "gorur; oradaki fiyat gosterilenin 1000 katidir"
+                            if perp_symbol(symbol) != symbol else "")),
                 "horizon_hours": 72,
             })
 
@@ -803,13 +820,14 @@ def _ref_lines(sig: dict) -> list[str]:
         lines.append(f"Guven: {conf} — {sig.get('confidence_note', '')}")
     exit_by = f" (son: {ref['exit_by']})" if ref.get("exit_by") else ""
     lines += [
-        f"Giris ref: {ref['entry_ref']}",
+        f"Giris ref: {_fmt_price(ref['entry_ref'])} (sinyal barinin kapanisi; "
+        "fiyat buradan belirgin uzaklastiysa sinyal 'kacmistir')",
         f"Zaman cikisi: ~{ref['time_exit_hours']}h{exit_by} — "
         "backtest'te dogrulanan tek cikis kurali",
         f"24 ay tarihce (N={ref['hist_n']}, kazanma %{ref['hist_winrate_pct']}):",
-        f"  medyan → {ref['median_price']} ({ref['hist_median_pct']:+.2f}%)",
-        f"  kotu %10 → {ref['q10_price']} ({ref['hist_q10_pct']:+.2f}%)",
-        f"  iyi %10 → {ref['q90_price']} ({ref['hist_q90_pct']:+.2f}%)",
+        f"  medyan → {_fmt_price(ref['median_price'])} ({ref['hist_median_pct']:+.2f}%)",
+        f"  kotu %10 → {_fmt_price(ref['q10_price'])} ({ref['hist_q10_pct']:+.2f}%)",
+        f"  iyi %10 → {_fmt_price(ref['q90_price'])} ({ref['hist_q90_pct']:+.2f}%)",
     ]
     if "sigma_h_pct" in ref:
         lines.append(f"Tipik dalgalanma (±1σ, {ref['time_exit_hours']}h): "
@@ -838,7 +856,7 @@ def send_telegram_message(sig: dict) -> None:
         f"{icon} <b>{_html.escape(sig['strategy'])}</b> — "
         f"<b>{_html.escape(sig['symbol'])}</b> {sig['direction']} "
         f"{head_tail}",
-        f"Fiyat: {sig['price']}",
+        f"Fiyat: {_fmt_price(sig['price'])}",
         f"Beklenen ufuk: ~{sig['horizon_hours']} saat",
     ]
     lines += [f"{label}: {_html.escape(val)}"
@@ -895,15 +913,15 @@ def _email_ref_block(sig: dict) -> str:
       Referans seviyeleri <span style="font-weight:normal;color:#888">(mekanik; tavsiye degil)</span></h3>
     <table style="font-size:13px;border-collapse:collapse">
       <tr><td style="padding:3px 12px 3px 0;color:#666">Giris ref</td>
-          <td style="padding:3px 0"><b>{ref['entry_ref']}</b></td></tr>
+          <td style="padding:3px 0"><b>{_fmt_price(ref['entry_ref'])}</b></td></tr>
       <tr><td style="padding:3px 12px 3px 0;color:#666">Zaman cikisi</td>
           <td style="padding:3px 0"><b>~{ref['time_exit_hours']} saat</b> (backtest'te dogrulanan tek cikis kurali)</td></tr>
       <tr><td style="padding:3px 12px 3px 0;color:#666">Medyan (24 ay, N={ref['hist_n']})</td>
-          <td style="padding:3px 0">{ref['median_price']} ({ref['hist_median_pct']:+.2f}%)</td></tr>
+          <td style="padding:3px 0">{_fmt_price(ref['median_price'])} ({ref['hist_median_pct']:+.2f}%)</td></tr>
       <tr><td style="padding:3px 12px 3px 0;color:#666">Kotu %10</td>
-          <td style="padding:3px 0">{ref['q10_price']} ({ref['hist_q10_pct']:+.2f}%)</td></tr>
+          <td style="padding:3px 0">{_fmt_price(ref['q10_price'])} ({ref['hist_q10_pct']:+.2f}%)</td></tr>
       <tr><td style="padding:3px 12px 3px 0;color:#666">Iyi %10</td>
-          <td style="padding:3px 0">{ref['q90_price']} ({ref['hist_q90_pct']:+.2f}%)</td></tr>
+          <td style="padding:3px 0">{_fmt_price(ref['q90_price'])} ({ref['hist_q90_pct']:+.2f}%)</td></tr>
       <tr><td style="padding:3px 12px 3px 0;color:#666">Kazanma orani (tarihsel)</td>
           <td style="padding:3px 0">%{ref['hist_winrate_pct']}</td></tr>
       {sigma}
@@ -926,7 +944,7 @@ def _email_html(sig: dict) -> str:
       <span style="color:{color}">{sig['direction']} ({sig['strength']})</span>
     </h2>
     <table style="font-size:14px;border-collapse:collapse">
-      <tr><td style="padding:4px 12px 4px 0;color:#666">Fiyat</td><td style="padding:4px 0"><b>{sig['price']}</b></td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666">Fiyat</td><td style="padding:4px 0"><b>{_fmt_price(sig['price'])}</b></td></tr>
       <tr><td style="padding:4px 12px 4px 0;color:#666">Beklenen ufuk</td><td style="padding:4px 0"><b>~{sig['horizon_hours']} saat</b></td></tr>
       {extra}
       <tr><td style="padding:4px 12px 4px 0;color:#666">Zaman</td><td style="padding:4px 0">{_html.escape(sig['bar_time'])}</td></tr>
@@ -976,8 +994,8 @@ def notify(sig: dict, push: bool = True) -> None:
            ("  [TOPLU OZETTE: tarama-basi tavan]" if not push else ""))
     line = (f"[{sig['bar_time']}] {sig['strategy']:<6} {sig['symbol']:<12} "
             f"{sig['direction']} ({sig['strength']}/{conf}) "
-            f"fiyat={sig['price']} ~{sig['horizon_hours']}h | {sig['note']}"
-            + tag)
+            f"fiyat={_fmt_price(sig['price'])} ~{sig['horizon_hours']}h | "
+            f"{sig['note']}" + tag)
     print(line, flush=True)
     with open(Path(__file__).parent / SIGNAL_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(sig, ensure_ascii=False) + "\n")
@@ -1028,7 +1046,7 @@ def scan_all(state: ScanState) -> int:
     if overflow:
         lines = [f"⚠️ Ayni taramada +{len(overflow)} sinyal daha "
                  f"(piyasa geneli hareket olabilir):"]
-        lines += [f"• {s['strategy']} {s['symbol']} @ {s['price']} "
+        lines += [f"• {s['strategy']} {s['symbol']} @ {_fmt_price(s['price'])} "
                   f"(~{s['horizon_hours']}h)" for s in overflow[:20]]
         lines.append("Detaylar log ve /signals/latest icinde.")
         _telegram_send_text("\n".join(_html.escape(l) if i else l
@@ -1193,7 +1211,8 @@ def run_check() -> int:
               f"(oncelik: S1+S4 > S1 > S3 > S2):\n")
         for sig in found:
             print(f"● {sig['strategy']:<6} {sig['symbol']:<13}"
-                  f"{sig['direction']} ({sig['strength']})  fiyat={sig['price']}")
+                  f"{sig['direction']} ({sig['strength']})  "
+                  f"fiyat={_fmt_price(sig['price'])}")
             for label, val in _signal_detail_rows(sig):
                 print(f"    {label}: {val}")
             print(f"    {sig['note']}")
@@ -1594,7 +1613,9 @@ tr.sig{cursor:pointer}tr.sig:hover td{background:#16203a}
 const DATA_URL="{{DATA_URL}}";
 const B={3:"b3",2:"b2",1:"b1",0:"b0"},R={"COK YUKSEK":3,"YUKSEK":2,"ORTA":1,"DUSUK":0};
 const esc=s=>(s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const fp=x=>x==null?"—":Number(x).toPrecision(6).replace(/\\.?0+$/,"");
+const fp=x=>{if(x==null)return "—";x=Number(x);
+ if(x>=1)return x.toPrecision(6).replace(/\\.?0+$/,"");
+ return x.toFixed(10).replace(/0+$/,"").replace(/\\.$/,"")||"0"};
 const fpc=x=>x==null?'<span class="tag">ölçülüyor</span>':
  `<span class="${x>=0?'up':'dn'}">${x>=0?'+':''}${x.toFixed(2)}%</span>`;
 let D=null,openDoc=null,openRow=null;
@@ -1794,10 +1815,11 @@ def publish_to_github(force: bool = False) -> None:
         if _gh_sha is None:
             _gh_ensure_branch()           # branch yoksa olustur
             _gh_sha = _gh_get_sha("data.json")
-            if _gh_sha is None:            # ilk yayin: index.html'i de kur
-                _gh_put_file("index.html",
-                             dashboard_html("./data.json").encode("utf-8"),
-                             "dashboard: index.html", _gh_get_sha("index.html"))
+            # her surec baslangicinda index.html'i tazele (sablon guncellemeleri
+            # boylece git pull + restart sonrasi Pages'e de yansir)
+            _gh_put_file("index.html",
+                         dashboard_html("./data.json").encode("utf-8"),
+                         "dashboard: index.html", _gh_get_sha("index.html"))
         _gh_sha = _gh_put_file("data.json", data,
                                f"data {datetime.now(timezone.utc):%Y-%m-%d %H:%M}",
                                _gh_sha)
@@ -1837,7 +1859,7 @@ def _format_check_for_telegram(found: list[dict], errors: int) -> str:
         conf = s.get("confidence") or signal_confidence(s["strategy"])[0]
         lines.append(f"• <b>{_html.escape(s['strategy'])}</b> "
                      f"[{conf}] {_html.escape(s['symbol'])} @ "
-                     f"{s['price']}{extra} → ~{s['horizon_hours']}h")
+                     f"{_fmt_price(s['price'])}{extra} → ~{s['horizon_hours']}h")
     if len(found) > 25:
         lines.append(f"…ve {len(found) - 25} tane daha")
     if errors:

@@ -1,0 +1,11 @@
+OS=22.5 volz=None: olay yok
+OS=22.5 volz=1.0: olay yok
+OS=22.5 volz=1.5: olay yok
+OS=25.0 volz=None N=   1 edge72=+0.946 p=0.163 med= +746.7bp wr=1.00
+OS=25.0 volz=1.0: olay yok
+OS=25.0 volz=1.5: olay yok
+OS=30.0 volz=None N=  10 edge72=+0.361 p=0.150 med= +375.7bp wr=0.70
+OS=30.0 volz=1.0  N=   4 edge72=+0.592 p=0.125 med= +883.6bp wr=0.75
+OS=30.0 volz=1.5  N=   2 edge72=-0.064 p=0.540 med=  -35.5bp wr=0.50
+
+SONUC: hicbir konfig kurali gecemedi (buyuk olasilikla N<100 — gunluk barda olay az). KANIT YETERSIZ -> strateji eklenmez; test dilimine bakilmadi (gelecekte daha uzun veriyle yeniden denenebilir).
