@@ -58,7 +58,9 @@ tr.sig{cursor:pointer}tr.sig:hover td{background:#16203a}
 const DATA_URL="./data.json";
 const B={3:"b3",2:"b2",1:"b1",0:"b0"},R={"COK YUKSEK":3,"YUKSEK":2,"ORTA":1,"DUSUK":0};
 const esc=s=>(s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const fp=x=>x==null?"—":Number(x).toPrecision(6).replace(/\.?0+$/,"");
+const fp=x=>{if(x==null)return "—";x=Number(x);
+ if(x>=1)return x.toPrecision(6).replace(/\.?0+$/,"");
+ return x.toFixed(10).replace(/0+$/,"").replace(/\.$/,"")||"0"};
 const fpc=x=>x==null?'<span class="tag">ölçülüyor</span>':
  `<span class="${x>=0?'up':'dn'}">${x>=0?'+':''}${x.toFixed(2)}%</span>`;
 let D=null,openDoc=null,openRow=null;
