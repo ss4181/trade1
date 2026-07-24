@@ -90,8 +90,32 @@ DEFAULT_SYMBOLS = (
     "APTUSDT,ARBUSDT,OPUSDT,FILUSDT,SUIUSDT,INJUSDT,SEIUSDT,TIAUSDT,"
     "AAVEUSDT,ETCUSDT,XLMUSDT,SANDUSDT,GALAUSDT,PEPEUSDT"
 )
+# Genisletilmis evren (Ek G, 2026-07): 2024-07'den beri KESINTISIZ verisi olan
+# 89 coin'de donmus konfigurasyonlar dogrulandi. Kademeli sonuc:
+#   - S1+S4 yeni coinlerde train+test her ikisinde saglam -> tam yetki
+#   - sade S1 yeni coinlerde test guclu (p<0.001) / train notr -> ORTA guven
+#   - S2 ve S3 yeni coinlerde OOS BASARISIZ -> yeni coinlerde CALISMAZ
+# Bu liste STATIK ve dogrulanmis — gunluk hacim siralamasi DEGIL (Ek F dersi).
+EXTENDED_SYMBOLS_DEFAULT = (
+    "RIFUSDT,ZECUSDT,WLDUSDT,ENAUSDT,TAOUSDT,SHIBUSDT,HBARUSDT,BONKUSDT,"
+    "STXUSDT,JTOUSDT,TLMUSDT,LDOUSDT,ACEUSDT,WIFUSDT,VANRYUSDT,DASHUSDT,"
+    "FETUSDT,XECUSDT,ICPUSDT,ZILUSDT,SKLUSDT,ZROUSDT,ORDIUSDT,JUPUSDT,"
+    "ETHFIUSDT,RENDERUSDT,CRVUSDT,CHRUSDT,TUSDT,PENDLEUSDT,ALGOUSDT,"
+    "LUNCUSDT,QTUMUSDT,APEUSDT,ONEUSDT,BOMEUSDT,AXSUSDT,ZENUSDT,TNSRUSDT,"
+    "CHZUSDT,HOTUSDT,DYDXUSDT,LISTAUSDT,PYTHUSDT,IDUSDT,FLOKIUSDT,"
+    "1INCHUSDT,GRTUSDT,LSKUSDT,COMPUSDT,ALICEUSDT,SNXUSDT,ARUSDT,RSRUSDT,"
+    "STRKUSDT,ENSUSDT,BLURUSDT,AGLDUSDT,CAKEUSDT"
+)
 _SYMBOLS_ENV = os.environ.get("SYMBOLS", "").strip()
-SYMBOLS = [s.strip() for s in (_SYMBOLS_ENV or DEFAULT_SYMBOLS).split(",") if s.strip()]
+_EXT_ENV = os.environ.get("EXTENDED_SYMBOLS")
+EXTENDED_SET = {s.strip() for s in
+                (EXTENDED_SYMBOLS_DEFAULT if _EXT_ENV is None else _EXT_ENV
+                 ).split(",") if s.strip()}
+if _SYMBOLS_ENV:
+    SYMBOLS = [s.strip() for s in _SYMBOLS_ENV.split(",") if s.strip()]
+else:
+    SYMBOLS = [s.strip() for s in DEFAULT_SYMBOLS.split(",") if s.strip()] + \
+              sorted(EXTENDED_SET)
 
 # --- sembol evreni ---
 # VARSAYILAN: arastirma-dogrulamali 30 KOKLU coin (DEFAULT_SYMBOLS). Edge YALNIZ
@@ -689,6 +713,7 @@ def scan_symbol(symbol: str, state: ScanState,
       raporlanir. state'e dokunmaz. "Su an uygun kurulum var mi?" sorusu icin."""
     signals = []
     now_s = time.time()
+    extended = symbol in EXTENDED_SET      # genis evren: yalniz S1 ailesi (Ek G)
 
     def include(strategy: str, cond: bool, cooldown: float) -> bool:
         if snapshot:
@@ -734,7 +759,7 @@ def scan_symbol(symbol: str, state: ScanState,
     # Kenar-tetikleme yon gozetmeksizin hacim patlamasi uzerinde calisir
     # (arastirmada dogrulanan kompozisyon); yon filtresi SONRA uygulanir.
     s3_spike = (not math.isnan(zs[i]) and zs[i] >= VOLUME_ZSCORE_THRESHOLD)
-    if ("S3" not in DISABLED_STRATEGIES
+    if (not extended and "S3" not in DISABLED_STRATEGIES
             and include("S3", s3_spike, S3_COOLDOWN_HOURS)
             and closes[i] > opens[i]):
         signals.append({
@@ -746,8 +771,8 @@ def scan_symbol(symbol: str, state: ScanState,
         })
 
     # ---- S2: funding squeeze (long) ----
-    if "S2" in DISABLED_STRATEGIES:
-        fr = []                                # tamamen kapali: API'ye de gitme
+    if extended or "S2" in DISABLED_STRATEGIES:
+        fr = []                    # genis evrende S2 OOS basarisiz (Ek G) / kapali
     else:
         try:
             fr = fetch_funding(perp_symbol(symbol),
@@ -777,6 +802,15 @@ def scan_symbol(symbol: str, state: ScanState,
         sigma = realized_sigma1h(closes)
         for sig in signals:
             conf, evid = signal_confidence(sig["strategy"])
+            if extended and sig["strategy"].startswith("S1"):
+                # Ek G kademeleri: genis evrende S1+S4 iki donemde saglam
+                # (YUKSEK); sade S1 yalniz testte guclu (ORTA)
+                if "+S4" in sig["strategy"]:
+                    conf, evid = "YUKSEK", ("genis evren (Ek G): train+test "
+                                            "her ikisinde saglam")
+                else:
+                    conf, evid = "ORTA", ("genis evren (Ek G): test +0.43 "
+                                          "p<0.001, train notr")
             sig["confidence"] = conf
             sig["confidence_note"] = evid
             ref = build_ref_levels(sig["strategy"], sig["price"], sigma)
@@ -1885,7 +1919,8 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
     elif cmd == "status":
         _telegram_send_text(
             "<b>Durum</b>\n"
-            f"Sembol: {len(SYMBOLS)} ({'otomatik' if SYMBOL_AUTO else 'statik'})\n"
+            f"Sembol: {len(SYMBOLS)} "
+            f"({'otomatik' if SYMBOL_AUTO else 'cekirdek 30 + genis ' + str(len(EXTENDED_SET)) + ', statik'})\n"
             f"Tamamlanan tarama: {SCANS_COMPLETED}\n"
             f"Son tarama: {LAST_SCAN_AT or '(henuz yok)'}\n"
             f"Son taramada hata: {LAST_SCAN_ERRORS}\n"

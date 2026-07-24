@@ -1,0 +1,50 @@
+panel: 89 spot / 89 um sembol
+
+======== TRAIN — donmus konfigurasyonlar ========
+  S1 (22.5 div) TUM-100              N=  636 rate=0.40 edge24=+0.144 p=0.002 med= +76.9bp wr=0.58
+  S1 (22.5 div) eski-30              N=  205 rate=0.38 edge24=+0.348 p=0.000 med=+114.2bp wr=0.64
+  S1 (22.5 div) YENI-59              N=  431 rate=0.41 edge24=+0.046 p=0.228 med= +64.8bp wr=0.56
+  S1+S4 TUM-100                      N=  271 rate=0.17 edge24=+0.383 p=0.000 med= +91.0bp wr=0.62
+  S1+S4 eski-30                      N=   94 rate=0.17 edge24=+0.550 p=0.000 med=+128.7bp wr=0.64
+  S1+S4 YENI-59                      N=  177 rate=0.17 edge24=+0.294 p=0.000 med= +85.6bp wr=0.62
+  S2 (-0.03 p2) TUM-100              N=  957 rate=0.60 edge72=+0.114 p=0.002 med= -28.8bp wr=0.48
+  S2 (-0.03 p2) eski-30              N=  228 rate=0.42 edge72=+0.287 p=0.000 med= +78.2bp wr=0.55
+  S2 (-0.03 p2) YENI-59              N=  729 rate=0.69 edge72=+0.060 p=0.050 med= -66.7bp wr=0.46
+  S3 (logz3 up) TUM-100              N= 2562 rate=1.60 edge4=+0.081 p=0.002 med= -10.5bp wr=0.48
+  S3 (logz3 up) eski-30              N=  769 rate=1.42 edge4=+0.236 p=0.000 med= +22.7bp wr=0.55
+  S3 (logz3 up) YENI-59              N= 1793 rate=1.69 edge4=+0.014 p=0.246 med= -29.5bp wr=0.45
+  -- S1 hacim kademeleri --
+  S1 kademe1(1-33)                   N=  219 rate=0.37 edge24=+0.205 p=0.008 med=+101.6bp wr=0.61
+  S1 kademe2(34-66)                  N=  242 rate=0.41 edge24=+0.241 p=0.000 med=+102.8bp wr=0.61
+  S1 kademe3(67+)                    N=  175 rate=0.42 edge24=-0.069 p=0.802 med= +26.4bp wr=0.51
+
+======== TEST — donmus konfigurasyonlar ========
+  S1 (22.5 div) TUM-100              N=  239 rate=0.45 edge24=+0.375 p=0.000 med= +81.6bp wr=0.60
+  S1 (22.5 div) eski-30              N=  111 rate=0.62 edge24=+0.312 p=0.006 med= +66.8bp wr=0.59
+  S1 (22.5 div) YENI-59              N=  128 rate=0.36 edge24=+0.430 p=0.000 med=+109.7bp wr=0.60
+  S1+S4 TUM-100                      N=   97 rate=0.18 edge24=+0.368 p=0.004 med= +97.3bp wr=0.65
+  S1+S4 eski-30                      N=   50 rate=0.28 edge24=+0.376 p=0.006 med= +86.2bp wr=0.64
+  S1+S4 YENI-59                      N=   47 rate=0.13 edge24=+0.360 p=0.014 med=+136.5bp wr=0.66
+  S2 (-0.03 p2) TUM-100              N=  543 rate=1.03 edge72=+0.020 p=0.320 med=-132.2bp wr=0.41
+  S2 (-0.03 p2) eski-30              N=  111 rate=0.62 edge72=+0.135 p=0.082 med= -36.4bp wr=0.47
+  S2 (-0.03 p2) YENI-59              N=  432 rate=1.25 edge72=-0.010 p=0.570 med=-181.2bp wr=0.39
+  S3 (logz3 up) TUM-100              N=  815 rate=1.53 edge4=-0.121 p=1.000 med= -40.7bp wr=0.41
+  S3 (logz3 up) eski-30              N=  246 rate=1.37 edge4=+0.253 p=0.000 med=  +0.0bp wr=0.49
+  S3 (logz3 up) YENI-59              N=  569 rate=1.61 edge4=-0.282 p=1.000 med= -76.3bp wr=0.38
+  -- S1 hacim kademeleri --
+  S1 kademe1(1-33)                   N=  114 rate=0.58 edge24=+0.354 p=0.000 med= +74.9bp wr=0.61
+  S1 kademe2(34-66)                  N=   73 rate=0.37 edge24=+0.387 p=0.010 med= +74.8bp wr=0.60
+  S1 kademe3(67+)                    N=   52 rate=0.38 edge24=+0.407 p=0.018 med=+131.6bp wr=0.56
+
+======== TRAIN-100 esik taramasi (yalniz rapor) ========
+  S1 OS=17.5                         N=   91 rate=0.06 edge24=+0.666 p=0.000 med=+303.2bp wr=0.71
+  S1 OS=20.0                         N=  240 rate=0.15 edge24=+0.268 p=0.000 med=+143.5bp wr=0.65
+  S1 OS=22.5                         N=  636 rate=0.40 edge24=+0.144 p=0.002 med= +76.9bp wr=0.58
+  S1 OS=25.0                         N= 1335 rate=0.83 edge24=+0.058 p=0.022 med= +62.9bp wr=0.56
+  S1 OS=27.5                         N= 2547 rate=1.59 edge24=+0.008 p=0.322 med= +47.3bp wr=0.54
+  S3 z=2.5                           N= 5317 rate=3.32 edge4=+0.083 p=0.000 med=  -9.0bp wr=0.48
+  S3 z=3.0                           N= 2562 rate=1.60 edge4=+0.081 p=0.002 med= -10.5bp wr=0.48
+  S3 z=3.5                           N= 1165 rate=0.73 edge4=+0.031 p=0.152 med= -21.6bp wr=0.46
+  S2 -0.02 p2                        N= 1664 rate=1.04 edge72=+0.087 p=0.000 med= -14.4bp wr=0.49
+  S2 -0.03 p2                        N=  957 rate=0.60 edge72=+0.114 p=0.002 med= -28.8bp wr=0.48
+  S2 -0.04 p2                        N=  611 rate=0.38 edge72=+0.073 p=0.046 med= -80.6bp wr=0.46

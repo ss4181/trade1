@@ -329,6 +329,39 @@ DOKUNULMADI (sorun eşik değil, evrendi). S1/S2'nin temiz evrende bile ayı
 rejiminde zayıflayıp zayıflamadığı ancak temiz veri birikince ölçülebilir;
 mevcut −22% sayısı kontamine olduğu için S1/S2 hakkında YARGI DEĞİL.
 
+## Ek G — 89-coin genişletilmiş evren doğrulaması (2026-07): KADEMELİ GEÇTİ
+
+**Soru:** Doğrulanmış (donmuş) konfigürasyonlar daha geniş evrende tutuyor mu?
+**Evren:** Bugün likit top-150 perp adayından 2024-07'den beri **kesintisiz**
+verisi olanlar → 89 coin (56 genç listeleme — Ek F'nin çöp sınıfı — otomatik
+elendi). Seçimsiz doğrulama: eşik araması YOK, mevcut ayarlar aynen; kırılım
+eski-30 vs yeni-59 + hacim kademeleri. Konsol: `results/eval100_console.txt`.
+
+| Donmuş konfig | Yeni-59 TRAIN | Yeni-59 TEST | Karar |
+|---|---|---|---|
+| S1+S4 | **+0.294 (p=0.000)** | **+0.360 (p=0.014), med +1.4%, WR %66** | ✅ genişle (YÜKSEK güven) |
+| S1 (22.5 div) | +0.046 (p=0.23, nötr) | **+0.430 (p=0.000), med +1.1%** | ⚠️ genişle ama ORTA güvenle (tek dönem kanıtı) |
+| S2 (−0.03 p2) | +0.060 (med −%0.7) | −0.010 (p=0.57, med **−%1.8**, WR %39) | ❌ yeni coinlerde ÇALIŞMAZ |
+| S3 (logz3 up) | +0.014 (nötr) | **−0.282 (p=1.0, WR %38)** | ❌ yeni coinlerde ÇALIŞMAZ |
+
+Eski-30 sonuçları önceki raporla birebir tutarlı (S1 test +0.31, S3 +0.25 vb.).
+Eşik taraması (train-89, yalnız rapor): optimumlar KAYMADI (S1 22.5 bölgesi,
+S3 z=3.0, S2 −0.03 hâlâ en iyi) → eşik değişikliği yok.
+
+**Uygulama (kademeli genişleme):** Bot artık statik **30 çekirdek + 59 geniş**
+= 89 coin tarar. Geniş evrende yalnız S1 ailesi çalışır: S1+S4 → YÜKSEK güven,
+sade S1 → ORTA güven (push edilir ama kademesi düşük); S2/S3 geniş evrende
+hiç hesaplanmaz (funding API çağrısı da yapılmaz). Beklenen ek hacim: ~10-15
+S1-ailesi sinyali/ay, çoğu S1+S4 kalitesinde.
+
+**Şerhler:** (1) sade S1'in yeni-59 kanıtı tek döneme (2026 ayısı) dayanıyor —
+train'de nötrdü; rejim dönerse ORTA güven düşürülebilir; canlı takip
+(/performans) izleyecek. (2) Kademe-3 (67+) train'de negatifti, testte en
+iyiydi — kademe seçimi YAPILMADI (post-hoc olurdu). (3) 15m/5m mumlar bu
+çalışmaya bilerek dahil edilmedi: Ek A (5m: 3 aile maliyet netinde ölü) ve
+Ek B (S1@15m edge negatif) zaten cevapladı; coin sayısı artışı o yapısal
+sonuçları değiştirmez.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip

@@ -297,6 +297,42 @@ def test_dashboard_data(tmpdir):
     ok("pano verisi + docs/why + sablon (LAN & Pages fetch)")
 
 
+def test_extended_universe_rules():
+    # genis-evren sembolu: S2/S3 CALISMAMALI, S1 ORTA guvenle gelmeli
+    called = {"funding": 0}
+    bot.fetch_funding = lambda symbol, limit=3: called.__setitem__(
+        "funding", called["funding"] + 1) or [
+        {"time": i, "rate": -0.01} for i in range(3)]
+    # dusen kapanislar -> RSI ~0; hacim sabit -> z ~0 (S4 upgrade olmaz)
+    closes = [1000 - i for i in range(250)]
+    bot.fetch_klines = lambda symbol, limit=250: [
+        {"open_time": i * 3600000, "open": closes[i] + 0.5, "high": closes[i] + 1,
+         "low": closes[i] - 1, "close": closes[i], "volume": 10}
+        for i in range(250)]
+    orig_div = bot.bullish_divergence
+    bot.bullish_divergence = lambda c, l, r, i: True
+    bot.DISABLED_STRATEGIES = set()
+    try:
+        ext_sym = next(iter(bot.EXTENDED_SET))
+        sigs = bot.scan_symbol(ext_sym, bot.ScanState(), snapshot=True)
+        assert called["funding"] == 0, "genis evrende funding cekilmemeli"
+        strats = {s["strategy"] for s in sigs}
+        assert "S2" not in strats and "S3" not in strats
+        s1 = next(s for s in sigs if s["strategy"].startswith("S1"))
+        assert s1["confidence"] == "ORTA" and "genis evren" in s1["confidence_note"]
+        # ayni kosullar CEKIRDEK sembolde: S1 YUKSEK olmali
+        sigs2 = bot.scan_symbol("BTCUSDT", bot.ScanState(), snapshot=True)
+        s1c = next(s for s in sigs2 if s["strategy"].startswith("S1"))
+        assert s1c["confidence"] == "YUKSEK"
+        # evren bilesimi (onceki testler SYMBOLS'u mutasyona ugratabilir;
+        # kaynak sabitlerden dogrula)
+        assert len(bot.DEFAULT_SYMBOLS.split(",")) == 30
+        assert len(bot.EXTENDED_SET) == 59
+    finally:
+        bot.bullish_divergence = orig_div
+    ok("genis evren kurallari (S1-yalniz, kademeli guven, 89 sembol)")
+
+
 def test_github_publish():
     calls = []
 
@@ -374,6 +410,7 @@ def main():
         test_market_archiver(td)
         test_daily_summary_includes_perf()
         test_dashboard_data(td)
+        test_extended_universe_rules()
         test_github_publish()
         test_perf_formatting()
     print(f"\nHEPSI GECTI ({PASS} test)")
