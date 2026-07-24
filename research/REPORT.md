@@ -299,6 +299,36 @@ pratik not: günlük sinyaller doğrulansaydı bile yılda ~2-25 uyarı üretird
 uyarı botu kullanım amacına zaten uygun değil. D1'in N=12 kuyruğu ileride
 (daha fazla borsa/sembol/yıl verisiyle) yeniden ziyarete değer tek iz.
 
+## Ek F — Canlı takip ilk bulgusu: EVREN KONTAMİNASYONU (2026-07)
+
+İlk 34 olgun canlı sinyalin `/performans` çıktısı backtest'ten dramatik saptı:
+
+| | Canlı N | Canlı medyan | Backtest medyan | Canlı isabet | Canlı ORT |
+|---|---|---|---|---|---|
+| S1 | 8 | **−22.15%** | +0.93% | %25 | −26.0% |
+| S2 | 10 | −8.97% | +0.24% | %30 | **−26.9%** |
+| S3 | 16 | +1.57% | +0.16% | %50 | +1.26% |
+
+**Teşhis:** S3 (kısa-vadeli momentum) backtest'le tutarlı; S1/S2 felaket.
+S2'nin ortalaması (−27%) medyanından (−9%) çok daha kötü → birkaç sinyal
+−80%/−100% (ölen coinler). Kök neden: **canlı dinamik evren (81 coin) araştırma
+evrenindeki 30 coinden 54 tanesi FAZLA içeriyordu** — TRUMP, BONK, PENGU, WLFI,
+KAITO, HOME, ASTER, hatta `币安人生USDT` gibi meme/pump-dump/yeni-listeleme
+coinleri. Edge bu coinlerde hiç ölçülmemişti. S1 (dip al) ve S2 (kalabalık
+short al), ayı piyasasında ölmekte olan bir coine uygulanınca yıkılıyor; S3
+(momentum) rejime dayanıklı olduğu için hayatta kalıyor.
+
+**Düzeltme:** `SYMBOL_AUTO` varsayılanı **False** yapıldı → bot artık
+araştırma-doğrulamalı 30 coini tarıyor. Dinamik evren açık opt-in
+(`SYMBOL_AUTO=true`, riski kullanıcının). Bu, dinamik-evren genişletmesinin
+(kullanıcı isteğiyle eklenmişti) bir aşırı-uzanım olduğunun kanıtlı düzeltmesi.
+
+**Ders + meta-not:** Bu, takip sisteminin AMACINA hizmet ettiği ilk somut an —
+kâğıt üzerinde, gerçek para riske atılmadan, edge sapması yakalandı. Eşiklere
+DOKUNULMADI (sorun eşik değil, evrendi). S1/S2'nin temiz evrende bile ayı
+rejiminde zayıflayıp zayıflamadığı ancak temiz veri birikince ölçülebilir;
+mevcut −22% sayısı kontamine olduğu için S1/S2 hakkında YARGI DEĞİL.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip

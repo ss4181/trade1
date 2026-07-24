@@ -93,17 +93,16 @@ DEFAULT_SYMBOLS = (
 _SYMBOLS_ENV = os.environ.get("SYMBOLS", "").strip()
 SYMBOLS = [s.strip() for s in (_SYMBOLS_ENV or DEFAULT_SYMBOLS).split(",") if s.strip()]
 
-# --- dinamik sembol evreni ---
-# SYMBOLS env'i BOSSA bot evreni otomatik kurar: USDT spot cifti + aktif
-# USDⓈ-M perp'i olan coinler, PERP 24h hacmine gore siralanir, ilk
-# SYMBOL_MAX_COUNT alinir. Siralama perp hacmiyle yapilir cunku (a) islem
-# perp'te acilir, (b) mutlak spot esigi rejime gore kirilir (ayi piyasasinda
-# spot hacimler cokuyor). Spot tarafina kucuk bir veri-kalitesi tabani yeter
-# (S1/S3 spot verisinde hesaplanir ama kendi gecmisine gore normalize).
-# Arastirma evreni de ayni kuralla ("likit + hem spot hem perp") secilmisti;
-# esikler likit-disi coinlerde DOGRULANMADI — filtreler bilerek var.
-# SYMBOLS env'i doldurursan otomatik mod kapanir.
-SYMBOL_AUTO = _env("SYMBOL_AUTO", not _SYMBOLS_ENV,
+# --- sembol evreni ---
+# VARSAYILAN: arastirma-dogrulamali 30 KOKLU coin (DEFAULT_SYMBOLS). Edge YALNIZ
+# bu evrende olculdu.
+# UYARI — dinamik evren neden VARSAYILAN DEGIL: 2026-07 canli takibinde (Ek F)
+# dinamik hacim-sirali evren (top ~120), ayi piyasasinda tasfiye/pump-dump
+# hacmi yuksek COP coinleri iceri aliyordu (TRUMP/BONK/PENGU/... 54 dogrulanmamis
+# coin). S1 (dip al) ve S2 (kalabalik short) bunlarda -22%/-80% verdi; canli
+# S1 medyani -22% (backtest +0.93%) cikti. Bu yuzden dinamik mod artik ACIK
+# OPT-IN: SYMBOL_AUTO=true dersen acilir, riski senindir.
+SYMBOL_AUTO = _env("SYMBOL_AUTO", False,
                    cast=lambda v: str(v).strip().lower() in ("1", "true", "yes"))
 SYMBOL_MAX_COUNT = _env("SYMBOL_MAX_COUNT", 120)
 SYMBOL_MIN_PERP_VOLUME_M = _env("SYMBOL_MIN_PERP_VOLUME_M", 10.0)  # milyon $/24h, perp
