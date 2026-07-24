@@ -8,7 +8,10 @@ signals.log
 *.log
 .bot_state.json
 .perf_cache.json
+.signal_bot.lock
+.stop-signal-bot
 market_archive_*.jsonl
+tmp/
 
 # python
 __pycache__/

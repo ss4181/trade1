@@ -5,18 +5,33 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "backgroundColor": "#0b1220"
-    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.signalbot.mobile"
+      "bundleIdentifier": "com.signalbot.mobile",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Signal Bot, yerel ağdaki kişisel bot sunucusuna bağlanır.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
     },
     "android": {
       "package": "com.signalbot.mobile"
     },
     "plugins": [
-      ["expo-notifications", { "color": "#2c7be5" }]
+      [
+        "expo-notifications",
+        {
+          "color": "#2c7be5"
+        }
+      ],
+      "expo-status-bar",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0b1220"
+        }
+      ]
     ]
   }
 }

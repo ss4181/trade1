@@ -53,10 +53,17 @@ test'e strateji başına tek atış (S3'teki istisna §5'te dürüstçe işaretl
 - **Vol-normalizasyon.** Getiri / (son 168h gerçekleşen vol × √ufuk) → semboller
   ve rejimler arası karşılaştırılabilir.
 - **Baseline ve anlamlılık.** Sembol-eşleşmeli koşulsuz ortalamaya karşı fark
-  ("edge"); sembol-eşleşmeli bootstrap (500 çekiliş) p-değeri; ayrıca
+  ("edge"); sembol-eşleşmeli bootstrap (güncel kod: 2.000 çekiliş ve sıfır
+  p-değerini önleyen plus-one düzeltmesi); ayrıca
   **gün-kümesi bootstrap** (aynı UTC gününe düşen olaylar tek küme) — coinler
   birlikte hareket ettiği için olay-düzeyi p'ler bağımsızlığı abartır, küme
   düzeyi bunu düzeltir (S3'ün train'deki "anlamlılığının" sahte çıkmasını bu yakaladı).
+- **Sınır purge (2026-07-24 sertleştirmesi).** Train olayının ileri getiri
+  ufku test dönemine taşıyorsa yalnız ilgili ufuk NaN yapılır; baseline ve
+  bootstrap havuzu aynı horizon-aware maskeyi kullanır. Bu rapordaki kayıtlı
+  konsol tabloları ham veri repoda olmadığı için yeniden üretilmedi; eski
+  snapshot'larda `p=0.000` ve sınırdaki birkaç olay güncel kodla küçük fark
+  gösterebilir.
 - **Seçim kriteri (önceden tanımlı):** train'de birincil ufukta edge maksimizasyonu;
   kısıtlar N≥100, p≤0.05, plato tercihli (sivri tepe değil), uyarı bütçesi
   ≤~2 sinyal/sembol/ay.

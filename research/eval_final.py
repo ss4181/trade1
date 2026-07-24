@@ -23,8 +23,10 @@ from sweep_s1 import gen_events, load_enriched, precompute
 S1_SIDE, S1_VARIANT, S1_THRESH = "bull", "div", 22.5
 S1_ALT_THRESH = 20.0                      # mevcut bot esigi = muhafazakar alternatif
 S2_THRESH, S2_PERSISTENCE = -0.03, 2
-S3_DIRECTION, S3_LOG, S3_WINDOW, S3_Z = "bar", True, 168, 3.5
-PRIMARY_H = {"S1": 24, "S2": 72, "S3": 24}
+# Canli botla birebir kanonik S3: log-hacim, z=3.0, yukari bar, 4 saat.
+S3_DIRECTION, S3_LOG, S3_WINDOW, S3_Z = "bar_up", True, 168, 3.0
+S3_LEGACY_DIRECTION, S3_LEGACY_LOG, S3_LEGACY_Z = "bar", True, 3.5
+PRIMARY_H = {"S1": 24, "S2": 72, "S3": 4}
 
 
 def excess_returns(panel, ev, base, h):
@@ -47,8 +49,10 @@ def cluster_stats(e: pd.DataFrame, n_boot: int = 2000, seed: int = 11):
     sims = np.array([rng.choice(cm, size=len(cm), replace=True).mean()
                      for _ in range(n_boot)])
     lo, hi = np.percentile(sims, [5, 95])
+    non_positive = int(np.count_nonzero(sims <= 0))
     return {"n_clusters": len(cm), "cluster_mean": cm.mean(),
-            "ci90": (lo, hi), "p_cluster": float((sims <= 0).mean())}
+            "ci90": (lo, hi),
+            "p_cluster": float((non_positive + 1) / (n_boot + 1))}
 
 
 def regime_breakdown(e: pd.DataFrame):
@@ -78,7 +82,7 @@ def report(tag, panel, events, split, h, with_ev=None):
     cs = cluster_stats(e)
     top = e.groupby("sym").size().sort_values(ascending=False)
     conc = top.head(5).sum() / len(e)
-    print(f"[{tag}/{split}] N={s['N']} rate={per_month_rate(ev, len(panel), split):.2f}/sym/ay "
+    print(f"[{tag}/{split}] N={s['N']} rate={per_month_rate(e, len(panel), split):.2f}/sym/ay "
           f"edge_voln{h}={s['edge_voln']:+.3f} p_boot={s['p_boot']:.3f} "
           f"edge_bp={s['edge_bp']:+.0f} wr={s['winrate']:.2f} (wr_edge {s['wr_edge']:+.3f})")
     print(f"    med={s['med_bp']:+.0f}bp q10={s['q10_bp']:+.0f} q90={s['q90_bp']:+.0f} | "
@@ -121,18 +125,21 @@ def main(data_dir):
     for split in ("train", "test"):
         report("S2 -0.02%", um, ev_s2c, split, PRIMARY_H["S2"])
 
-    print("\n==== S3: hacim anomalisi ====")
+    print("\n==== S3: hacim anomalisi (CANLI/KANONIK) ====")
     ev_s3 = s3_events(spot, S3_Z, S3_WINDOW, S3_LOG, direction=S3_DIRECTION)
     for split in ("train", "test", "all"):
-        report(f"S3 log z={S3_Z}", spot, ev_s3, split, PRIMARY_H["S3"])
-    print("-- alternatif z=3.0 (log) --")
-    ev_s3a = s3_events(spot, 3.0, S3_WINDOW, True, direction=S3_DIRECTION)
+        report(f"S3 log bar_up z={S3_Z}", spot, ev_s3, split, PRIMARY_H["S3"])
+    print("-- duyarlilik: ayni yon filtresi, log z=3.5, h=4 --")
+    ev_s3a = s3_events(spot, 3.5, S3_WINDOW, True, direction=S3_DIRECTION)
     for split in ("train", "test"):
-        report("S3 log z=3.0", spot, ev_s3a, split, PRIMARY_H["S3"])
-    print("-- mevcut bot: ham hacim z=3.0 --")
-    ev_s3c = s3_events(spot, 3.0, S3_WINDOW, False, direction="bar")
-    for split in ("train", "test"):
-        report("S3 raw z=3.0", spot, ev_s3c, split, PRIMARY_H["S3"])
+        report("S3 log bar_up z=3.5", spot, ev_s3a, split, PRIMARY_H["S3"])
+    print("-- legacy nihai rapor konfigurasyonu: iki yonlu log z=3.5, h=24 --")
+    ev_s3_legacy = s3_events(
+        spot, S3_LEGACY_Z, S3_WINDOW, S3_LEGACY_LOG,
+        direction=S3_LEGACY_DIRECTION,
+    )
+    for split in ("train", "test", "all"):
+        report("S3 LEGACY log bar z=3.5", spot, ev_s3_legacy, split, 24)
 
     # ---- ortusme / confluence ----
     print("\n==== Ortusme (±24h ayni sembol) ====")

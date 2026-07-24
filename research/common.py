@@ -9,6 +9,7 @@ import pandas as pd
 HORIZONS = [1, 2, 4, 8, 12, 24, 48, 72]
 VOL_WINDOW = 168          # gerceklesen volatilite penceresi (saat)
 TRAIN_END = pd.Timestamp("2026-01-01", tz="UTC")   # train < bu, test >= bu
+BOOTSTRAP_ITERATIONS = 2000
 
 
 def load_panel(data_dir: str, market: str) -> dict[str, pd.DataFrame]:
@@ -55,17 +56,35 @@ def edge_trigger(cond: pd.Series, cooldown: int) -> pd.DatetimeIndex:
     return pd.DatetimeIndex(kept)
 
 
-def split_mask(times: pd.DatetimeIndex, split: str) -> np.ndarray:
+def split_mask(times: pd.DatetimeIndex, split: str,
+               horizon_hours: int = 0) -> np.ndarray:
+    """Train/test maskesi; train ileri getirilerini sinirda purge eder.
+
+    Olay ``t`` aninda olusur, giris ``t+1`` acilisi ve ``h`` saatlik cikis
+    ``t+h`` kapanisidir. Bu nedenle train olayinin cikis bari test donemine
+    degiyorsa ilgili ufuk train ornekleminden cikarilir. ``horizon_hours=0``
+    eski olay-zamani maskesini korur.
+    """
+    if horizon_hours < 0:
+        raise ValueError("horizon_hours negatif olamaz")
     if split == "train":
-        return times < TRAIN_END
+        mask = times < TRAIN_END
+        if horizon_hours:
+            mask &= times + pd.Timedelta(hours=horizon_hours) < TRAIN_END
+        return np.asarray(mask, dtype=bool)
     if split == "test":
-        return times >= TRAIN_END
+        return np.asarray(times >= TRAIN_END, dtype=bool)
     return np.ones(len(times), dtype=bool)
 
 
 def collect_event_returns(panel: dict, events: dict, split: str) -> pd.DataFrame:
     """events: sym -> (DatetimeIndex, yon dizisi +1/-1).
-    Donus: satir=olay, kolonlar sym, t, dir, fwd_H, fwdn_H (yon-carpimli)."""
+    Donus: satir=olay, kolonlar sym, t, dir, fwd_H, fwdn_H (yon-carpimli).
+
+    Train/test sinirindaki olay satiri korunur; test fiyatina tasan ufuklar
+    NaN yapilir. Boylece ayni olay tablosu birden cok ufukta guvenle
+    kullanilabilir ve kisa ufuklar gereksiz yere 72 saat purge edilmez.
+    """
     rows = []
     for sym, (times, dirs) in events.items():
         if sym not in panel or len(times) == 0:
@@ -78,8 +97,11 @@ def collect_event_returns(panel: dict, events: dict, split: str) -> pd.DataFrame
         sel = df.reindex(times)
         out = pd.DataFrame({"sym": sym, "t": times, "dir": dirs})
         for h in HORIZONS:
-            out[f"fwd_{h}"] = sel[f"fwd_{h}"].to_numpy() * dirs
-            out[f"fwdn_{h}"] = sel[f"fwdn_{h}"].to_numpy() * dirs
+            valid = split_mask(times, split, horizon_hours=h)
+            fwd = sel[f"fwd_{h}"].to_numpy() * dirs
+            fwdn = sel[f"fwdn_{h}"].to_numpy() * dirs
+            out[f"fwd_{h}"] = np.where(valid, fwd, np.nan)
+            out[f"fwdn_{h}"] = np.where(valid, fwdn, np.nan)
         rows.append(out)
     if not rows:
         return pd.DataFrame()
@@ -91,10 +113,9 @@ def baseline_stats(panel: dict, split: str) -> dict[str, pd.DataFrame]:
     winrate. Kisa yon icin isaretler ters cevrilir."""
     out = {}
     for sym, df in panel.items():
-        sub = df[df.index < TRAIN_END] if split == "train" else (
-            df[df.index >= TRAIN_END] if split == "test" else df)
         stats = {}
         for h in HORIZONS:
+            sub = df.loc[split_mask(df.index, split, horizon_hours=h)]
             f = sub[f"fwd_{h}"].dropna()
             fn = sub[f"fwdn_{h}"].dropna()
             stats[h] = (f.mean(), fn.mean(), (f > 0).mean())
@@ -103,18 +124,26 @@ def baseline_stats(panel: dict, split: str) -> dict[str, pd.DataFrame]:
 
 
 def bootstrap_pvalue(panel: dict, ev: pd.DataFrame, h: int, split: str,
-                     n_iter: int = 500, seed: int = 7) -> float:
+                     n_iter: int = BOOTSTRAP_ITERATIONS, seed: int = 7) -> float:
     """Sembol-eslesmeli bootstrap: her sembolden olay sayisi kadar rastgele bar
     cek, yon dagilimini koruyarak isaretle, ortalama fwdn dagilimi cikar.
-    p = P(rastgele >= gercek)."""
+    p = P(rastgele >= gercek).
+
+    Monte Carlo p-degerinde plus-one duzeltmesi kullanilir; sonlu simulasyonda
+    sahte ``p=0`` raporlanmaz.
+    """
+    if n_iter <= 0:
+        raise ValueError("n_iter pozitif olmali")
     rng = np.random.default_rng(seed)
     col = f"fwdn_{h}"
+    ev = ev.dropna(subset=[col])
+    if len(ev) == 0:
+        return np.nan
     actual = ev[col].mean()
     pools, counts, dirpools = [], [], []
     for sym, g in ev.groupby("sym"):
         df = panel[sym]
-        sub = df[df.index < TRAIN_END] if split == "train" else (
-            df[df.index >= TRAIN_END] if split == "test" else df)
+        sub = df.loc[split_mask(df.index, split, horizon_hours=h)]
         pool = sub[col].dropna().to_numpy()
         if len(pool) == 0:
             continue
@@ -131,7 +160,8 @@ def bootstrap_pvalue(panel: dict, ev: pd.DataFrame, h: int, split: str,
             tot += (draw * dirs).sum()
             n += cnt
         sims[i] = tot / n
-    return float((sims >= actual).mean())
+    exceedances = int(np.count_nonzero(sims >= actual))
+    return float((exceedances + 1) / (n_iter + 1))
 
 
 def summarize(panel: dict, ev: pd.DataFrame, base: dict, h: int, split: str,

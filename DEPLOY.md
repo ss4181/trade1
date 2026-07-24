@@ -1,24 +1,21 @@
-# Deploy — signal_bot 7/24 (Render, ücretsiz)
+# Arşiv — desteklenmeyen Render kurulumu
 
-> ⚠️ **BU YOL ÖLÜ (2026-07-18'de doğrulandı):** Binance, Render'ın paylaşımlı
+> ⚠️ **BU YOLU UYGULAMA.** 2026-07-18'de Binance, Render'ın paylaşımlı
 > çıkış IP'lerini yasaklıyor — ABD bölgesi 451 (geo-block), Frankfurt 418
-> (IP banı) verdi; servis veri çekemiyor. Bu dosya tarihçe olarak duruyor.
+> (IP banı) verdi; servis veri çekemiyor. Bu dosya yalnız tarihçe olarak duruyor.
 > **Çalışan 7/24 yolu için: [TABLET.md](TABLET.md)** (evdeki Android tablet,
 > temiz ev IP'si) veya sabit-IP'li bir VPS.
 
-Bu rehber botu **kredi kartı gerektirmeden**, bilgisayarın kapalıyken de çalışan
-bir Render web servisine kurar. Adımları sırayla yap; her adım ekran görüntüsü
-gerektirmeyecek kadar açık.
+Aktif `render.yaml` özellikle kaldırılıp [render.archived.yaml](render.archived.yaml)
+adıyla saklandı; Render'ın bu çalışmayan yolu otomatik Blueprint olarak
+algılamaması amaçlanıyor. Aşağıdaki adımlar uygulanacak kurulum talimatı değil,
+eski denemenin denetim kaydıdır.
 
 > **Güvenlik:** Hiçbir API anahtarını/token'ı bu repoya, koda veya git commit'e
 > yazma. Tüm gizli değerler yalnızca **Render panelindeki Environment** bölümüne
 > girilir. `.env` dosyası `.gitignore`'da — yanlışlıkla push edilmez.
 
-Neden Render? Railway'in ücretsiz planı aylık yalnızca ~1$ kredi verir (sürekli
-çalışan bir döngü bunu 1-2 günde bitirir); Fly.io 2024'ten beri yeni kullanıcıya
-ücretsiz katman vermiyor ve kart istiyor. Render'ın ücretsiz **web servisi**
-kartsız ve 7/24 (750 saat/ay = bir servis için yeterli). Tek şart: 15 dk boşta
-kalınca uyur → bunu bir dış "pinger" ile çözüyoruz (Adım 5).
+Bu bölümdeki fiyat/plan bilgileri de tarihsel olabilir; güncel öneri değildir.
 
 ---
 
@@ -58,11 +55,13 @@ git push -u origin main
 
 ## Adım 3 — Servisi oluştur (Blueprint ile — en kolay)
 
-Repo kökünde hazır bir `render.yaml` var; Render bunu otomatik okur.
+Tarihsel Blueprint [render.archived.yaml](render.archived.yaml) adıyla
+saklanır; Render'ın otomatik okuyacağı aktif `render.yaml` yoktur.
 
 1. Render panelinde **New +** → **Blueprint**.
 2. `signal-bot` repo'nu seç → **Connect**.
-3. Render `render.yaml`'ı okur ve bir **web servisi** (`signal-bot`, plan:
+3. Tarihsel olarak Render `render.yaml`'ı okuyup bir **web servisi**
+   (`signal-bot`, plan:
    **Free**) önerir. Bu ekranda gizli ortam değişkenlerini (`sync:false`
    olanları) girmeni ister — **Adım 4'teki değerleri** buraya yapıştır.
 4. **Apply** / **Create** de. Build başlar (birkaç dakika: `pip install`).
@@ -143,11 +142,13 @@ Artık her 10 dk'da bir `/ping` çağrılır, servis uyanık kalır.
 
 ## Adım 6 — Doğrula
 
-- `https://signal-bot-XXXX.onrender.com/health` → `"status":"ok"` ve
-  `"scan_thread_alive":true` görmelisin.
+- `https://signal-bot-XXXX.onrender.com/health` → ilk tarama sırasında
+  `"status":"starting"`, ardından `"status":"ok"`, `"ready":true` ve
+  `"scan_thread_alive":true` görmelisin. Ölü/eski tarama HTTP 503 döner.
 - `.../signals/latest` → `{"count":0,...}` (henüz sinyal yoksa normal; sinyal
   ürettikçe dolacak).
-- İlk gerçek sinyalde Telegram + email gelmeli. (Sinyaller saatte bir, gerçek
+- İlk gerçek sinyalde Telegram + email gelmeli. (Bot varsayılan 5 dakikada bir
+  son kapanmış saatlik barı kontrol eder; sinyal yalnız gerçek
   piyasa koşuluna göre üretilir — hemen gelmeyebilir; bu beklenen davranış.)
 
 ---

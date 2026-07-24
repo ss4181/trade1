@@ -1,5 +1,6 @@
-# Render Blueprint — signal_bot 7/24 web servisi (ucretsiz katman).
-# Bu dosya repo kokunde oldugunda Render "Blueprint" olarak otomatik okur.
+# ARSIV / DESTEKLENMIYOR: Binance paylasimli Render IP'lerini engelledigi icin
+# bu Blueprint otomatik algilanmasin diye render.yaml adindan tasinmistir.
+# Yalniz tarihsel referans; calisan kurulum icin TABLET.md veya sabit-IP VPS.
 # NOT: Render ucretsiz katmaninda 'background worker' YOK; bu yuzden tip 'web'
 # ve tarama dongusu server.py icinde arka plan thread'inde kosuyor.
 services:
@@ -30,6 +31,6 @@ services:
         sync: false
       # --- Sir olmayan ayarlar ---
       - key: SCAN_INTERVAL_MINUTES
-        value: "60"
+        value: "5"
       - key: PYTHON_VERSION
         value: "3.12.8"

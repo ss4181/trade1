@@ -18,6 +18,7 @@ import signal_bot as bot  # noqa: E402
 ORIG = {
     "send_tg": bot.send_telegram_message,
     "tg_text": bot._telegram_send_text,
+    "realized_performance": bot.realized_performance,
 }
 
 PASS = 0
@@ -73,7 +74,37 @@ def test_notify_gating_and_push_flag():
     bot.notify({**base, "strategy": "S1", "confidence": "YUKSEK"}, push=False)
     assert len(bot.RECENT_SIGNALS) == 3          # hepsi tamponda
     assert pushed == [("tg", "S1"), ("em", "S1")]  # yalniz 1 push
+    rows = list(bot.RECENT_SIGNALS)
+    assert rows[0]["suppressed"] is True
+    assert rows[0]["suppression_reason"] == "scan_push_cap"
+    assert rows[1]["push_allowed"] is True
+    assert rows[2]["suppression_reason"] == "confidence_below_threshold"
+    assert all(r.get("event_id") and r.get("schema_version") == 2 for r in rows)
     ok("guven esigi + push bayragi")
+
+
+def test_overflow_summary_fanout():
+    old_enabled = bot.ENABLE_TELEGRAM
+    old_subscribers = bot.TELEGRAM_SUBSCRIBERS
+    old_email = bot.ENABLE_EMAIL
+    old_sender = bot._telegram_send_text
+    sent = []
+    bot.ENABLE_TELEGRAM = True
+    bot.ENABLE_EMAIL = False
+    bot.TELEGRAM_SUBSCRIBERS = ["111", "222"]
+    bot._telegram_send_text = lambda text, chat_id=None: sent.append(chat_id)
+    try:
+        bot._send_overflow_summary([{
+            "strategy": "S1", "symbol": "BTCUSDT", "price": 1,
+            "horizon_hours": 24,
+        }])
+    finally:
+        bot.ENABLE_TELEGRAM = old_enabled
+        bot.ENABLE_EMAIL = old_email
+        bot.TELEGRAM_SUBSCRIBERS = old_subscribers
+        bot._telegram_send_text = old_sender
+    assert sent == ["111", "222"]
+    ok("tasma ozeti tum Telegram abonelerine fanout")
 
 
 def test_state_persistence(tmpdir):
@@ -82,8 +113,12 @@ def test_state_persistence(tmpdir):
     st = bot.ScanState()
     st.prev_cond[("S1", "BTCUSDT")] = True
     st.last_fire[("S3", "ETHUSDT")] = 123.0
-    bot.RECENT_SIGNALS.appendleft({"strategy": "S1", "symbol": "BTCUSDT",
-                                   "notified_at": "2026-07-19T12:00:00+00:00"})
+    bot.RECENT_SIGNALS.appendleft({
+        "strategy": "S1", "symbol": "BTCUSDT", "direction": "LONG",
+        "bar_time": "2026-07-19T12:00:00+00:00",
+        "notified_at": "2026-07-19T12:00:01+00:00",
+        "price": 100.0, "horizon_hours": 24,
+    })
     st.save()
     bot.RECENT_SIGNALS.clear()
     st2 = bot.ScanState.load()
@@ -203,6 +238,8 @@ def test_market_archiver(tmpdir):
     bot.SYMBOLS = ["PEPEUSDT", "BTCUSDT"]
     bot.PERP_MAP = {"PEPEUSDT": "1000PEPEUSDT"}
     bot.LAST_SPOT_CLOSE.update({"PEPEUSDT": 0.000002, "BTCUSDT": 60000.0})
+    now = bot.time.time()
+    bot.LAST_SPOT_AT.update({"PEPEUSDT": now, "BTCUSDT": now})
 
     class R:
         def __init__(s, d): s._d = d
@@ -232,6 +269,11 @@ def test_market_archiver(tmpdir):
     # ayni saat icinde ikinci cagri yazmamali
     bot.archive_market_state()
     assert len(files[0].read_text(encoding="utf-8").splitlines()) == 2
+    # Yazma basarisizsa saat kilidi kurulmamali; sonraki dongu tekrar deneyebilsin.
+    bot.ARCHIVE_DIR = Path(tmpdir) / "olmayan" / "alt"
+    bot._last_archive_hour = None
+    bot.archive_market_state()
+    assert bot._last_archive_hour is None
     ok("piyasa arsivi (1000x olcek + saat kilidi)")
 
 
@@ -241,14 +283,17 @@ def test_daily_summary_includes_perf():
     bot.ENABLE_TELEGRAM = True
     bot.DAILY_SUMMARY_HOUR_UTC = 0
     bot._last_summary_day = None
-    bot.realized_performance = lambda max_signals=30: {
+    bot.realized_performance = lambda max_signals=30, fetch_missing=True: {
         "n_total": 4, "fetch_errors": 0,
         "strategies": {"S1": {"n": 4, "median_pct": 1.2, "mean_pct": 1.0,
                               "winrate_pct": 75, "bt_median_pct": 0.93,
                               "bt_winrate_pct": 62}}}
-    bot._maybe_daily_summary()
-    assert sent and "Gunluk ozet" in sent[0]
-    assert "karne" in sent[0] and "+1.20%" in sent[0]
+    try:
+        bot._maybe_daily_summary()
+        assert sent and "Gunluk ozet" in sent[0]
+        assert "karne" in sent[0] and "+1.20%" in sent[0]
+    finally:
+        bot.realized_performance = ORIG["realized_performance"]
     ok("gunluk ozette olgun sinyal karnesi")
 
 
@@ -273,15 +318,18 @@ def test_dashboard_data(tmpdir):
     bot.PERF_CACHE_FILE.write_text(
         json.dumps({bot._perf_key(olgun): 2.5}), encoding="utf-8")
     bot.LAST_SPOT_CLOSE.update({"BBBUSDT": 210.0})
+    bot.LAST_SPOT_AT["BBBUSDT"] = bot.time.time()
     d = bot.build_dashboard_data()
     rows = {r["symbol"]: r for r in d["signals"]}
     assert rows["AAAUSDT"]["status"] == "OLGUN"
     assert rows["AAAUSDT"]["pnl_pct"] == 2.5       # cache'ten gerceklesen
     assert rows["BBBUSDT"]["status"] == "AKTIF"
     assert abs(rows["BBBUSDT"]["pnl_pct"] - 5.0) < 0.01   # 210/200-1
+    assert rows["BBBUSDT"]["price_stale"] is False
     assert rows["BBBUSDT"]["remaining_h"] is not None
     s1 = next(s for s in d["strategies"] if s["name"] == "S1")
     assert s1["live_n"] == 1 and s1["live_med"] == 2.5
+    assert s1["bt_med"] == 0.67 and "test" in s1["bt_scope"]
     assert d["status"]["interval_min"] == bot.SCAN_INTERVAL_MINUTES
     # zenginlestirilmis alanlar: docs (tiklanabilir strateji) + why (neden geldi)
     assert "S1" in d["docs"] and "Nasil" in d["docs"]["S1"]["how"] or \
@@ -294,7 +342,191 @@ def test_dashboard_data(tmpdir):
     assert "{{DATA_URL}}" in bot.DASHBOARD_HTML_TEMPLATE
     assert '"/api/dashboard"' in bot.dashboard_html()
     assert '"./data.json"' in bot.dashboard_html("./data.json")
+    bot.LAST_SPOT_AT["BBBUSDT"] = (
+        bot.time.time() - (bot.PRICE_STALE_AFTER_MINUTES * 60 + 1))
+    stale = {r["symbol"]: r for r in bot.build_dashboard_data()["signals"]}
+    assert stale["BBBUSDT"]["price_stale"] is True
+    assert stale["BBBUSDT"]["pnl_pct"] is None
     ok("pano verisi + docs/why + sablon (LAN & Pages fetch)")
+
+
+def test_exact_strategy_performance_and_median(tmpdir):
+    log = Path(tmpdir) / "perf-signals.log"
+    now = bot.datetime.now(bot.timezone.utc)
+    signals = []
+    values = [
+        ("S1", "AUSDT", 1.0, "spot"),
+        ("S1", "BUSDT", 3.0, "spot"),
+        ("S1+S4", "CUSDT", 5.0, "spot"),
+        ("S2", "DUSDT", -2.0, "um_perp"),
+    ]
+    cache = {}
+    for i, (strategy, symbol, ret, market) in enumerate(values):
+        sig = {
+            "strategy": strategy, "symbol": symbol, "direction": "LONG",
+            "bar_time": (now - bot.timedelta(hours=100 + i)).isoformat(),
+            "horizon_hours": 24, "performance_market": market,
+        }
+        signals.append(sig)
+        cache[bot._perf_key(sig)] = {
+            "return_pct": ret, "entry": 100.0, "exit": 100.0 + ret,
+            "market": market,
+        }
+    log.write_text("\n".join(json.dumps(s) for s in signals) + "\n",
+                   encoding="utf-8")
+    bot.SIGNAL_LOG = str(log)
+    bot.PERF_CACHE_FILE = Path(tmpdir) / "perf-cache-v2.json"
+    bot.PERF_CACHE_FILE.write_text(json.dumps(cache), encoding="utf-8")
+    perf = bot.realized_performance(max_signals=10)
+    assert set(perf["strategies"]) == {"S1", "S1+S4", "S2"}
+    assert perf["strategies"]["S1"]["median_pct"] == 2.0
+    assert perf["strategies"]["S1+S4"]["n"] == 1
+    assert perf["strategies"]["S2"]["performance_market"] == "um_perp"
+    # Cache yokken S2 mutlaka USD-M perp fetcher'ini kullanmali.
+    s2 = {
+        "strategy": "S2", "symbol": "EUSDT", "direction": "LONG",
+        "bar_time": (now - bot.timedelta(hours=100)).isoformat(),
+        "horizon_hours": 72, "performance_market": "um_perp",
+    }
+    log.write_text(json.dumps(s2) + "\n", encoding="utf-8")
+    bot.PERF_CACHE_FILE = Path(tmpdir) / "empty-perf-cache.json"
+    bot.PERF_CACHE_FILE.write_text("{}", encoding="utf-8")
+    old_spot, old_fut = bot.fetch_klines_at, bot.fetch_futures_klines_at
+    called = []
+    bars = [{"open_time": i, "open": 100.0, "close": 101.0}
+            for i in range(74)]
+    bot.fetch_klines_at = lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("S2 spot fetcher kullanmamalı"))
+    bot.fetch_futures_klines_at = lambda *a, **k: called.append("um") or bars
+    try:
+        fetched = bot.realized_performance(max_signals=10)
+    finally:
+        bot.fetch_klines_at, bot.fetch_futures_klines_at = old_spot, old_fut
+    assert called == ["um"] and "S2" in fetched["strategies"]
+    ok("tam strateji performansi + gercek medyan + piyasa ayrimi")
+
+
+def test_spot_rate_limit_backoff():
+    calls = []
+
+    class R:
+        def __init__(self, status, data):
+            self.status_code = status
+            self.headers = {"Retry-After": "0"}
+            self._data = data
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                err = bot.requests.HTTPError(f"HTTP {self.status_code}")
+                err.response = self
+                raise err
+
+        def json(self):
+            return self._data
+
+    responses = [R(429, {}), R(200, {"ok": True})]
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(url)
+        return responses.pop(0)
+
+    old_get = bot.requests.get
+    bot.requests.get = fake_get
+    bot._spot_host_idx = 0
+    old_retries = bot.SPOT_MAX_RETRIES
+    bot.SPOT_MAX_RETRIES = 2
+    try:
+        result = bot._spot_get("/api/v3/test")
+    finally:
+        bot.SPOT_MAX_RETRIES = old_retries
+        bot.requests.get = old_get
+    assert result.json()["ok"] is True
+    assert len(calls) == 2 and calls[0].split("/api")[0] == calls[1].split("/api")[0]
+    ok("spot 429 backoff (host atlamadan)")
+
+
+def test_scan_isolates_non_network_symbol_errors():
+    old_scan, old_symbols = bot.scan_symbol, bot.SYMBOLS
+    bot.SYMBOLS = ["BADUSDT", "GOODUSDT"]
+
+    def fake_scan(symbol, state):
+        if symbol == "BADUSDT":
+            raise ValueError("bozuk API semasi")
+        return []
+
+    bot.scan_symbol = fake_scan
+    try:
+        count = bot.scan_all(bot.ScanState())
+    finally:
+        bot.scan_symbol, bot.SYMBOLS = old_scan, old_symbols
+    assert count == 0 and bot.LAST_SCAN_ERRORS == 1
+    assert any("BADUSDT" in e for e in bot.ERROR_SAMPLES)
+    ok("sembol-bazli beklenmeyen hata izolasyonu")
+
+
+def test_scan_rejects_total_market_outage():
+    old_scan, old_symbols = bot.scan_symbol, bot.SYMBOLS
+    bot.SYMBOLS = ["AUSDT", "BUSDT", "CUSDT"]
+    bot.scan_symbol = lambda symbol, state: (_ for _ in ()).throw(
+        bot.requests.ConnectionError("piyasa yok"))
+    try:
+        try:
+            bot.scan_all(bot.ScanState())
+            raise AssertionError("tam veri kesintisi basarili sayilmamali")
+        except RuntimeError as e:
+            assert "yetersiz piyasa veri kapsami" in str(e)
+        assert bot.LAST_SCAN_ERRORS == 3
+        assert bot.LAST_SCAN_SUCCEEDED_SYMBOLS == 0
+        assert bot.LAST_SCAN_ERROR_RATIO == 1.0
+    finally:
+        bot.scan_symbol, bot.SYMBOLS = old_scan, old_symbols
+    ok("tam piyasa kesintisi basarisiz tarama")
+
+
+def test_true_price_time_and_s2_perp_market():
+    old_klines = bot.fetch_klines
+    old_funding = bot.fetch_funding
+    old_price = bot.fetch_futures_price
+    base_ms = 1_720_000_000_000
+    bot.fetch_klines = lambda symbol, limit=250: [
+        {"open_time": base_ms + i * 3_600_000, "open": 100.0,
+         "high": 101.0, "low": 99.0, "close": 100.0, "volume": 10.0}
+        for i in range(250)
+    ]
+    bot.fetch_funding = lambda symbol, limit=3: [
+        {"time": base_ms + i * 8 * 3_600_000, "rate": -0.001}
+        for i in range(3)
+    ]
+    bot.fetch_futures_price = lambda symbol: 123.45
+    try:
+        signals = bot.scan_symbol("BTCUSDT", bot.ScanState(), snapshot=True)
+    finally:
+        bot.fetch_klines = old_klines
+        bot.fetch_funding = old_funding
+        bot.fetch_futures_price = old_price
+    expected_close = (base_ms + 249 * 3_600_000 + 3_600_000) / 1000
+    assert bot.LAST_SPOT_AT["BTCUSDT"] == expected_close
+    s2 = next(sig for sig in signals if sig["strategy"] == "S2")
+    assert s2["signal_market"] == "um_perp"
+    assert s2["performance_market"] == "um_perp"
+    assert s2["price"] == 123.45 and s2["price_source"] == "futures_ticker"
+    ok("gercek mum zamani + S2 perp fiyat temeli")
+
+
+def test_instance_file_lock(tmpdir):
+    old_path = bot.INSTANCE_LOCK_PATH
+    bot.INSTANCE_LOCK_PATH = Path(tmpdir) / "instance.lock"
+    first = second = None
+    try:
+        first = bot._acquire_instance_file_lock()
+        second = bot._acquire_instance_file_lock()
+        assert first is not None
+        assert second is None
+    finally:
+        bot._release_instance_file_lock(second)
+        bot._release_instance_file_lock(first)
+        bot.INSTANCE_LOCK_PATH = old_path
+    ok("tek-instance dosya kilidi")
 
 
 def test_extended_universe_rules():
@@ -310,6 +542,8 @@ def test_extended_universe_rules():
          "low": closes[i] - 1, "close": closes[i], "volume": 10}
         for i in range(250)]
     orig_div = bot.bullish_divergence
+    orig_futures_price = bot.fetch_futures_price
+    bot.fetch_futures_price = lambda symbol: 100.0
     bot.bullish_divergence = lambda c, l, r, i: True
     bot.DISABLED_STRATEGIES = set()
     try:
@@ -320,6 +554,7 @@ def test_extended_universe_rules():
         assert "S2" not in strats and "S3" not in strats
         s1 = next(s for s in sigs if s["strategy"].startswith("S1"))
         assert s1["confidence"] == "ORTA" and "genis evren" in s1["confidence_note"]
+        assert s1["confidence_note"] in bot._signal_why(s1)
         # ayni kosullar CEKIRDEK sembolde: S1 YUKSEK olmali
         sigs2 = bot.scan_symbol("BTCUSDT", bot.ScanState(), snapshot=True)
         s1c = next(s for s in sigs2 if s["strategy"].startswith("S1"))
@@ -330,6 +565,7 @@ def test_extended_universe_rules():
         assert len(bot.EXTENDED_SET) == 59
     finally:
         bot.bullish_divergence = orig_div
+        bot.fetch_futures_price = orig_futures_price
     ok("genis evren kurallari (S1-yalniz, kademeli guven, 89 sembol)")
 
 
@@ -399,10 +635,12 @@ def test_perf_formatting():
 
 def main():
     with tempfile.TemporaryDirectory() as td:
+        bot.SIGNAL_LOG = str(Path(td) / "signals.log")
         test_confidence()
         test_zero_division_guards()
         test_snapshot_isolation()
         test_notify_gating_and_push_flag()
+        test_overflow_summary_fanout()
         test_state_persistence(td)
         test_ref_lines()
         test_disabled_strategies_and_header()
@@ -410,6 +648,12 @@ def main():
         test_market_archiver(td)
         test_daily_summary_includes_perf()
         test_dashboard_data(td)
+        test_exact_strategy_performance_and_median(td)
+        test_spot_rate_limit_backoff()
+        test_scan_isolates_non_network_symbol_errors()
+        test_scan_rejects_total_market_outage()
+        test_true_price_time_and_s2_perp_market()
+        test_instance_file_lock(td)
         test_extended_universe_rules()
         test_github_publish()
         test_perf_formatting()

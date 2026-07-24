@@ -32,16 +32,17 @@ ortalaması (yani piyasa sürüklenmesinden arındırılmış fazla getiri).
 - **Funding'de sembol-göreli z-skoru** (denenen yeniden tasarım): train'de
   parlak, testte çöktü → mutlak seviye eşiği korundu.
 
-## Sembol evreni (otomatik)
+## Sembol evreni (varsayılan statik)
 
-`SYMBOLS` env'i boşsa bot evreni kendisi kurar: **USDT spot çifti + aktif
-USDⓈ-M perp'i olan coinler, perp 24h hacmine göre sıralı ilk
-`SYMBOL_MAX_COUNT` (varsayılan 120)** — perp hacmi ≥ 10M$, spot ≥ 1M$
-tabanlarıyla. Sıralama perp hacmiyle yapılır: işlem perp'te açılır ve mutlak
-spot eşiği rejime göre kırılır (ayıda spot hacimler çöker). Evren günde bir
-yenilenir; stabil/pegli varlıklar (USDC, PAXG, WBTC…) hariç.
-Bu kural araştırma evreninin tanımıyla aynıdır ("likit + hem spot hem perp") —
-eşikler likit-dışı coinlerde **doğrulanmadı**, hacim filtresi bilerek var.
+`SYMBOLS` env'i boşsa bot varsayılan olarak araştırmayla doğrulanmış
+**30 çekirdek + 59 genişletilmiş = 89 statik coin** tarar. Genişletilmiş
+59 coinde yalnız S1 ailesi çalışır; S2 ve S3 bu grupta OOS başarısız olduğu
+için hesaplanmaz.
+
+Hacme göre dinamik ilk 120 coin evreni yalnızca `SYMBOL_AUTO=true` ile açılır.
+Bu mod, yeni/pump-dump coinleri içeri alabildiği ve canlı takipte ciddi evren
+kontaminasyonu ürettiği için varsayılan değildir. Ayrıntılı uyarılar ve filtreler
+`.env.example` içindedir.
 
 ## Bildirimlerdeki referans seviyeleri
 
@@ -58,7 +59,7 @@ ve kaldıraç kayıpları/tasfiye riskini büyütür.
 pip install -r requirements.txt
 cp .env.example .env            # bildirim anahtarlarini doldur (opsiyonel)
 python signal_bot.py --check    # ŞU AN aktif kurulumlar (bildirim yok) — istedigin an calistir
-python signal_bot.py            # 7/24 dongu: saatte bir tarar, tetikte Telegram+email atar
+python signal_bot.py            # 7/24 döngü: varsayılan 5 dakikada bir tarar
 python signal_bot.py --once     # tek dongu adimi (kenar-tetikleme; canli davranis testi)
 ```
 
@@ -75,12 +76,20 @@ Binance için API anahtarı gerekmez (yalnızca halka açık uçlar). Sinyaller
 stdout'a ve `signals.log`'a (JSONL) yazılır; ayrıca **Telegram + email**
 gönderilir (anahtar tanımlıysa — yoksa o kanal sessizce atlanır).
 
-7/24 web servisi olarak (mobil endpoint dâhil) çalıştırmak için:
+7/24 web servisi olarak (mobil endpoint dâhil) çalıştırmak için aşağıdaki
+**tek birleşik modu** kullan. Aynı anda ayrıca `python signal_bot.py` başlatma;
+tek-instance kilidi ikinci kopyayı reddeder:
 
 ```bash
 uvicorn server:app --host 0.0.0.0 --port 8000
-# /health, /signals/latest, / (durum sayfasi)
+# /ping = proses liveness
+# /health = tarama readiness; ölü/eski taramada HTTP 503
+# /signals/latest = mobil sinyal sözleşmesi
 ```
+
+`--workers 2` gibi çok-worker kullanma: sinyal tamponu proses içi olduğu için
+sunucu başlangıçta tek tarama liderini zorunlu kılar ve lider olamayan worker'ı
+reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
 
 ## 7/24 Deploy + bildirimler + iPhone
 
@@ -105,10 +114,12 @@ uvicorn server:app --host 0.0.0.0 --port 8000
   verebilir ve otomatik sinyalleri alır (abone). Arkadaş kendi ID'sini `/myid`
   ile öğrenir. Listede olmayan biri yalnızca `/myid` alır, gerisi yok sayılır.
   Tam açık mod: `TELEGRAM_OPEN=true`.
-- **Bildirimler:** her sinyal **hem Telegram hem email** ile gider (biri
+- **Bildirimler:** push izni verilen her sinyal **hem Telegram hem email** ile gider (biri
   diğerinin yerine geçmez). Anti-spam tek kapıdan yönetilir (`ScanState`
   kenar-tetikleme + strateji-başı cooldown); iki kanal aynı deduplike sinyali
-  alır. Anahtar adları: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
+  alır. Eşik altı ve tarama tavanını aşan kayıtlar `push_allowed=false`,
+  `suppressed=true` ve gerekçesiyle API/log'da kalır; mobil istemci bu kararı
+  geçersiz kılmaz. Anahtar adları: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
   `RESEND_API_KEY`, `NOTIFICATION_EMAIL` (bkz. `.env.example`).
 - **iPhone:** [mobile/](mobile/) — Expo Go uygulaması. Sunucuyu pollar, yeni
   sinyalde **yerel bildirim** gösterir. Kısıt: yalnızca uygulama **açıkken**
@@ -125,3 +136,18 @@ uvicorn server:app --host 0.0.0.0 --port 8000
 - Sembol seti bugün likit olan coinlerden kuruldu (survivorship);
   bot da aynı evreni taradığı için deploy ile tutarlı, ama "her coin'de
   çalışır" iddiası yok.
+- `/signals/latest` varsayılan olarak kimlik doğrulamasızdır. İnternete
+  açacaksan VPN/Tailscale veya ters proxy kimlik doğrulaması kullan; GitHub
+  Pages yayınının herkese açık olduğunu unutma.
+- `0.0.0.0:8000` ile çalıştırıldığında `/signals/latest`, `/health` ve `/docs`
+  aynı yerel ağdaki cihazlara açıktır. `CORS_ALLOW_ORIGINS` tarayıcı
+  kısıtlamasıdır, kimlik doğrulama değildir; yalnız güvendiğin LAN/VPN'de aç.
+
+## Doğrulama testleri
+
+```bash
+python -B tests/offline_tests.py
+python -B tests/server_tests.py
+cd research && python -B -m unittest -v test_methodology.py
+cd ../mobile && npm ci && npm run check && npm run doctor
+```
