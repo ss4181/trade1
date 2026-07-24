@@ -80,8 +80,9 @@ function drawer(r){const rf=r.ref||{};
  const touch=(rf.touch||[]).map(t=>`+${t[0]}% → %${t[1]}`).join(" · ");
  const stopt=(rf.stopt||[]).map(t=>`-${t[0]}% → %${t[1]}`).join(" · ");
  let ref="";
- if(rf.median_price!=null)ref=`<div class="kv">
-  <span>Tarihsel medyan senaryo</span><b>${fp(rf.median_price)} (${rf.hist_median_pct>=0?'+':''}${rf.hist_median_pct}%)</b>
+  if(rf.median_price!=null)ref=`<div class="kv">
+   ${rf.stats_scope?`<span>Tarihsel kaynak</span><b>${esc(rf.stats_scope)}</b>`:""}
+   <span>Tarihsel medyan senaryo</span><b>${fp(rf.median_price)} (${rf.hist_median_pct>=0?'+':''}${rf.hist_median_pct}%)</b>
   <span>Kötü %10 senaryo</span><b>${fp(rf.q10_price)} (${rf.hist_q10_pct}%)</b>
   <span>İyi %10 senaryo</span><b>${fp(rf.q90_price)} (+${rf.hist_q90_pct}%)</b>
   ${rf.sigma_h_pct!=null?`<span>Tipik dalgalanma (±1σ)</span><b>±${rf.sigma_h_pct}%</b>`:""}
@@ -102,13 +103,15 @@ function draw(){if(!D)return;const s=D.status;
   `<span class="chip">push eşiği <b>${s.min_conf}+</b></span>`+
   `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`;
  document.getElementById("cards").innerHTML=D.strategies.map(x=>{
-  const live=x.live_n?`<b>${x.live_med>=0?'+':''}${x.live_med}%</b> / %${x.live_wr} (N=${x.live_n})`:"henüz yok";
-  return `<div class="card ${x.pushed?'':'off'}" onclick="toggleDoc('${x.name}')"><h3>${x.name}
-   <span class="badge ${B[R[x.confidence]]}">${x.confidence}</span></h3>
-   <div class="row"><span>Backtest (${x.bt_h}h)</span><b>${x.bt_med>=0?'+':''}${x.bt_med}% / %${x.bt_wr} (N=${x.bt_n})</b></div>
-   <div class="row"><span>Canlı</span><span>${live}</span></div>
-   <div class="row"><span>Kötü %10 / İyi %10</span><b>${x.bt_q10}% / +${x.bt_q90}%</b></div>
-   <div class="row"><span>Push</span><b>${x.pushed?"açık":"SESSİZ"}</b></div>
+   const live=x.live_n?`<b>${x.live_med>=0?'+':''}${x.live_med}%</b> / %${x.live_wr} (N=${x.live_n})`:"henüz yok";
+   const bt=(x.bt_med==null)?"—":`${x.bt_med>=0?'+':''}${x.bt_med}% / %${x.bt_wr} (N=${x.bt_n})`;
+   const tails=(x.bt_q10==null||x.bt_q90==null)?"raporlanmadı":`${x.bt_q10}% / +${x.bt_q90}%`;
+   return `<div class="card ${x.pushed?'':'off'}" onclick="toggleDoc('${x.name}')"><h3>${x.name}
+    <span class="badge ${B[R[x.confidence]]}">${x.confidence}</span></h3>
+    <div class="row"><span>Test (${x.bt_h}h)</span><b>${bt}</b></div>
+    <div class="row"><span>Canlı</span><span>${live}</span></div>
+    <div class="row"><span>Kötü %10 / İyi %10</span><b>${tails}</b></div>
+    <div class="row"><span>Push</span><b>${x.pushed?"açık":"SESSİZ"}</b></div>
    <div class="hint">▸ nasıl çalışır (tıkla)</div></div>`}).join("");
  drawDoc();
  const fs=document.getElementById("fStrat").value,ft=document.getElementById("fStat").value,
@@ -117,7 +120,9 @@ function draw(){if(!D)return;const s=D.status;
  document.getElementById("cnt").textContent=rows.length+" sinyal";
  document.getElementById("rows").innerHTML=rows.map((r,i)=>{
   const usd=r.pnl_pct==null?"—":`<span class="${r.pnl_pct>=0?'up':'dn'}">${(r.pnl_pct*not/100).toFixed(2)}$</span>`;
-  const st=r.status==="AKTIF"?`AKTİF <span class="tag">${r.remaining_h}h kaldı</span>`:"OLGUN";
+   const noPnl=r.pnl_unavailable_reason?
+    ` <span class="tag">${r.pnl_unavailable_reason==="entry_and_performance_market_mismatch"?"PİYASA UYUŞMUYOR":"FİYAT ESKİ/YOK"}</span>`:"";
+   const st=r.status==="AKTIF"?`AKTİF <span class="tag">${r.remaining_h}h kaldı</span>${noPnl}`:"OLGUN";
   const main=`<tr class="sig" data-i="${i}"><td>${r.t.slice(0,16).replace("T"," ")}</td>
    <td><b>${r.strategy}</b>${r.silenced?' <span class="tag">SESSİZ</span>':''}</td>
    <td><span class="badge ${B[R[r.confidence]]}">${r.confidence}</span></td>
@@ -128,7 +133,7 @@ function draw(){if(!D)return;const s=D.status;
   return main+dr}).join("")
   ||'<tr><td colspan="10" style="color:var(--mut)">kayıt yok</td></tr>';
  document.getElementById("foot").innerHTML=D.foot||FOOT;}
-const FOOT='K/Z tanımı: <b>AKTİF</b> satırlarda güncel fiyata göre anlık fark (fiyat en fazla tarama aralığı kadar eski), <b>OLGUN</b> satırlarda ufuk sonunda gerçekleşen sonuç (giriş = sinyal barından sonraki açılış, çıkış = ufuk kapanışı). Ücretler (~%0,1 gidiş-dönüş) düşülmemiştir. "SESSİZ" = güven eşiği altında; loglandı ama push edilmedi. Bu bir izleme panosudur — sinyaller mekanik istatistiklerdir, yatırım tavsiyesi değildir; geçmiş performans geleceği garanti etmez.';
+const FOOT='K/Z tanımı: <b>AKTİF</b> satırlarda sinyal anındaki aynı piyasa fiyatı geçici giriş referansıdır; gerçek gözlem zamanı tazelik sınırını aşarsa veya giriş/performans piyasası uyuşmazsa K/Z gösterilmez. <b>OLGUN</b> satırlarda gerçekleşen sonuç giriş = sonraki bar açılışı, çıkış = ufuk kapanışıyla hesaplanır. S2 sonucu USD-M perpetual, diğerleri spot mumlarından ölçülür. Ücret, slipaj ve funding düşülmemiştir. "SESSİZ" = teslim politikası nedeniyle loglandı ama push edilmedi. Bu bir izleme panosudur; yatırım tavsiyesi değildir.';
 document.getElementById("rows").addEventListener("click",e=>{
  const tr=e.target.closest("tr.sig");if(!tr)return;
  const rows=D.signals.filter(r=>{const fs=document.getElementById("fStrat").value,
