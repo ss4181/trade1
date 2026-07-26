@@ -404,8 +404,89 @@ PUBLISH_WORKER_ACTIVE = False
 PUBLISH_WORKER_LAST_ERROR: str | None = None
 
 
+# --- kalici abone deposu (Telegram icinden onay ile eklenenler) ---
+# .env'i elle duzenleyip botu yeniden baslatmaya gerek kalmasin: sahip
+# /onayla ile ekler, dosyaya yazilir, ANINDA gecerli olur. env listesi
+# (TELEGRAM_ALLOWED_CHAT_IDS) sabit taban olarak kalir; buradan silinemez.
+SUBSCRIBERS_FILE = Path(__file__).parent / _env(
+    "SUBSCRIBERS_FILE", ".subscribers.json")
+_subs_lock = threading.Lock()
+DYNAMIC_SUBSCRIBERS: dict[str, str] = {}     # chat_id -> etiket (ad)
+PENDING_JOINS: dict[str, str] = {}           # chat_id -> etiket (ad)
+
+
+def _load_subscribers() -> None:
+    """Diskteki onayli aboneleri yukler ve yayin listesine ekler."""
+    if not SUBSCRIBERS_FILE.exists():
+        return
+    try:
+        data = json.loads(SUBSCRIBERS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"uyari: abone dosyasi okunamadi: {e}", file=sys.stderr,
+              flush=True)
+        return
+    for cid, label in (data.get("subscribers") or {}).items():
+        DYNAMIC_SUBSCRIBERS[str(cid)] = str(label or "")
+        if str(cid) not in TELEGRAM_SUBSCRIBERS:
+            TELEGRAM_SUBSCRIBERS.append(str(cid))
+    if DYNAMIC_SUBSCRIBERS:
+        print(f"abone dosyasi: {len(DYNAMIC_SUBSCRIBERS)} onayli chat yuklendi",
+              flush=True)
+
+
+def _save_subscribers() -> None:
+    try:
+        tmp = SUBSCRIBERS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"subscribers": DYNAMIC_SUBSCRIBERS},
+                                  ensure_ascii=False, indent=1),
+                       encoding="utf-8")
+        tmp.replace(SUBSCRIBERS_FILE)
+    except OSError as e:
+        print(f"uyari: abone dosyasi yazilamadi: {e}", file=sys.stderr,
+              flush=True)
+
+
+def add_subscriber(chat_id: str, label: str = "") -> bool:
+    """Chat'i kalici aboneler listesine ekler. True = yeni eklendi."""
+    chat_id = str(chat_id).strip()
+    if not chat_id:
+        return False
+    with _subs_lock:
+        already = chat_id in TELEGRAM_SUBSCRIBERS
+        DYNAMIC_SUBSCRIBERS[chat_id] = label
+        if not already:
+            TELEGRAM_SUBSCRIBERS.append(chat_id)
+        PENDING_JOINS.pop(chat_id, None)
+        _save_subscribers()
+    return not already
+
+
+def remove_subscriber(chat_id: str) -> bool:
+    """Aboneligi kaldirir. env tabanindaki ve SAHIP chat'i KALDIRILAMAZ."""
+    chat_id = str(chat_id).strip()
+    with _subs_lock:
+        if chat_id == str(TELEGRAM_CHAT_ID) or chat_id in TELEGRAM_ALLOWED:
+            return False                     # env/sahip korumali
+        removed = DYNAMIC_SUBSCRIBERS.pop(chat_id, None) is not None
+        if chat_id in TELEGRAM_SUBSCRIBERS:
+            TELEGRAM_SUBSCRIBERS.remove(chat_id)
+            removed = True
+        if removed:
+            _save_subscribers()
+    return removed
+
+
+def _is_owner(chat_id: str) -> bool:
+    """Yalnizca yapilandirilmis SAHIP chat'i yonetim komutu verebilir —
+    onayli arkadaslar baska arkadas EKLEYEMEZ."""
+    return str(chat_id) == str(TELEGRAM_CHAT_ID)
+
+
 def _chat_allowed(chat_id: str) -> bool:
     return TELEGRAM_OPEN or chat_id in TELEGRAM_SUBSCRIBERS
+
+
+_load_subscribers()
 
 # Mobil endpoint (server.py) icin son sinyaller — thread-guvenli halka tampon.
 RECENT_MAXLEN = _env("RECENT_MAXLEN", 100)
@@ -2663,8 +2744,15 @@ def _format_check_for_telegram(found: list[dict], errors: int) -> str:
 
 def handle_telegram_command(text: str, chat_id: str) -> None:
     """Tek bir /komutu isler ve cevabi KOMUTU GONDEREN chat'e yollar."""
-    cmd = text.strip().split()[0].lower().lstrip("/").split("@")[0]
+    parts = text.strip().split()
+    cmd = parts[0].lower().lstrip("/").split("@")[0]
+    args = parts[1:]
+    owner = _is_owner(chat_id)
     if cmd in ("start", "help"):
+        admin_help = ("\n<b>Yonetim (yalniz sen):</b>\n"
+                      "/aboneler — abone listesi\n"
+                      "/onayla &lt;id&gt; — bekleyen arkadasi ekle\n"
+                      "/kaldir &lt;id&gt; — aboneligi kaldir\n") if owner else ""
         _telegram_send_text(
             "🤖 <b>Signal Bot</b> calisiyor.\n\n"
             "Komutlar:\n"
@@ -2672,9 +2760,77 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
             "/performans — canli sonuclar vs backtest\n"
             "/status — bot durumu\n"
             "/myid — kendi chat ID'in\n"
-            "/help — bu mesaj\n\n"
-            "Yeni sinyaller otomatik olarak buraya ve email'e dusecek. "
+            "/katil — botu kullanmak icin izin iste\n"
+            "/help — bu mesaj\n"
+            + admin_help +
+            "\nYeni sinyaller otomatik olarak buraya ve email'e dusecek. "
             "Yatirim tavsiyesi degildir.", chat_id=chat_id)
+    elif cmd == "aboneler":
+        if not owner:
+            _telegram_send_text("Bu komut yalniz bot sahibine acik.",
+                                chat_id=chat_id)
+            return
+        lines = ["<b>Aboneler</b> (sinyaller bunlara gider):"]
+        for cid in TELEGRAM_SUBSCRIBERS:
+            tag = ("sen" if str(cid) == str(TELEGRAM_CHAT_ID)
+                   else ("env" if cid in TELEGRAM_ALLOWED
+                         else DYNAMIC_SUBSCRIBERS.get(cid, "") or "onayli"))
+            lines.append(f"• <code>{_html.escape(str(cid))}</code> — "
+                         f"{_html.escape(tag)}")
+        if PENDING_JOINS:
+            lines.append("\n<b>Bekleyen istekler</b> (/onayla &lt;id&gt;):")
+            for cid, label in PENDING_JOINS.items():
+                lines.append(f"• <code>{_html.escape(cid)}</code> — "
+                             f"{_html.escape(label)}")
+        else:
+            lines.append("\nBekleyen istek yok.")
+        _telegram_send_text("\n".join(lines), chat_id=chat_id)
+    elif cmd in ("onayla", "approve"):
+        if not owner:
+            _telegram_send_text("Bu komut yalniz bot sahibine acik.",
+                                chat_id=chat_id)
+            return
+        if not args:
+            hint = (", ".join(PENDING_JOINS) if PENDING_JOINS
+                    else "bekleyen istek yok")
+            _telegram_send_text(f"Kullanim: /onayla &lt;chat_id&gt;\n"
+                                f"Bekleyenler: {_html.escape(hint)}",
+                                chat_id=chat_id)
+            return
+        target = args[0].strip()
+        label = PENDING_JOINS.get(target, " ".join(args[1:]) or "onayli")
+        if add_subscriber(target, label):
+            _telegram_send_text(
+                f"✅ <code>{_html.escape(target)}</code> "
+                f"({_html.escape(label)}) eklendi. Sinyaller artik ona da "
+                "gidecek.", chat_id=chat_id)
+            _telegram_send_text(
+                "✅ Erisimin onaylandi! Artik sinyaller sana da gelecek.\n"
+                "Komutlar icin /help yaz.\n\n"
+                "<i>Bu bir uyari sistemidir; yatirim tavsiyesi degildir.</i>",
+                chat_id=target)
+        else:
+            _telegram_send_text(
+                f"<code>{_html.escape(target)}</code> zaten abone.",
+                chat_id=chat_id)
+    elif cmd in ("kaldir", "remove"):
+        if not owner:
+            _telegram_send_text("Bu komut yalniz bot sahibine acik.",
+                                chat_id=chat_id)
+            return
+        if not args:
+            _telegram_send_text("Kullanim: /kaldir &lt;chat_id&gt;",
+                                chat_id=chat_id)
+            return
+        target = args[0].strip()
+        if remove_subscriber(target):
+            _telegram_send_text(
+                f"🗑 <code>{_html.escape(target)}</code> cikarildi.",
+                chat_id=chat_id)
+        else:
+            _telegram_send_text(
+                "Cikarilamadi: ya abone degil ya da .env'deki sabit listede "
+                "(onu .env'den silmen gerekir).", chat_id=chat_id)
     elif cmd == "status":
         _telegram_send_text(
             "<b>Durum</b>\n"
@@ -2747,7 +2903,8 @@ def telegram_command_loop() -> None:
                 offset = upd["update_id"] + 1
                 msg = upd.get("message") or upd.get("edited_message") or {}
                 text = msg.get("text", "") or ""
-                chat_id = str((msg.get("chat") or {}).get("id", ""))
+                chat = msg.get("chat") or {}
+                chat_id = str(chat.get("id", ""))
                 if not text.startswith("/"):
                     continue
                 cmd0 = text.strip().split()[0].lower().lstrip("/").split("@")[0]
@@ -2755,8 +2912,33 @@ def telegram_command_loop() -> None:
                     # herkese acik: arkadasin ID'sini ogrenip sana iletmesi icin
                     _telegram_send_text(
                         f"Senin chat ID'in: <code>{chat_id}</code>\n"
-                        "Botu kullanmak icin bu ID'yi bot sahibine ilet.",
-                        chat_id=chat_id)
+                        "Botu kullanmak icin /katil yaz ya da bu ID'yi bot "
+                        "sahibine ilet.", chat_id=chat_id)
+                    continue
+                if cmd0 in ("katil", "join"):
+                    # Herkese acik AMA hicbir yetki VERMEZ: sahibe onay
+                    # istegi iletir. Onay yalniz sahibin /onayla komutuyla olur.
+                    if _chat_allowed(chat_id):
+                        _telegram_send_text("Zaten erisimin var. /help",
+                                            chat_id=chat_id)
+                        continue
+                    label = " ".join(filter(None, [
+                        chat.get("first_name"), chat.get("last_name"),
+                        f"@{chat['username']}" if chat.get("username") else "",
+                        f"[{chat.get('title')}]" if chat.get("title") else "",
+                    ])).strip() or "isimsiz"
+                    new_request = chat_id not in PENDING_JOINS
+                    PENDING_JOINS[chat_id] = label
+                    _telegram_send_text(
+                        "📨 Istegin bot sahibine iletildi. Onaylanirsa "
+                        "sinyaller sana da gelmeye baslar.", chat_id=chat_id)
+                    if new_request:
+                        _telegram_send_text(
+                            f"📨 <b>Katilim istegi</b>\n"
+                            f"{_html.escape(label)}\n"
+                            f"ID: <code>{_html.escape(chat_id)}</code>\n\n"
+                            f"Onaylamak icin: <code>/onayla {chat_id}</code>",
+                            chat_id=str(TELEGRAM_CHAT_ID))
                     continue
                 if not _chat_allowed(chat_id):
                     continue                    # izinsiz -> sessizce yok say

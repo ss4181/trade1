@@ -19,6 +19,7 @@ ORIG = {
     "send_tg": bot.send_telegram_message,
     "tg_text": bot._telegram_send_text,
     "realized_performance": bot.realized_performance,
+    "handle_cmd": bot.handle_telegram_command,
 }
 
 PASS = 0
@@ -574,6 +575,62 @@ def test_extended_universe_rules():
     ok("genis evren kurallari (S1-yalniz, kademeli guven, 89 sembol)")
 
 
+def test_join_approval_flow(tmpdir):
+    """/katil -> sahip /onayla akisi + yetki sinirlari."""
+    old = (bot.SUBSCRIBERS_FILE, list(bot.TELEGRAM_SUBSCRIBERS),
+           dict(bot.DYNAMIC_SUBSCRIBERS), dict(bot.PENDING_JOINS),
+           bot.TELEGRAM_CHAT_ID, list(bot.TELEGRAM_ALLOWED),
+           bot._telegram_send_text, bot.ENABLE_TELEGRAM, bot.TELEGRAM_OPEN)
+    sent = []
+    try:
+        # onceki testler handle_telegram_command'i sahteyle degistirmis olabilir
+        bot.handle_telegram_command = ORIG["handle_cmd"]
+        bot.SUBSCRIBERS_FILE = Path(tmpdir) / "subs.json"
+        bot.TELEGRAM_CHAT_ID = "111"
+        bot.TELEGRAM_ALLOWED = ["222"]         # env tabani (silinemez)
+        bot.TELEGRAM_SUBSCRIBERS = ["111", "222"]
+        bot.DYNAMIC_SUBSCRIBERS = {}
+        bot.PENDING_JOINS = {"999": "Ahmet @ahmet"}
+        bot.ENABLE_TELEGRAM = True
+        bot.TELEGRAM_OPEN = False
+        bot._telegram_send_text = lambda text, chat_id=None: sent.append(
+            (chat_id, text))
+
+        # 1) ARKADAS (222) onaylayamaz — yetki yukseltme engeli
+        bot.handle_telegram_command("/onayla 999", "222")
+        assert "yalniz bot sahibine" in sent[-1][1]
+        assert "999" not in bot.TELEGRAM_SUBSCRIBERS
+
+        # 2) SAHIP (111) onaylar -> abone olur, dosyaya yazilir, ikisi bilgilenir
+        sent.clear()
+        bot.handle_telegram_command("/onayla 999", "111")
+        assert "999" in bot.TELEGRAM_SUBSCRIBERS
+        assert bot.SUBSCRIBERS_FILE.exists()
+        assert json.loads(bot.SUBSCRIBERS_FILE.read_text(
+            encoding="utf-8"))["subscribers"]["999"].startswith("Ahmet")
+        assert {c for c, _ in sent} == {"111", "999"}   # sahibe + yeni uyeye
+        assert "999" not in bot.PENDING_JOINS           # bekleyenden dustu
+        assert bot._chat_allowed("999") is True         # komut da verebilir
+
+        # 3) Yeniden baslatmada dosyadan geri yuklenir
+        bot.TELEGRAM_SUBSCRIBERS = ["111", "222"]
+        bot.DYNAMIC_SUBSCRIBERS = {}
+        bot._load_subscribers()
+        assert "999" in bot.TELEGRAM_SUBSCRIBERS
+
+        # 4) Kaldirma: dinamik olan gider, env/sahip KORUNUR
+        assert bot.remove_subscriber("999") is True
+        assert bot.remove_subscriber("222") is False    # env tabani
+        assert bot.remove_subscriber("111") is False    # sahip
+        assert "111" in bot.TELEGRAM_SUBSCRIBERS
+    finally:
+        (bot.SUBSCRIBERS_FILE, bot.TELEGRAM_SUBSCRIBERS,
+         bot.DYNAMIC_SUBSCRIBERS, bot.PENDING_JOINS, bot.TELEGRAM_CHAT_ID,
+         bot.TELEGRAM_ALLOWED, bot._telegram_send_text, bot.ENABLE_TELEGRAM,
+         bot.TELEGRAM_OPEN) = old
+    ok("katilim onay akisi (yetki yukseltme engelli, kalici)")
+
+
 def test_github_publish():
     calls = []
 
@@ -660,6 +717,7 @@ def main():
         test_true_price_time_and_s2_perp_market()
         test_instance_file_lock(td)
         test_extended_universe_rules()
+        test_join_approval_flow(td)
         test_github_publish()
         test_perf_formatting()
     print(f"\nHEPSI GECTI ({PASS} test)")

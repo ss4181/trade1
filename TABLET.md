@@ -108,10 +108,12 @@ gitmene gerek yok. Botunla sohbete şunları yaz:
 Ayrıca her gün saat ~09:00'da (TR) tek satırlık **günlük özet** gelir — bu
 mesaj gelmiyorsa bot ölmüş demektir (Termux'u kontrol et).
 
-Güvenlik: bot yalnızca **senin** chat'inden (`.env`'deki `TELEGRAM_CHAT_ID`)
-gelen komutlara cevap verir; botu bulan bir yabancı komut veremez. Bu, açık
-port/public URL gerektirmez (bot Telegram'a *dışarı* bağlanır — ev interneti
-arkasında sorunsuz).
+Güvenlik: bot yalnızca **senin** ve **onayladığın** chat'lerden gelen
+komutlara cevap verir; botu bulan bir yabancı yalnızca `/myid` ve `/katil`
+kullanabilir (ikisi de hiçbir yetki vermez). Yönetim komutları
+(`/onayla`, `/kaldir`, `/aboneler`) **sadece** `TELEGRAM_CHAT_ID`'de çalışır.
+Bu kurulum açık port/public URL gerektirmez (bot Telegram'a *dışarı* bağlanır —
+ev interneti arkasında sorunsuz).
 
 İstersen komutların Telegram'da menü olarak çıkması için: BotFather'a
 `/setcommands` yaz, botunu seç, şunu yapıştır:
@@ -120,10 +122,51 @@ start - bot yasiyor mu + komutlar
 check - su an aktif kurulumlar
 performans - canli sonuclar vs backtest
 status - bot durumu
+katil - botu kullanmak icin izin iste
 myid - kendi chat ID'in
+aboneler - abone listesi (yalniz sahip)
+onayla - bekleyen istegi onayla (yalniz sahip)
+kaldir - aboneligi kaldir (yalniz sahip)
 ```
 
-### Arkadaşlarını ekleme
+### Arkadaş ekleme — Yol 1: Telegram'dan onayla (en kolay, önerilen)
+
+`.env` düzenlemek ve botu yeniden başlatmak **gerekmez**:
+
+1. Arkadaşın botu açıp **`/katil`** yazar.
+2. Sana Telegram'dan bir bildirim düşer: adı, chat ID'si ve hazır komut.
+3. Sen **`/onayla <id>`** yazarsın (mesajdaki komutu kopyalayabilirsin).
+4. Bitti — arkadaşın anında onay mesajı alır, sinyaller ona da gitmeye başlar.
+   Onaylılar diske yazılır, bot yeniden başlasa da korunur.
+
+Diğer yönetim komutları (yalnız sende çalışır):
+- **`/aboneler`** — kimler abone + bekleyen istekler
+- **`/kaldir <id>`** — aboneliği kaldır
+
+Güvenlik: `/katil` herkese açık ama **hiçbir yetki vermez** — yalnızca sana
+istek iletir. Onaylı arkadaşlar **başka arkadaş ekleyemez** (`/onayla` yalnız
+`TELEGRAM_CHAT_ID`'de çalışır). `.env`'deki sabit liste ve senin kendi
+aboneliğin `/kaldir` ile silinemez.
+
+### Arkadaş ekleme — Yol 2: Telegram grubu (tek sohbette herkes)
+
+Herkesin aynı akışı görmesini istiyorsan grup kur; arkadaş eklemek tamamen
+Telegram'ın kendi davet mekanizmasıyla olur:
+
+1. Telegram'da bir grup oluştur, **botu gruba ekle**.
+2. Grupta **`/myid`** yaz → bot grubun ID'sini verir (başında `-` olan negatif
+   bir sayı, örn. `-1001234567890`).
+3. Grupta **`/katil`** yaz → sana istek düşer → **`/onayla -100…`** de.
+4. Artık sinyaller gruba düşer. **Yeni arkadaş eklemek = gruba davet etmek**
+   (davet bağlantısı/kişi ekle) — botta hiçbir şey yapmana gerek yok.
+
+Şerh: gruptaki **herkes** komut çalıştırabilir (`/check` gibi) ve tüm
+sinyalleri görür; yönetim komutları yine yalnız sende. Gruptan çıkardığın kişi
+otomatik olarak sinyalleri görmeyi bırakır. Grupta komutları `/check@botadi`
+biçiminde yazmak gerekebilir (Telegram gruplarda böyle yönlendirir) — bot her
+iki biçimi de kabul eder.
+
+### Arkadaş ekleme — Yol 3: elle `.env` (eski yöntem)
 
 Arkadaşların da `/check` / `/status` kullanabilsin ve otomatik sinyalleri alsın:
 
