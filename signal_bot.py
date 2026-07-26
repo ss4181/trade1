@@ -1340,6 +1340,54 @@ def _redact(text: str) -> str:
     return text
 
 
+# --- bildirim saglik izleme ---
+# Sinyal uretilip "gonderilecek" isaretlendigi halde gonderim sessizce
+# basarisiz olabiliyordu (hata yalniz tabletin stderr'ine yaziliyordu ve
+# uzaktan gorunmuyordu — 2026-07-26 teshisinde bu yasandi). Artik kanal
+# sagligi /health ve panoda gorunur.
+NOTIFY_HEALTH = {
+    "telegram": {"ok": 0, "fail": 0, "last_ok": None, "last_error": None},
+    "email": {"ok": 0, "fail": 0, "last_ok": None, "last_error": None},
+}
+TELEGRAM_IDENTITY: str | None = None       # getMe sonucu (@botadi) ya da hata
+
+
+def _note_notify(channel: str, ok: bool, error: str = "") -> None:
+    h = NOTIFY_HEALTH.setdefault(
+        channel, {"ok": 0, "fail": 0, "last_ok": None, "last_error": None})
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if ok:
+        h["ok"] += 1
+        h["last_ok"] = now
+    else:
+        h["fail"] += 1
+        h["last_error"] = f"{now} {_redact(error)[:200]}"
+
+
+def telegram_preflight() -> None:
+    """Baslangicta token'i getMe ile dogrular (mesaj GONDERMEZ). Gecersiz
+    token'i sessiz basarisizlik yerine aciktan gorunur yapar."""
+    global TELEGRAM_IDENTITY
+    if not ENABLE_TELEGRAM:
+        TELEGRAM_IDENTITY = "kapali (anahtar yok)"
+        return
+    try:
+        r = requests.get(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe",
+            timeout=15)
+        r.raise_for_status()
+        uname = (r.json().get("result") or {}).get("username") or "?"
+        TELEGRAM_IDENTITY = f"@{uname}"
+        print(f"telegram token gecerli: {TELEGRAM_IDENTITY}", flush=True)
+    except requests.RequestException as e:
+        TELEGRAM_IDENTITY = f"GECERSIZ: {_redact(str(e))[:120]}"
+        print(f"HATA: Telegram token DOGRULANAMADI -> bildirimler GITMEZ. "
+              f"{TELEGRAM_IDENTITY}\n"
+              f"     Cozum: BotFather'dan token'i kontrol et, .env'deki "
+              f"TELEGRAM_BOT_TOKEN'i guncelle, botu yeniden baslat.",
+              file=sys.stderr, flush=True)
+
+
 def _telegram_send_text(text: str, chat_id: str | None = None,
                         reply_markup: dict | None = None) -> bool:
     """Ham HTML metni Telegram'a gonderir (sinyaller + komut cevaplari ortak).
@@ -1356,8 +1404,10 @@ def _telegram_send_text(text: str, chat_id: str | None = None,
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
             json=payload, timeout=15)
         r.raise_for_status()
+        _note_notify("telegram", True)
         return True
     except requests.RequestException as e:
+        _note_notify("telegram", False, str(e))
         print(f"uyari: Telegram gonderilemedi: {_redact(str(e))}",
               file=sys.stderr, flush=True)
         return False
@@ -1478,7 +1528,9 @@ def send_email_notification(sig: dict) -> None:
             "subject": subject,
             "html": _email_html(sig),
         })
+        _note_notify("email", True)
     except Exception as e:  # SDK cesitli hata tipleri firlatabilir; kanal opsiyonel
+        _note_notify("email", False, str(e))
         print(f"uyari: email gonderilemedi: {_redact(str(e))}",
               file=sys.stderr, flush=True)
 
@@ -1814,6 +1866,7 @@ def _run_forever_locked(once: bool = False,
     LAST_LOOP_HEARTBEAT_AT = datetime.now(timezone.utc).isoformat()
     refresh_universe_if_due(force=True)     # otomatik moddaysa evreni kur
     refresh_perp_map_if_due(force=True)     # statik modda da kontrat esle
+    telegram_preflight()                    # token gecerli mi? (mesaj atmaz)
     # Telegram komut dinleyicisini yalnizca surekli modda baslat (--once'ta degil)
     if ENABLE_TELEGRAM and TELEGRAM_COMMANDS and not once:
         threading.Thread(target=telegram_command_loop, name="tg-commands",
@@ -2428,6 +2481,12 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "min_conf": NOTIFY_MIN_CONFIDENCE,
             "disabled": sorted(DISABLED_STRATEGIES),
             "started": STARTED_AT,
+            # bildirim kanali sagligi: sinyal uretilse de gonderim
+            # basarisiz olabilir; uzaktan gorunur olmali (2026-07-26)
+            "telegram_enabled": ENABLE_TELEGRAM,
+            "email_enabled": ENABLE_EMAIL,
+            "telegram_identity": TELEGRAM_IDENTITY,
+            "notify_health": NOTIFY_HEALTH,
         },
         "strategies": strategies,
         "docs": STRATEGY_DOCS,
@@ -2501,6 +2560,16 @@ const fp=x=>{if(x==null)return "—";x=Number(x);
 const fpc=x=>x==null?'<span class="tag">ölçülüyor</span>':
  `<span class="${x>=0?'up':'dn'}">${x>=0?'+':''}${x.toFixed(2)}%</span>`;
 let D=null,openDoc=null,openRow=null;
+function notifyChip(s){
+ const h=s.notify_health||{},tg=h.telegram||{},em=h.email||{};
+ const bad=(ch,on)=>on===false?"kapalı":(ch.last_error&&!ch.last_ok?"HATA":
+   (ch.fail&&ch.last_error?"son hata var":"çalışıyor"));
+ const tgTxt=bad(tg,s.telegram_enabled),emTxt=bad(em,s.email_enabled);
+ const warn=(t)=>t==="çalışıyor"?"":' style="border-color:#e06c6c;color:#e06c6c"';
+ return `<span class="chip"${warn(tgTxt)}>Telegram <b>${tgTxt}</b>`+
+  `${tg.ok?` (${tg.ok} ok`:""}${tg.fail?`, ${tg.fail} hata`:""}${tg.ok?")":""}</span>`+
+  `<span class="chip"${warn(emTxt)}>E-posta <b>${emTxt}</b></span>`+
+  (tg.last_error?`<span class="chip" style="border-color:#e06c6c;color:#e06c6c">son TG hatası: ${esc(tg.last_error)}</span>`:"");}
 function toggleDoc(name){openDoc=openDoc===name?null:name;drawDoc();}
 function drawDoc(){const w=document.getElementById("docWrap");
  if(!openDoc||!D.docs||!D.docs[openDoc]){w.innerHTML="";return;}
@@ -2538,7 +2607,8 @@ function draw(){if(!D)return;const s=D.status;
   `<span class="chip">evren <b>${s.symbols}</b></span>`+
   `<span class="chip">hata <b>${s.errors}</b></span>`+
   `<span class="chip">push eşiği <b>${s.min_conf}+</b></span>`+
-  `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`;
+  `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`+
+  notifyChip(s);
  document.getElementById("cards").innerHTML=D.strategies.map(x=>{
    const live=x.live_n?`<b>${x.live_med>=0?'+':''}${x.live_med}%</b> / %${x.live_wr} (N=${x.live_n})`:"henüz yok";
    const bt=(x.bt_med==null)?"—":`${x.bt_med>=0?'+':''}${x.bt_med}% / %${x.bt_wr} (N=${x.bt_n})`;

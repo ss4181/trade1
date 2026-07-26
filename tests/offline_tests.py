@@ -726,6 +726,62 @@ def test_buttons_and_callbacks(tmpdir):
     ok("dugmeler: menu klavyesi + satir-ici onay (yetki korumali)")
 
 
+def test_notify_health_visibility():
+    """Gonderim basarisiz olursa panoda/health'te GORUNMELI (2026-07-26
+    teshisinde sinyaller uretildi ama sessizce gonderilemedi)."""
+    old = (bot._telegram_send_text, bot.requests.post, bot.ENABLE_TELEGRAM,
+           bot.TELEGRAM_BOT_TOKEN, dict(bot.NOTIFY_HEALTH["telegram"]),
+           bot.requests.get, bot.TELEGRAM_IDENTITY)
+    try:
+        bot._telegram_send_text = ORIG["tg_text"]
+        bot.ENABLE_TELEGRAM = True
+        bot.TELEGRAM_BOT_TOKEN = "GIZLI_TOKEN"
+        bot.NOTIFY_HEALTH["telegram"] = {"ok": 0, "fail": 0, "last_ok": None,
+                                         "last_error": None}
+
+        class Bad:
+            status_code = 401
+            def raise_for_status(self):
+                err = bot.requests.HTTPError(
+                    "401 Unauthorized for bot GIZLI_TOKEN/sendMessage")
+                err.response = self
+                raise err
+
+        bot.requests.post = lambda url, json=None, timeout=None: Bad()
+        assert bot._telegram_send_text("x", chat_id="1") is False
+        h = bot.NOTIFY_HEALTH["telegram"]
+        assert h["fail"] == 1 and h["last_error"]
+        assert "GIZLI_TOKEN" not in h["last_error"]     # sir redakte
+
+        # basarili gonderimde ok sayaci ve last_ok dolar
+        class Good:
+            def raise_for_status(self): pass
+        bot.requests.post = lambda url, json=None, timeout=None: Good()
+        assert bot._telegram_send_text("y", chat_id="1") is True
+        assert bot.NOTIFY_HEALTH["telegram"]["ok"] == 1
+        assert bot.NOTIFY_HEALTH["telegram"]["last_ok"]
+
+        # preflight gecersiz token'i aciktan isaretler
+        class BadGet:
+            def raise_for_status(self):
+                raise bot.requests.HTTPError("401 Unauthorized")
+        bot.requests.get = lambda url, timeout=None: BadGet()
+        bot.telegram_preflight()
+        assert bot.TELEGRAM_IDENTITY.startswith("GECERSIZ")
+
+        # panoda gorunuyor mu
+        st = bot.build_dashboard_data(max_rows=1)["status"]
+        for key in ("telegram_enabled", "email_enabled", "telegram_identity",
+                    "notify_health"):
+            assert key in st, key
+        assert st["notify_health"]["telegram"]["fail"] >= 1
+    finally:
+        (bot._telegram_send_text, bot.requests.post, bot.ENABLE_TELEGRAM,
+         bot.TELEGRAM_BOT_TOKEN, bot.NOTIFY_HEALTH["telegram"],
+         bot.requests.get, bot.TELEGRAM_IDENTITY) = old
+    ok("bildirim saglik izleme (sessiz gonderim hatasi artik gorunur)")
+
+
 def test_github_publish():
     calls = []
 
@@ -814,6 +870,7 @@ def main():
         test_extended_universe_rules()
         test_join_approval_flow(td)
         test_buttons_and_callbacks(td)
+        test_notify_health_visibility()
         test_github_publish()
         test_perf_formatting()
     print(f"\nHEPSI GECTI ({PASS} test)")
