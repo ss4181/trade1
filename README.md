@@ -131,6 +131,11 @@ reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
   çalışır (Expo Go SDK 53 uzak push desteklemez); 7/24 kaçırmasız uyarı için
   Telegram/email vardır. Kurulum: [mobile/README.md](mobile/README.md).
 
+## Dışarıdan gelen değişiklikler (başka bir AI / kişi)
+
+Doğrudan `main`'e uygulama — `main` tablette çalışan canlı bot. Önce bir dala
+koy, PR aç, testlerin yeşilini bekle: adım adım [KATKI.md](KATKI.md).
+
 ## Bilinen sınırlar
 
 - Uyarı botudur; işlem maliyeti/slipaj modellenmedi, yatırım tavsiyesi değildir.
