@@ -353,12 +353,17 @@ def test_dashboard_data(tmpdir):
 def test_exact_strategy_performance_and_median(tmpdir):
     log = Path(tmpdir) / "perf-signals.log"
     now = bot.datetime.now(bot.timezone.utc)
+    # realized_performance evren filtresi uygular; onceki testler SYMBOLS'u
+    # mutasyona ugratabildigi icin bu testin evrenini ACIKCA kur.
+    bot.SYMBOLS = [s.strip() for s in bot.DEFAULT_SYMBOLS.split(",") if s.strip()]
     signals = []
     values = [
-        ("S1", "AUSDT", 1.0, "spot"),
-        ("S1", "BUSDT", 3.0, "spot"),
-        ("S1+S4", "CUSDT", 5.0, "spot"),
-        ("S2", "DUSDT", -2.0, "um_perp"),
+        # Semboller YAPILANDIRILMIS evrenden olmali: realized_performance
+        # artik evren disi kayitlari olcume katmiyor (Ek F filtresi).
+        ("S1", "BTCUSDT", 1.0, "spot"),
+        ("S1", "ETHUSDT", 3.0, "spot"),
+        ("S1+S4", "SOLUSDT", 5.0, "spot"),
+        ("S2", "XRPUSDT", -2.0, "um_perp"),
     ]
     cache = {}
     for i, (strategy, symbol, ret, market) in enumerate(values):
@@ -384,7 +389,7 @@ def test_exact_strategy_performance_and_median(tmpdir):
     assert perf["strategies"]["S2"]["performance_market"] == "um_perp"
     # Cache yokken S2 mutlaka USD-M perp fetcher'ini kullanmali.
     s2 = {
-        "strategy": "S2", "symbol": "EUSDT", "direction": "LONG",
+        "strategy": "S2", "symbol": "ADAUSDT", "direction": "LONG",
         "bar_time": (now - bot.timedelta(hours=100)).isoformat(),
         "horizon_hours": 72, "performance_market": "um_perp",
     }

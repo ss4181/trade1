@@ -1895,6 +1895,8 @@ def _realized_performance_unlocked(max_signals: int = None,
         return {"error": "signals.log yok — henuz sinyal uretilmedi"}
     cache = _load_perf_cache()
     now = datetime.now(timezone.utc)
+    universe = set(SYMBOLS)
+    excluded_out_of_universe = 0
     rows_by_strategy: dict[str, list[tuple[datetime, dict]]] = {}
     seen: set[str] = set()
     for line in log_path.read_text(encoding="utf-8").splitlines():
@@ -1903,6 +1905,15 @@ def _realized_performance_unlocked(max_signals: int = None,
         except ValueError:
             continue
         if sig.get("strategy", "").startswith("TEST"):
+            continue
+        # EVREN FILTRESI (2026-07-26): yalnizca YAPILANDIRILMIS evrendeki
+        # semboller olculur. Ek F'de dinamik evren doneminde uretilen cop-coin
+        # sinyalleri (TRUMP/BONK/...) aksi halde haftalarca canli medyani
+        # asagi ceker ve karar verirken yanlis yonlendirir. qc_export ayni
+        # kayitlari "symbol_not_in_configured_universe" ile karantinaya alir;
+        # iki arac tutarli olmali. Sayilari raporda gorunur tutuyoruz.
+        if sig.get("symbol") not in universe:
+            excluded_out_of_universe += 1
             continue
         try:
             bar_t = datetime.fromisoformat(sig["bar_time"])
@@ -1966,7 +1977,9 @@ def _realized_performance_unlocked(max_signals: int = None,
     except OSError:
         pass
     out = {"n_total": sum(len(v) for v in per_strat.values()),
-           "fetch_errors": fetch_errors, "strategies": {}}
+           "fetch_errors": fetch_errors,
+           "excluded_out_of_universe": excluded_out_of_universe,
+           "strategies": {}}
     for s, rets in sorted(per_strat.items()):
         med = statistics.median(rets)
         bt = STRATEGY_TEST_STATS.get(s, {})
@@ -2010,9 +2023,13 @@ def _start_performance_worker(max_signals: int = 40) -> bool:
 def _format_performance(perf: dict) -> str:
     if "error" in perf:
         return perf["error"]
+    excluded = perf.get("excluded_out_of_universe") or 0
+    excl_note = (f"\n<i>{excluded} eski kayit guncel evren disinda oldugu icin "
+                 "olcume katilmadi (Ek F kontaminasyon donemi).</i>"
+                 if excluded else "")
     if perf["n_total"] == 0:
         return ("Henuz olgunlasmis sinyal yok (sinyaller ufuk suresi dolunca "
-                "olculebilir hale gelir).")
+                "olculebilir hale gelir)." + excl_note)
     lines = [f"<b>Canli performans</b> (son {perf['n_total']} olgun sinyal; "
              "giris/cikis tanimi backtest ile ayni):"]
     for s, d in perf["strategies"].items():
@@ -2026,6 +2043,8 @@ def _format_performance(perf: dict) -> str:
                      f"ort {d['mean_pct']:+.2f}% · {market}")
     if perf["fetch_errors"]:
         lines.append(f"({perf['fetch_errors']} sinyal veri hatasindan olculemedi)")
+    if excl_note:
+        lines.append(excl_note.strip())
     lines.append("\n<i>Kucuk N'de medyan/isabet cok oynak olur; 30+ sinyalden "
                  "once yargiya varma. Yatirim tavsiyesi degildir.</i>")
     return "\n".join(lines)
