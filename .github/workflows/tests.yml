@@ -36,6 +36,26 @@ jobs:
       - name: Sunucu readiness testleri
         run: python -B tests/server_tests.py
 
+      - name: QC export testleri
+        run: python -B tests/test_qc_export.py
+
+      - name: QC export CLI dumani
+        # signals.log gitignored oldugu icin CI'da yok: sentetik girdi uret.
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          sig = {"strategy": "S1", "symbol": "BTCUSDT", "direction": "LONG",
+                 "bar_time": "2026-01-02T00:00:00+00:00", "price": 100.0,
+                 "horizon_hours": 24, "confidence": "YUKSEK",
+                 "strength": "NORMAL"}
+          (tmp / "smoke-signals.log").write_text(
+              json.dumps(sig) + "\n", encoding="utf-8")
+          PY
+          python -B qc_export.py -l "${{ runner.temp }}/smoke-signals.log" \
+            -o "${{ runner.temp }}/qc_smoke"
+          test -f "${{ runner.temp }}/qc_smoke/signal_events.csv"
+
       - name: Araştırma metodoloji testleri
         working-directory: research
         run: python -B -m unittest -v test_methodology.py
