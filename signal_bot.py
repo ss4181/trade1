@@ -1248,6 +1248,14 @@ def _redact(text: str) -> str:
     for secret in (TELEGRAM_BOT_TOKEN, GITHUB_TOKEN, RESEND_API_KEY):
         if secret:
             text = text.replace(secret, "***TOKEN***")
+    # Bilinmeyen/rotate edilmis anahtarlar hata metninde key=value veya
+    # Authorization: value biciminde gorunurse de loga sizmasin.
+    text = re.sub(
+        r"(?i)\b(token|api[_-]?key|authorization|secret)"
+        r"(\s*[:=]\s*)(?:bearer\s+)?([^\s,;]+)",
+        r"\1\2***REDACTED***",
+        text,
+    )
     return text
 
 
@@ -1353,21 +1361,37 @@ def send_email_notification(sig: dict) -> None:
 
 
 def _signal_event_id(sig: dict) -> str:
-    """Ayni strateji/bar olayi icin restart ve kanallar boyunca sabit kimlik."""
+    """Ayni strateji/bar olayi icin restart ve kanallar boyunca sabit kimlik.
+
+    Algoritma qc_export.canonical_event_id ile BIREBIR aynidir (32 hex):
+    strategy|symbol|direction|bar_time(ISO,Z,saniye)|horizon -> sha256[:32].
+    Bu sart bilerek korunur cunku qc_export yalnizca 32-hex kimlikleri kabul
+    eder; farkli olsalar QC paketi botun kimligini atip kendi hesaplar ve
+    signals.log <-> QC capraz eslestirmesi kirilir (2026-07-26 denetimi).
+    config/schema surumleri kimlige DAHIL EDILMEZ — ayar degisiminde ayni bar
+    olayinin kimligi degismemeli; o bilgi ayri alanlarda tasiniyor.
+    """
     if sig.get("event_id"):
         return str(sig["event_id"])
-    identity = {
-        "schema": SIGNAL_SCHEMA_VERSION,
-        "config": SIGNAL_CONFIG_VERSION,
-        "strategy": sig.get("strategy"),
-        "symbol": sig.get("symbol"),
-        "bar_time": sig.get("bar_time"),
-        "direction": sig.get("direction"),
-        "horizon_hours": sig.get("horizon_hours"),
-    }
-    raw = json.dumps(identity, sort_keys=True, separators=(",", ":"),
-                     ensure_ascii=True)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+    bar_raw = str(sig.get("bar_time") or "").strip()
+    try:
+        if bar_raw.endswith("Z"):
+            bar_raw = bar_raw[:-1] + "+00:00"
+        dt = datetime.fromisoformat(bar_raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        bar_time = dt.astimezone(timezone.utc).isoformat(
+            timespec="seconds").replace("+00:00", "Z")
+    except (TypeError, ValueError):
+        bar_time = str(sig.get("bar_time") or "")
+    canonical = "|".join((
+        str(sig.get("strategy") or "").strip().upper(),
+        str(sig.get("symbol") or "").strip().upper(),
+        str(sig.get("direction") or "").strip().upper(),
+        bar_time,
+        str(sig.get("horizon_hours") or ""),
+    ))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
 
 
 def _delivery_record(sig: dict, push: bool) -> dict:

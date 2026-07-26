@@ -60,10 +60,15 @@ test'e strateji başına tek atış (S3'teki istisna §5'te dürüstçe işaretl
   düzeyi bunu düzeltir (S3'ün train'deki "anlamlılığının" sahte çıkmasını bu yakaladı).
 - **Sınır purge (2026-07-24 sertleştirmesi).** Train olayının ileri getiri
   ufku test dönemine taşıyorsa yalnız ilgili ufuk NaN yapılır; baseline ve
-  bootstrap havuzu aynı horizon-aware maskeyi kullanır. Bu rapordaki kayıtlı
-  konsol tabloları ham veri repoda olmadığı için yeniden üretilmedi; eski
-  snapshot'larda `p=0.000` ve sınırdaki birkaç olay güncel kodla küçük fark
-  gösterebilir.
+  bootstrap havuzu aynı horizon-aware maskeyi kullanır.
+- **Sertleştirme sonrası yeniden üretim (2026-07-26 denetimi).** Yukarıdaki
+  purge + 2.000 çekiliş + plus-one değişiklikleri, doğrulanmış dört
+  konfigürasyon için 30-coin panelinde yeniden çalıştırıldı ve **hiçbir sonuç
+  değişmedi**: S1 train +0.348 / test +0.312 · S1+S4 +0.550 / +0.376 ·
+  S3 +0.236 / +0.253 · S2 +0.292 / +0.135. Yalnız p-değerleri plus-one
+  düzeltmesiyle mikro kaydı (ör. 0.000→0.002, 0.082→0.086); tüm kabul/red
+  kararları aynı yerde. Yani metodoloji artık daha muhafazakâr ve
+  başlıklar sağlam.
 - **Seçim kriteri (önceden tanımlı):** train'de birincil ufukta edge maksimizasyonu;
   kısıtlar N≥100, p≤0.05, plato tercihli (sivri tepe değil), uyarı bütçesi
   ≤~2 sinyal/sembol/ay.

@@ -110,6 +110,11 @@ reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
 - **Her yerden erişim (GitHub Pages):** `GITHUB_TOKEN`+`GITHUB_REPO`
   tanımlıysa bot panoyu `https://<kullanıcı>.github.io/<repo>/` adresine
   yayımlar (public). Kurulum: [TABLET.md](TABLET.md) "Her yerden erişim".
+- **QC dışa aktarımı (çevrimdışı analiz):** `python qc_export.py -o qc_out` —
+  `signals.log`'dan olay-bazlı CSV paketi üretir (olaylar, sonuçlar, strateji
+  özeti, reddedilenler + manifest). Evren dışı/test kayıtlarını gerekçesiyle
+  karantinaya alır; **trade journal değildir** (bot emir açmaz, dolar PnL yok).
+  Olay kimlikleri `signals.log` ile birebir eşleşir (32-hex kanonik kimlik).
 - **Arkadaş paylaşımı:** `TELEGRAM_ALLOWED_CHAT_IDS`'e eklenen chat'ler komut
   verebilir ve otomatik sinyalleri alır (abone). Arkadaş kendi ID'sini `/myid`
   ile öğrenir. Listede olmayan biri yalnızca `/myid` alır, gerisi yok sayılır.
