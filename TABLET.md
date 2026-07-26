@@ -129,13 +129,25 @@ onayla - bekleyen istegi onayla (yalniz sahip)
 kaldir - aboneligi kaldir (yalniz sahip)
 ```
 
+### Düğmeler (komut yazmadan kullan)
+
+Bota **`/start`** yaz → yazı alanının altında kalıcı düğmeler çıkar:
+**🔎 Kontrol · 📊 Performans · ℹ️ Durum · ❓ Yardım** (sende ek olarak
+**👥 Aboneler**). Bir daha komut yazmana gerek yok; düğmeler sohbette kalır.
+Kaybolursa **`/menu`** yaz.
+
+Ayrıca katılım isteği geldiğinde mesajın altında **✅ Onayla / ❌ Reddet**
+düğmeleri çıkar — arkadaş eklemek tek dokunuş. Bu düğmeler yalnız sende
+çalışır; başkası dokunursa bot "yalnız bot sahibine açık" der.
+
 ### Arkadaş ekleme — Yol 1: Telegram'dan onayla (en kolay, önerilen)
 
 `.env` düzenlemek ve botu yeniden başlatmak **gerekmez**:
 
 1. Arkadaşın botu açıp **`/katil`** yazar.
-2. Sana Telegram'dan bir bildirim düşer: adı, chat ID'si ve hazır komut.
-3. Sen **`/onayla <id>`** yazarsın (mesajdaki komutu kopyalayabilirsin).
+2. Sana Telegram'dan bildirim düşer: adı, chat ID'si ve **✅ Onayla / ❌ Reddet**
+   düğmeleri.
+3. **✅ Onayla**'ya dokun (ya da `/onayla <id>` yaz).
 4. Bitti — arkadaşın anında onay mesajı alır, sinyaller ona da gitmeye başlar.
    Onaylılar diske yazılır, bot yeniden başlasa da korunur.
 

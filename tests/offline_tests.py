@@ -631,6 +631,101 @@ def test_join_approval_flow(tmpdir):
     ok("katilim onay akisi (yetki yukseltme engelli, kalici)")
 
 
+def test_buttons_and_callbacks(tmpdir):
+    """Kalici menu dugmeleri + satir-ici onay dugmeleri (yetki dahil)."""
+    old = (bot.SUBSCRIBERS_FILE, list(bot.TELEGRAM_SUBSCRIBERS),
+           dict(bot.DYNAMIC_SUBSCRIBERS), dict(bot.PENDING_JOINS),
+           bot.TELEGRAM_CHAT_ID, list(bot.TELEGRAM_ALLOWED),
+           bot._telegram_send_text, bot.handle_telegram_command,
+           bot.ENABLE_TELEGRAM, bot.TELEGRAM_OPEN, bot.requests.post)
+    sent, answered = [], []
+    try:
+        bot.handle_telegram_command = ORIG["handle_cmd"]
+        bot.SUBSCRIBERS_FILE = Path(tmpdir) / "subs-btn.json"
+        bot.TELEGRAM_CHAT_ID = "111"
+        bot.TELEGRAM_ALLOWED = []
+        bot.TELEGRAM_SUBSCRIBERS = ["111", "222"]
+        bot.DYNAMIC_SUBSCRIBERS = {}
+        bot.PENDING_JOINS = {"999": "Ayse @ayse"}
+        bot.ENABLE_TELEGRAM = True
+        bot.TELEGRAM_OPEN = False
+        bot._telegram_send_text = (
+            lambda text, chat_id=None, reply_markup=None:
+            sent.append((chat_id, text, reply_markup)) or True)
+        bot._telegram_answer_callback = (
+            lambda cq_id, text="": answered.append(text))
+
+        # 1) /start kalici menu klavyesi gonderir; sahip ekstra dugme gorur
+        bot.handle_telegram_command("/start", "111")
+        markup = sent[-1][2]
+        assert markup and markup["resize_keyboard"] is True
+        flat_owner = [b for row in markup["keyboard"] for b in row]
+        assert "🔎 Kontrol" in flat_owner and "👥 Aboneler" in flat_owner
+        sent.clear()
+        bot.handle_telegram_command("/start", "222")     # arkadas
+        flat_friend = [b for row in sent[-1][2]["keyboard"] for b in row]
+        assert "👥 Aboneler" not in flat_friend          # yonetim dugmesi yok
+
+        # 2) Dugme etiketi -> komut eslemesi eksiksiz ve gecerli
+        for label, cmd in bot.MENU_BUTTONS.items():
+            assert cmd.startswith("/") and label.strip()
+
+        # 3) YABANCI/arkadas dugmeye basarsa onay OLMAZ (yetki yukseltme engeli)
+        bot.handle_callback_query({"id": "c1", "data": "ok:999",
+                                   "from": {"id": 222},
+                                   "message": {"chat": {"id": 222}}})
+        assert "999" not in bot.TELEGRAM_SUBSCRIBERS
+        assert "yalniz bot sahibine" in answered[-1]
+
+        # 4) SAHIP basarsa: abone olur, iki taraf bilgilenir, yeni uyeye de
+        #    menu klavyesi gider
+        sent.clear(); answered.clear()
+        bot.handle_callback_query({"id": "c2", "data": "ok:999",
+                                   "from": {"id": 111},
+                                   "message": {"chat": {"id": 111}}})
+        assert "999" in bot.TELEGRAM_SUBSCRIBERS
+        assert "Onaylandi" in answered[-1]
+        new_member = [s for s in sent if s[0] == "999"]
+        assert new_member and new_member[-1][2]["keyboard"]
+
+        # 5) Reddet: bekleyenden dusurur, abone yapmaz
+        bot.PENDING_JOINS["888"] = "Veli"
+        answered.clear()
+        bot.handle_callback_query({"id": "c3", "data": "no:888",
+                                   "from": {"id": 111},
+                                   "message": {"chat": {"id": 111}}})
+        assert "888" not in bot.PENDING_JOINS
+        assert "888" not in bot.TELEGRAM_SUBSCRIBERS
+        assert "Reddedildi" in answered[-1]
+
+        # 6) Bozuk callback verisi sessizce yutulur (istisna firlatmaz)
+        answered.clear()
+        bot.handle_callback_query({"id": "c4", "data": "saskin",
+                                   "from": {"id": 111},
+                                   "message": {"chat": {"id": 111}}})
+        assert answered and "Gecersiz" in answered[-1]
+
+        # 7) reply_markup gercekten API payload'ina giriyor mu
+        captured = {}
+
+        class R:
+            def raise_for_status(self): pass
+        bot._telegram_send_text = ORIG["tg_text"]
+        bot.TELEGRAM_BOT_TOKEN = "T"
+        bot.requests.post = (lambda url, json=None, timeout=None:
+                             captured.update(json or {}) or R())
+        bot._telegram_send_text("x", chat_id="111",
+                                reply_markup=bot._menu_keyboard(True))
+        assert "reply_markup" in captured and captured["reply_markup"]["keyboard"]
+    finally:
+        (bot.SUBSCRIBERS_FILE, bot.TELEGRAM_SUBSCRIBERS,
+         bot.DYNAMIC_SUBSCRIBERS, bot.PENDING_JOINS, bot.TELEGRAM_CHAT_ID,
+         bot.TELEGRAM_ALLOWED, bot._telegram_send_text,
+         bot.handle_telegram_command, bot.ENABLE_TELEGRAM, bot.TELEGRAM_OPEN,
+         bot.requests.post) = old
+    ok("dugmeler: menu klavyesi + satir-ici onay (yetki korumali)")
+
+
 def test_github_publish():
     calls = []
 
@@ -718,6 +813,7 @@ def main():
         test_instance_file_lock(td)
         test_extended_universe_rules()
         test_join_approval_flow(td)
+        test_buttons_and_callbacks(td)
         test_github_publish()
         test_perf_formatting()
     print(f"\nHEPSI GECTI ({PASS} test)")

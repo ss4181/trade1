@@ -99,6 +99,9 @@ reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
 - **Bildirim testi:** `python signal_bot.py --test-notify` — .env'deki
   anahtarlarla her iki kanala TEST mesajı yollar; gerçek sinyal beklemeden
   kurulumu doğrular.
+- **Telegram düğmeleri:** `/start` → kalıcı menü klavyesi (Kontrol/Performans/
+  Durum/Yardım); katılım isteklerinde satır-içi **Onayla/Reddet** düğmeleri
+  (yalnız sahip). Kaybolursa `/menu`.
 - **Telegram komutları** (7/24 döngü çalışırken): bota `/start`, `/check`
   (şu an aktif kurulumlar), `/status`, `/myid` yazabilirsin. getUpdates
   long-polling ile çalışır (public URL/açık port gerekmez).

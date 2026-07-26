@@ -1340,23 +1340,65 @@ def _redact(text: str) -> str:
     return text
 
 
-def _telegram_send_text(text: str, chat_id: str | None = None) -> bool:
+def _telegram_send_text(text: str, chat_id: str | None = None,
+                        reply_markup: dict | None = None) -> bool:
     """Ham HTML metni Telegram'a gonderir (sinyaller + komut cevaplari ortak).
-    Anahtar yoksa sessizce atlar; hata olursa uyarir, ASLA istisna firlatmaz."""
+    `reply_markup` verilirse dugme klavyesi eklenir. Anahtar yoksa sessizce
+    atlar; hata olursa uyarir, ASLA istisna firlatmaz."""
     if not ENABLE_TELEGRAM:
         return False
+    payload = {"chat_id": chat_id or TELEGRAM_CHAT_ID, "text": text,
+               "parse_mode": "HTML", "disable_web_page_preview": True}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": chat_id or TELEGRAM_CHAT_ID, "text": text,
-                  "parse_mode": "HTML", "disable_web_page_preview": True},
-            timeout=15)
+            json=payload, timeout=15)
         r.raise_for_status()
         return True
     except requests.RequestException as e:
         print(f"uyari: Telegram gonderilemedi: {_redact(str(e))}",
               file=sys.stderr, flush=True)
         return False
+
+
+# --- dugmeler ---
+# 1) Kalici MENU klavyesi: yazi alaninin altinda durur, dokununca komut metni
+#    gonderilir (kod tarafinda MENU_BUTTONS ile komuta cevrilir).
+# 2) SATIR-ICI dugmeler: mesaja bagli (katilim onayi gibi tek-dokunus islemler);
+#    callback_query ile gelir.
+MENU_BUTTONS = {
+    "🔎 Kontrol": "/check",
+    "📊 Performans": "/performans",
+    "ℹ️ Durum": "/status",
+    "❓ Yardim": "/help",
+    "👥 Aboneler": "/aboneler",
+}
+
+
+def _menu_keyboard(owner: bool = False) -> dict:
+    """Kalici menu klavyesi. Sahibe ekstra 'Aboneler' dugmesi gosterilir."""
+    rows = [["🔎 Kontrol", "📊 Performans"], ["ℹ️ Durum", "❓ Yardim"]]
+    if owner:
+        rows.append(["👥 Aboneler"])
+    return {"keyboard": rows, "resize_keyboard": True,
+            "input_field_placeholder": "Bir dugmeye dokun ya da komut yaz"}
+
+
+def _telegram_answer_callback(callback_id: str, text: str = "") -> None:
+    """Dugmeye basildiginda Telegram'daki bekleme animasyonunu kapatir
+    (yapilmazsa kullanici 'takildi' saniyor)."""
+    if not ENABLE_TELEGRAM:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
+            json={"callback_query_id": callback_id, "text": text[:200]},
+            timeout=15)
+    except requests.RequestException as e:
+        print(f"uyari: callback yanitlanamadi: {_redact(str(e))}",
+              file=sys.stderr, flush=True)
 
 
 def _email_ref_block(sig: dict) -> str:
@@ -2748,23 +2790,24 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
     cmd = parts[0].lower().lstrip("/").split("@")[0]
     args = parts[1:]
     owner = _is_owner(chat_id)
-    if cmd in ("start", "help"):
+    if cmd in ("start", "help", "menu"):
         admin_help = ("\n<b>Yonetim (yalniz sen):</b>\n"
                       "/aboneler — abone listesi\n"
                       "/onayla &lt;id&gt; — bekleyen arkadasi ekle\n"
                       "/kaldir &lt;id&gt; — aboneligi kaldir\n") if owner else ""
         _telegram_send_text(
             "🤖 <b>Signal Bot</b> calisiyor.\n\n"
-            "Komutlar:\n"
+            "Asagidaki <b>dugmeleri</b> kullanabilirsin (ya da komut yazabilirsin):\n"
             "/check — su an aktif kurulumlar\n"
             "/performans — canli sonuclar vs backtest\n"
             "/status — bot durumu\n"
             "/myid — kendi chat ID'in\n"
             "/katil — botu kullanmak icin izin iste\n"
-            "/help — bu mesaj\n"
+            "/menu — dugmeleri yeniden goster\n"
             + admin_help +
             "\nYeni sinyaller otomatik olarak buraya ve email'e dusecek. "
-            "Yatirim tavsiyesi degildir.", chat_id=chat_id)
+            "Yatirim tavsiyesi degildir.", chat_id=chat_id,
+            reply_markup=_menu_keyboard(owner))
     elif cmd == "aboneler":
         if not owner:
             _telegram_send_text("Bu komut yalniz bot sahibine acik.",
@@ -2880,6 +2923,50 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
                             chat_id=chat_id)
 
 
+def handle_callback_query(cq: dict) -> None:
+    """Satir-ici dugme basimlarini isler (su an: katilim onay/red).
+
+    GUVENLIK: eylemi YAPAN kisi (callback_query.from) SAHIP olmalidir —
+    onayli bir arkadas, sahibin mesajini bir sekilde gorse bile baska
+    arkadas ekleyemez. Ayrica bilinmeyen callback verisi sessizce yutulur.
+    """
+    cq_id = str(cq.get("id", ""))
+    data = str(cq.get("data") or "")
+    actor = str(((cq.get("from") or {}).get("id")) or "")
+    reply_chat = str((((cq.get("message") or {}).get("chat")) or {}).get("id")
+                     or actor)
+    if not _is_owner(actor):
+        _telegram_answer_callback(cq_id, "Bu islem yalniz bot sahibine acik.")
+        return
+    action, _, target = data.partition(":")
+    target = target.strip()
+    if not target:
+        _telegram_answer_callback(cq_id, "Gecersiz istek.")
+        return
+    if action == "ok":
+        label = PENDING_JOINS.get(target, "onayli")
+        if add_subscriber(target, label):
+            _telegram_answer_callback(cq_id, "Onaylandi ✅")
+            _telegram_send_text(
+                f"✅ <code>{_html.escape(target)}</code> "
+                f"({_html.escape(label)}) eklendi.", chat_id=reply_chat)
+            _telegram_send_text(
+                "✅ Erisimin onaylandi! Artik sinyaller sana da gelecek.\n"
+                "Dugmeler icin /start yaz.\n\n"
+                "<i>Bu bir uyari sistemidir; yatirim tavsiyesi degildir.</i>",
+                chat_id=target, reply_markup=_menu_keyboard(False))
+        else:
+            _telegram_answer_callback(cq_id, "Zaten abone.")
+    elif action == "no":
+        PENDING_JOINS.pop(target, None)
+        _telegram_answer_callback(cq_id, "Reddedildi ❌")
+        _telegram_send_text(
+            f"❌ <code>{_html.escape(target)}</code> istegi reddedildi.",
+            chat_id=reply_chat)
+    else:
+        _telegram_answer_callback(cq_id, "Bilinmeyen islem.")
+
+
 def telegram_command_loop() -> None:
     """getUpdates long-polling ile /komutlari dinler. GUVENLIK: yalnizca
     yapilandirilmis TELEGRAM_CHAT_ID'den gelen mesajlara cevap verir (botu
@@ -2901,10 +2988,21 @@ def telegram_command_loop() -> None:
             r.raise_for_status()
             for upd in r.json().get("result", []):
                 offset = upd["update_id"] + 1
+                cq = upd.get("callback_query")
+                if cq:
+                    try:
+                        handle_callback_query(cq)
+                    except Exception as e:
+                        print(f"uyari: dugme islenemedi: {_redact(str(e))}",
+                              file=sys.stderr, flush=True)
+                    continue
                 msg = upd.get("message") or upd.get("edited_message") or {}
-                text = msg.get("text", "") or ""
+                text = (msg.get("text", "") or "").strip()
                 chat = msg.get("chat") or {}
                 chat_id = str(chat.get("id", ""))
+                # Kalici menu dugmeleri komut yerine etiket metni gonderir
+                if text in MENU_BUTTONS:
+                    text = MENU_BUTTONS[text]
                 if not text.startswith("/"):
                     continue
                 cmd0 = text.strip().split()[0].lower().lstrip("/").split("@")[0]
@@ -2937,8 +3035,15 @@ def telegram_command_loop() -> None:
                             f"📨 <b>Katilim istegi</b>\n"
                             f"{_html.escape(label)}\n"
                             f"ID: <code>{_html.escape(chat_id)}</code>\n\n"
-                            f"Onaylamak icin: <code>/onayla {chat_id}</code>",
-                            chat_id=str(TELEGRAM_CHAT_ID))
+                            f"Tek dokunusla karar ver (ya da "
+                            f"<code>/onayla {chat_id}</code>):",
+                            chat_id=str(TELEGRAM_CHAT_ID),
+                            reply_markup={"inline_keyboard": [[
+                                {"text": "✅ Onayla",
+                                 "callback_data": f"ok:{chat_id}"},
+                                {"text": "❌ Reddet",
+                                 "callback_data": f"no:{chat_id}"},
+                            ]]})
                     continue
                 if not _chat_allowed(chat_id):
                     continue                    # izinsiz -> sessizce yok say
