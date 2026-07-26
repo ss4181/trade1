@@ -64,6 +64,16 @@ const fp=x=>{if(x==null)return "—";x=Number(x);
 const fpc=x=>x==null?'<span class="tag">ölçülüyor</span>':
  `<span class="${x>=0?'up':'dn'}">${x>=0?'+':''}${x.toFixed(2)}%</span>`;
 let D=null,openDoc=null,openRow=null;
+function notifyChip(s){
+ const h=s.notify_health||{},tg=h.telegram||{},em=h.email||{};
+ const bad=(ch,on)=>on===false?"kapalı":(ch.last_error&&!ch.last_ok?"HATA":
+   (ch.fail&&ch.last_error?"son hata var":"çalışıyor"));
+ const tgTxt=bad(tg,s.telegram_enabled),emTxt=bad(em,s.email_enabled);
+ const warn=(t)=>t==="çalışıyor"?"":' style="border-color:#e06c6c;color:#e06c6c"';
+ return `<span class="chip"${warn(tgTxt)}>Telegram <b>${tgTxt}</b>`+
+  `${tg.ok?` (${tg.ok} ok`:""}${tg.fail?`, ${tg.fail} hata`:""}${tg.ok?")":""}</span>`+
+  `<span class="chip"${warn(emTxt)}>E-posta <b>${emTxt}</b></span>`+
+  (tg.last_error?`<span class="chip" style="border-color:#e06c6c;color:#e06c6c">son TG hatası: ${esc(tg.last_error)}</span>`:"");}
 function toggleDoc(name){openDoc=openDoc===name?null:name;drawDoc();}
 function drawDoc(){const w=document.getElementById("docWrap");
  if(!openDoc||!D.docs||!D.docs[openDoc]){w.innerHTML="";return;}
@@ -101,7 +111,8 @@ function draw(){if(!D)return;const s=D.status;
   `<span class="chip">evren <b>${s.symbols}</b></span>`+
   `<span class="chip">hata <b>${s.errors}</b></span>`+
   `<span class="chip">push eşiği <b>${s.min_conf}+</b></span>`+
-  `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`;
+  `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`+
+  notifyChip(s);
  document.getElementById("cards").innerHTML=D.strategies.map(x=>{
    const live=x.live_n?`<b>${x.live_med>=0?'+':''}${x.live_med}%</b> / %${x.live_wr} (N=${x.live_n})`:"henüz yok";
    const bt=(x.bt_med==null)?"—":`${x.bt_med>=0?'+':''}${x.bt_med}% / %${x.bt_wr} (N=${x.bt_n})`;
