@@ -63,6 +63,15 @@ python signal_bot.py            # 7/24 döngü: varsayılan 5 dakikada bir tarar
 python signal_bot.py --once     # tek dongu adimi (kenar-tetikleme; canli davranis testi)
 ```
 
+## Bilgisayar kapalıyken bulut taraması
+
+`Trade1 cloud scanner` GitHub Actions iş akışı doğrulanmış 89 coinlik evreni
+yaklaşık beş dakikada bir tek tur tarar. `.bot_state.json` ve sinyal günlüğü
+koşular arasında taşındığı için False→True kenar tetiklemesi ile cooldown
+korunur; her koşu Serhan / Lab proje kartını gerçek tarama sonucuyla günceller.
+Bulut ortamında `TELEGRAM_BOT_TOKEN` ve `TELEGRAM_CHAT_ID` repository secret
+olarak birlikte tanımlanır. İş akışı emir üretmez.
+
 **`--check` vs `--once` farkı (önemli):**
 - **`--check`** → "şu an uygun kurulum var mı?" sorusunun cevabı. O anda **aktif
   olan tüm koşulları** listeler (kenar-tetikleme aranmaz), bildirim göndermez,
