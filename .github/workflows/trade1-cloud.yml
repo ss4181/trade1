@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 10
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_BOT_ID }}
       TELEGRAM_COMMANDS: "false"
       DASHBOARD_ENABLED: "false"
       DAILY_SUMMARY_HOUR_UTC: "-1"
