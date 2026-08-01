@@ -1,0 +1,40 @@
+name: Serhan Lab heartbeat
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serhan-lab-heartbeat
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PROJECT_HUB_INGEST_URL: ${{ secrets.PROJECT_HUB_INGEST_URL }}
+      PROJECT_HUB_INGEST_TOKEN: ${{ secrets.PROJECT_HUB_INGEST_TOKEN }}
+      OAI_SITES_BYPASS_TOKEN: ${{ secrets.OAI_SITES_BYPASS_TOKEN }}
+    steps:
+      - name: Report Trade1 status to Serhan Lab
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="$(jq -nc --arg observedAtUtc "$(date -u +%FT%TZ)" '{
+            slug: "trade1",
+            status: "Repo bağlantısı aktif",
+            health: "attention",
+            detail: "Trade1 strateji taraması yerel/tablet çalışma durumunu ayrıca bildirmeli.",
+            observedAtUtc: $observedAtUtc
+          }')"
+          curl --fail-with-body --silent --show-error --retry 2 \
+            -X POST "$PROJECT_HUB_INGEST_URL" \
+            -H "Authorization: Bearer $PROJECT_HUB_INGEST_TOKEN" \
+            -H "OAI-Sites-Authorization: Bearer $OAI_SITES_BYPASS_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$payload"
