@@ -31,7 +31,9 @@ jobs:
         run: python -m py_compile signal_bot.py server.py research/*.py tests/*.py
 
       - name: Bot çevrimdışı testleri
-        run: python -B tests/offline_tests.py
+        run: |
+          python -B tests/offline_tests.py
+          python -B tests/test_cloud_report.py
 
       - name: Sunucu readiness testleri
         run: python -B tests/server_tests.py
