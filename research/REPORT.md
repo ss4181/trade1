@@ -374,6 +374,48 @@ iyiydi — kademe seçimi YAPILMADI (post-hoc olurdu). (3) 15m/5m mumlar bu
 Ek B (S1@15m edge negatif) zaten cevapladı; coin sayısı artışı o yapısal
 sonuçları değiştirmez.
 
+## Ek H — S3 destekleyici metrik araştırması (2026-07-30): EKLENMEDİ
+
+**Soru:** S3'e (log-hacim z≥3.0 + yeşil bar, 4h) eklenecek ikinci bir teyit
+koşulu güvenilirliği artırır mı? **Adaylar** (hepsi sinyal barının kendi
+verisinden, sızıntısız): (A) taker alım oranı, (B) kapanışın bar içindeki
+konumu, (C) ortalama işlem büyüklüğü z-skoru, (D) olayın coin'e özgü mü
+piyasa-geneli mi olduğu. 13 konfigürasyon. Script: `sweep_s3_confirm.py`,
+konsol: `results/s3_confirm_console.txt`.
+
+**Protokol (önceden kayıtlı):** tasarım yalnız çekirdek-30 train'de; kazanan
+İKİ bağımsız kümede sınanır — çekirdek-30 test **ve** geniş-59 (S3
+araştırmasında hiç kullanılmamış, gerçek bağımsız sembol kümesi).
+
+| Aşama | Kazanan aday (kapanış konumu ≥ 0.7) |
+|---|---|
+| Çekirdek-30 train | edge +0.283, p=0.001, medyan +28.1bp ✅ |
+| Çekirdek-30 test | edge +0.351, p=0.002 ✅ ama **medyan −9.8bp, isabet %45** |
+| **Geniş-59 (bağımsız)** | **edge −0.035, p=0.87** ❌ (filtresiz referans −0.067) |
+
+**Karar: EKLENMEDİ.** Bağımsız sembol kümesinde çöktü — bu, "train kazananı
+OOS'ta sönüyor" deseninin BEŞİNCİ bağımsız gözlemi. Ayrıca filtre örneklemi
+yarıya indirirken (245→119) medyanı ve isabeti DÜŞÜRÜYOR: vol-normalize
+edge'i yükseltmesi tamamen kuyruk yoğunlaşmasından.
+
+**Asıl bulgu — S3'ün kendisi hakkında (yan ürün):**
+
+| S3 (filtresiz, kanonik) | N | edge | medyan | isabet |
+|---|---|---|---|---|
+| çekirdek-30 train | 761 | +0.228 | +22.7bp | %55 |
+| çekirdek-30 test | 245 | +0.248 (p=0.001) | **+0.0bp** | %49 |
+| geniş-59 (tüm dönem) | 2308 | −0.067 (p=1.00) | **−44bp** | %43 |
+| **canlı** (2026-07, N=7) | 7 | — | −34bp | %43 |
+
+S3'ün vol-normalize edge'i çekirdek-30'da istatistiksel olarak gerçek, ama
+**medyan işlem sıfıra inmiş** — yani ~12bp gidiş-dönüş maliyetten sonra tipik
+S3 işlemi zarar ediyor; pozitif edge yalnız sağ kuyruktan geliyor. Üç bağımsız
+kaynak (test medyanı, geniş evren, canlı) aynı yöne işaret ediyor.
+
+**Öneri (eşik değişikliği değil, yapılandırma):** `NOTIFY_MIN_CONFIDENCE=YUKSEK`
+→ S3 push'u susar (log/panoda kalır), telefona yalnız S1 ve S1+S4 gelir.
+S3 kaldırılmıyor; canlı kayıt birikmeye devam ediyor.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip
