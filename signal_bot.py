@@ -131,12 +131,43 @@ else:
 # coin). S1 (dip al) ve S2 (kalabalik short) bunlarda -22%/-80% verdi; canli
 # S1 medyani -22% (backtest +0.93%) cikti. Bu yuzden dinamik mod artik ACIK
 # OPT-IN: SYMBOL_AUTO=true dersen acilir, riski senindir.
-SYMBOL_AUTO = _env("SYMBOL_AUTO", False,
-                   cast=lambda v: str(v).strip().lower() in ("1", "true", "yes"))
+def _flag(v) -> bool:
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+SYMBOL_AUTO = _env("SYMBOL_AUTO", False, cast=_flag)
 SYMBOL_MAX_COUNT = _env("SYMBOL_MAX_COUNT", 120)
 SYMBOL_MIN_PERP_VOLUME_M = _env("SYMBOL_MIN_PERP_VOLUME_M", 10.0)  # milyon $/24h, perp
 SYMBOL_MIN_SPOT_VOLUME_M = _env("SYMBOL_MIN_SPOT_VOLUME_M", 1.0)   # milyon $/24h, spot
 UNIVERSE_REFRESH_HOURS = _env("UNIVERSE_REFRESH_HOURS", 24)
+
+# --- GOZLEM KANALI (2026-08-03) -------------------------------------------
+# BU BIR STRATEJI DEGILDIR. Dogrulanmis S1/S2/S3 yoluna dokunmaz; hicbir esik
+# degismedi. Yaptigi tek sey: EVREN DISI (dogrulanmamis) coinlerde S1 ailesini
+# AYRI bir kanalda calistirmak.
+#
+# NEDEN VAR: evren disi coinlerde secilmis birkac kurulumun sonucu ile Ek F'nin
+# olcumu celisiyor. Ek F, o evrenin URETTIGI TUM sinyalleri 24s zaman-cikisiyla
+# olctu (canli S1 medyani -22%); tekil olumlu ornekler ise hem kucuk sayida hem
+# de secim etkisi tasiyor (hangi sinyallerin ATLANDIGI bilinmiyor) — yani kanit
+# degil. Celiskiyi kapatmanin tek yolu bu coinleri AYRI kovada, sistematik
+# olarak, 2-3 ay olcmek. Bu kanalin varlik sebebi budur.
+#
+# EK F'NIN HATASINI TEKRARLAMAMA GARANTISI: sinyaller "GOZLEM-" onekli
+# strateji adiyla uretilir. Boylece /performans ve qc_export'ta AYRI kovada
+# dururlar ve dogrulanmis S1 istatistigini KIRLETMEZLER — Ek F'de asil zarar
+# dogrulanmamis coinlerin ana akisa karismasiydi. Guven kademesi "GOZLEM"
+# (tum kademelerin altinda) ve bildirimler DOGRULANMAMIS uyarisi tasir.
+# Backtest referans seviyeleri BILEREK gosterilmez: o dagilimlar (S1 medyan
+# +0.93% vb.) cekirdek-30'da olculdu, bu coinler icin gecerli DEGIL.
+#
+# Kapatmak: OBSERVE_ENABLED=false · Sadece sessize almak: OBSERVE_PUSH=false
+# (sinyaller yine loglanir ve olculur, sadece Telegram/email'e gitmez).
+OBSERVE_ENABLED = _env("OBSERVE_ENABLED", True, cast=_flag)
+OBSERVE_PUSH = _env("OBSERVE_PUSH", True, cast=_flag)
+OBSERVE_TOP_N = _env("OBSERVE_TOP_N", 20)
+OBSERVE_MAX_PUSH_PER_SCAN = _env("OBSERVE_MAX_PUSH_PER_SCAN", 3)
+OBSERVE_PREFIX = "GOZLEM-"
 
 # 5dk tarama: sinyaller 1h bar KAPANISINDA dogar — daha sik tarama sinyal
 # setini DEGISTIRMEZ (kenar-tetikleme ayni kosulu tekrar bildirmez); kazanci
@@ -706,13 +737,24 @@ def calc_volume_zscore(volumes: list[float], window: int = VOLUME_ZSCORE_WINDOW)
 # dogrulanan cikis kurali ZAMAN cikisidir (ufuk sonunda kapat); fiyat-bazli
 # stop/hedef HIC test edilmedi. q10/q90 sadece tarihsel dagilimin uc yuzdelik
 # dilimleri — "buradan kes/su fiyattan al" talimati degildir.
+# "bracket": Ek B2'nin (results/bracket_analysis_console.txt, all-sample, 5m yol
+# cozunurlugu, 10bp RT ucret) KUCUK-HEDEF olcumu. "Kucuk kar hedefiyle daha cok
+# islem" fikri tam olarak burada olculdu: kucuk hedef ISABETI yukseltir
+# (+1%'e dokunma %87) ama beklenen NET getiriyi yukseltmez, cunku ayni
+# donemde -1%'e dokunma da %84'tur. Bildirimlerde gosterilir ki karar aninda
+# gorulsun.
 STRATEGY_STATS = {
     "S1": {"h": 24, "med": 0.93, "q10": -4.49, "q90": 8.83, "wr": 62, "n": 316,
-           "touch": ((1, 87), (2, 71), (3, 62)), "stopt": ((2, 69), (5, 37))},
+           "touch": ((1, 87), (2, 71), (3, 62)), "stopt": ((2, 69), (5, 37)),
+           "bracket": "+1%/-1% E[net] -9bp · en iyi bracket (+2/-3) +3bp · "
+                      "zaman cikisi ~+150bp"},
     "S2": {"h": 72, "med": 0.24, "q10": -9.09, "q90": 12.73, "wr": 52, "n": 339,
-           "touch": ((1, 88), (2, 76), (3, 65)), "stopt": ((2, 74), (5, 47))},
+           "touch": ((1, 88), (2, 76), (3, 65)), "stopt": ((2, 74), (5, 47)),
+           "bracket": "+1%/-1% E[net] +5bp · train'in en iyisi TESTTE -61bp"},
     "S3": {"h": 4,  "med": 0.16, "q10": -2.84, "q90": 4.16, "wr": 53, "n": 1015,
-           "touch": ((1, 67), (2, 42), (3, 27)), "stopt": ((2, 33), (5, 6))},
+           "touch": ((1, 67), (2, 42), (3, 27)), "stopt": ((2, 33), (5, 6)),
+           "bracket": "+1%/-1% E[net] +0bp · en iyisi GENIS (+5/-5) +26bp, "
+                      "dar hedef degil"},
 }
 # Canli karne karsilastirmasi icin deployment'la eslesen cekirdek-30 TEST
 # kohortu. Referans fiyat dagilimlari yukaridaki 24-ay all-sample tablosundan
@@ -732,12 +774,17 @@ STRATEGY_TEST_STATS = {
 # rejim) | ORTA: S3 (4h p<0.001 ama test'e 2. bakis serhi) | DUSUK: S2
 # (p=0.08 marjinal + sembol yogunlasmasi). NOTIFY_MIN_CONFIDENCE altindaki
 # sinyaller LOGLANIR ve API/tamponda gorunur ama Telegram/email'e GITMEZ.
-CONF_RANK = {"DUSUK": 0, "ORTA": 1, "YUKSEK": 2, "COK YUKSEK": 3}
+CONF_RANK = {"GOZLEM": -1, "DUSUK": 0, "ORTA": 1, "YUKSEK": 2, "COK YUKSEK": 3}
 STRATEGY_CONF = {
     "S1+S4": ("COK YUKSEK", "test p=0.006, 72h WR %66; en guclu sinyal"),
     "S1":    ("YUKSEK", "olay p=0.006; gun-kumesi p=0.080, kanit sinirda"),
     "S3":    ("ORTA", "test 4h p<0.001; nihai secimde 2. bakis serhi"),
     "S2":    ("DUSUK", "test p=0.08 marjinal; sinyaller ~5 sembolde yogun"),
+    # Gozlem kanali: kademe yok cunku bu coinlerde HIC backtest yapilmadi.
+    # CONF_RANK -1 -> her NOTIFY_MIN_CONFIDENCE degerinin altinda kalir;
+    # push'u ayrica OBSERVE_PUSH kontrol eder (bkz. _delivery_record).
+    "GOZLEM-S1+S4": ("GOZLEM", "DOGRULANMAMIS coin — hicbir backtest yok"),
+    "GOZLEM-S1":    ("GOZLEM", "DOGRULANMAMIS coin — hicbir backtest yok"),
 }
 NOTIFY_MIN_CONFIDENCE = _env("NOTIFY_MIN_CONFIDENCE", "ORTA").strip().upper()
 
@@ -813,6 +860,7 @@ def build_ref_levels(strategy: str, price: float,
         "q10_price": _sig6(price * (1 + st["q10"] / 100)),
         "q90_price": _sig6(price * (1 + st["q90"] / 100)),
         "touch": st.get("touch"), "stopt": st.get("stopt"),
+        "bracket": st.get("bracket"),
         "stats_scope": (
             f"{strategy} cekirdek-30, 24 ay all-sample"
             if exact is not None else
@@ -991,6 +1039,49 @@ def refresh_universe_if_due(force: bool = False) -> None:
         print(f"uyari: evren guncellenemedi, mevcut {len(SYMBOLS)} sembol "
               f"kullanilmaya devam: {e}", file=sys.stderr, flush=True)
 
+
+# --- gozlem evreni (dogrulanmamis; ayri kovada olculur) -------------------
+OBSERVE_SYMBOLS: list[str] = []
+_last_observe_refresh = 0.0
+OBSERVE_LAST_ERROR: str | None = None
+
+
+def fetch_observe_universe() -> tuple[list[str], dict[str, str]]:
+    """Yapilandirilmis evrenin DISINDA kalan, perp 24h hacmine gore en likit
+    ilk OBSERVE_TOP_N sembol. fetch_universe()'un likidite/veri-kalitesi
+    filtrelerini aynen kullanir (spot cifti + aktif perp + hacim tabanlari);
+    tek farki sonucu evren disiyla sinirlayip N ile kesmesi."""
+    syms, pmap = fetch_universe()
+    configured = set(SYMBOLS)
+    picked = [s for s in syms if s not in configured][:max(0, OBSERVE_TOP_N)]
+    return picked, {s: pmap[s] for s in picked if s in pmap}
+
+
+def refresh_observe_universe_if_due(force: bool = False) -> None:
+    """Gozlem evrenini periyodik yeniler. Hata olursa eski liste korunur ve
+    ANA tarama etkilenmez — bu kanal her zaman en iyi cabadir."""
+    global OBSERVE_SYMBOLS, _last_observe_refresh, OBSERVE_LAST_ERROR
+    if not OBSERVE_ENABLED:
+        return
+    if (not force and time.time() - _last_observe_refresh
+            < UNIVERSE_REFRESH_HOURS * 3600):
+        return
+    try:
+        syms, pmap = fetch_observe_universe()
+        PERP_MAP.update(pmap)
+        added = len(set(syms) - set(OBSERVE_SYMBOLS))
+        OBSERVE_SYMBOLS = syms
+        _last_observe_refresh = time.time()
+        OBSERVE_LAST_ERROR = None
+        print(f"gozlem evreni: {len(syms)} dogrulanmamis sembol "
+              f"(+{added}) — AYRI kovada olculur", flush=True)
+    except Exception as e:
+        OBSERVE_LAST_ERROR = (
+            f"{datetime.now(timezone.utc).isoformat()} {type(e).__name__}: {e}")
+        print(f"uyari: gozlem evreni yenilenemedi, mevcut "
+              f"{len(OBSERVE_SYMBOLS)} sembol kalir: {e}",
+              file=sys.stderr, flush=True)
+
 # --------------------------------------------------------------------------
 # tarama
 # --------------------------------------------------------------------------
@@ -1071,16 +1162,21 @@ class ScanState:
 
 
 def scan_symbol(symbol: str, state: ScanState,
-                snapshot: bool = False) -> list[dict]:
+                snapshot: bool = False, observe: bool = False) -> list[dict]:
     """Bir sembolu tarar, sinyal listesini dondurur.
 
     snapshot=False (canli mod): kenar-tetikleme + cooldown uygulanir — sinyal
       SADECE kosul False->True gectiginde uretilir (bildirim spam'i olmasin).
     snapshot=True (--check modu): geciş aranmaz, o an AKTIF olan tum kosullar
-      raporlanir. state'e dokunmaz. "Su an uygun kurulum var mi?" sorusu icin."""
+      raporlanir. state'e dokunmaz. "Su an uygun kurulum var mi?" sorusu icin.
+    observe=True (gozlem kanali): sembol DOGRULANMAMIS evrendendir. Yalniz S1
+      ailesi hesaplanir (S2/S3 yeni coinlerde OOS basarisiz — Ek G), strateji
+      adi "GOZLEM-" onekli uretilir ve backtest referans seviyeleri
+      EKLENMEZ."""
     signals = []
     now_s = time.time()
-    extended = symbol in EXTENDED_SET      # genis evren: yalniz S1 ailesi (Ek G)
+    # Genis evren VE gozlem kanali: yalniz S1 ailesi (Ek G).
+    extended = observe or symbol in EXTENDED_SET
 
     def include(strategy: str, cond: bool, cooldown: float) -> bool:
         if snapshot:
@@ -1113,7 +1209,8 @@ def scan_symbol(symbol: str, state: ScanState,
             (not math.isnan(z)) and z >= VOLUME_ZSCORE_THRESHOLD
             for z in zs[max(0, i - CONFLUENCE_LOOKBACK_HOURS):i + 1])
         signals.append({
-            "strategy": "S1" + ("+S4" if recent_spike else ""),
+            "strategy": (OBSERVE_PREFIX if observe else "")
+                        + "S1" + ("+S4" if recent_spike else ""),
             "symbol": symbol, "direction": "LONG",
             "signal_market": "spot", "performance_market": "spot",
             "strength": "STRONG" if recent_spike else "NORMAL",
@@ -1204,6 +1301,15 @@ def scan_symbol(symbol: str, state: ScanState,
     if signals:
         sigma = realized_sigma1h(closes)
         for sig in signals:
+            if observe:
+                # Gozlem kanali: kademe yok, referans seviyesi YOK. Backtest
+                # dagilimlari cekirdek-30'da olculdu; bu coinler icin
+                # gosterilmesi yaniltici olurdu (Ek F dersi).
+                sig["universe"] = "observe"
+                sig["observe"] = True
+                sig["confidence"], sig["confidence_note"] = \
+                    signal_confidence(sig["strategy"])
+                continue
             sig["universe"] = "extended59" if extended else "core30"
             conf, evid = signal_confidence(sig["strategy"])
             if extended and sig["strategy"].startswith("S1"):
@@ -1258,6 +1364,20 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
     return rows
 
 
+OBSERVE_WARNING = (
+    "GOZLEM KANALI — DOGRULANMAMIS. Bu sembol botun 89-coin dogrulanmis "
+    "evreninde DEGIL; bu coinde hicbir backtest yapilmadi. Referans "
+    "seviyeleri bilerek gosterilmiyor (S1'in +0.93% medyani cekirdek-30'da "
+    "olculdu, burada gecerli degil). Ek F'de benzer dogrulanmamis coinlerde "
+    "canli S1 medyani -22% cikmisti. Bu bildirim, kanali OLCEBILMEK icin "
+    "uretiliyor; kademe atanmadi."
+)
+
+
+def _observe_lines(sig: dict) -> list[str]:
+    return [OBSERVE_WARNING] if sig.get("observe") else []
+
+
 def _ref_lines(sig: dict) -> list[str]:
     """Referans seviyeleri — iki kanal icin ortak duz-metin satirlar."""
     ref = sig.get("ref")
@@ -1287,6 +1407,10 @@ def _ref_lines(sig: dict) -> list[str]:
         s = " · ".join(f"-{y}% %{p}" for y, p in ref["stopt"])
         lines.append(f"Dokunma olasiliklari ({ref['time_exit_hours']}h, "
                      f"tarihsel): {t} | {s}")
+    if ref.get("bracket"):
+        lines.append(f"Kucuk-hedef olcumu (Ek B2): {ref['bracket']}. Kucuk "
+                     "hedef ISABETI yukseltir, beklenen getiriyi yukseltmez "
+                     "(ayni pencerede stop'a dokunma olasiligi da yuksek).")
     lines.append("Bracket (hedef/stop emri) backtest'te zaman cikisini "
                  "YENEMEDI; dokunma olasiliklari bilgi amaclidir. Kaldirac "
                  "kayiplari ve tasfiye riskini buyutur.")
@@ -1312,6 +1436,8 @@ def send_telegram_message(sig: dict) -> None:
     lines += [f"{label}: {_html.escape(val)}"
               for label, val in _signal_detail_rows(sig)]
     lines.append(_html.escape(sig["note"]))
+    for warn in _observe_lines(sig):
+        lines.append(f"\n<b>⚠️ {_html.escape(warn)}</b>")
     ref_lines = _ref_lines(sig)
     if ref_lines:
         lines.append("")
@@ -1502,6 +1628,10 @@ def _email_html(sig: dict) -> str:
       <tr><td style="padding:4px 12px 4px 0;color:#666">Zaman</td><td style="padding:4px 0">{_html.escape(sig['bar_time'])}</td></tr>
     </table>
     <p style="font-size:13px;color:#444;margin:8px 0 0">{_html.escape(sig['note'])}</p>
+    {''.join(f'<p style="font-size:13px;margin:10px 0 0;padding:8px;'
+             f'background:#fff4f4;border:1px solid #e0b4b4;color:#7a2020">'
+             f'<b>&#9888; {_html.escape(w)}</b></p>'
+             for w in _observe_lines(sig))}
     {_email_ref_block(sig)}
   </div>
   <p style="font-size:11px;color:#999;margin:8px 0 0">
@@ -1572,7 +1702,13 @@ def _signal_event_id(sig: dict) -> str:
 def _delivery_record(sig: dict, push: bool) -> dict:
     conf = sig.get("confidence", "YUKSEK")
     reasons = []
-    if CONF_RANK.get(conf, 2) < CONF_RANK.get(NOTIFY_MIN_CONFIDENCE, 1):
+    if sig.get("observe"):
+        # Gozlem sinyalinin push'unu CONF_RANK degil OBSERVE_PUSH belirler:
+        # "GOZLEM" kademesi bilerek tum esiklerin altindadir, yoksa
+        # NOTIFY_MIN_CONFIDENCE bu kanali her zaman susturur.
+        if not OBSERVE_PUSH:
+            reasons.append("observe_channel_silent")
+    elif CONF_RANK.get(conf, 2) < CONF_RANK.get(NOTIFY_MIN_CONFIDENCE, 1):
         reasons.append("confidence_below_threshold")
     if not push:
         reasons.append("scan_push_cap")
@@ -1700,7 +1836,25 @@ def scan_all(state: ScanState) -> int:
     if errors:
         print(f"uyari: taramada {errors}/{len(SYMBOLS)} sembol hata verdi",
               file=sys.stderr, flush=True)
+    # GOZLEM KANALI — dogrulanmis taramadan SONRA, AYRI hata muhasebesiyle.
+    # Buradaki hatalar LAST_SCAN_* saglik olcumlerine KARISMAZ: bu kanal
+    # dogrulanmamis ve her zaman en iyi cabadir, /health'i bozmamali.
+    observed: list[dict] = []
+    if OBSERVE_ENABLED and market_error is None:
+        for sym in OBSERVE_SYMBOLS:
+            try:
+                observed += scan_symbol(sym, state, observe=True)
+            except (MarketRateLimitError, MarketTransientError) as e:
+                print(f"uyari: gozlem taramasi {sym} sonrasi kesildi: {e}",
+                      file=sys.stderr, flush=True)
+                break
+            except Exception as e:
+                print(f"uyari: gozlem sembolu {sym} taranamadi: {e}",
+                      file=sys.stderr, flush=True)
+            time.sleep(0.25)
+
     collected.sort(key=lambda s: (_priority(s), s["symbol"]))
+    observed.sort(key=lambda s: (_priority(s), s["symbol"]))
     overflow = []
     pushed = 0
     for sig in collected:
@@ -1713,6 +1867,14 @@ def scan_all(state: ScanState) -> int:
             notify(sig)
             if conf_ok:
                 pushed += 1
+    # Gozlem sinyalleri kendi push tavanina tabidir; dogrulanmis sinyallerin
+    # MAX_PUSH_PER_SCAN butcesini TUKETMEZ (onlarin onune de gecemez).
+    observe_pushed = 0
+    for sig in observed:
+        allow = OBSERVE_PUSH and observe_pushed < OBSERVE_MAX_PUSH_PER_SCAN
+        notify(sig, push=allow)
+        if allow:
+            observe_pushed += 1
     if overflow:
         _send_overflow_summary(overflow)
     state.save()                  # restart'ta cooldown/tampon kaybolmasin
@@ -1866,6 +2028,7 @@ def _run_forever_locked(once: bool = False,
     LAST_LOOP_HEARTBEAT_AT = datetime.now(timezone.utc).isoformat()
     refresh_universe_if_due(force=True)     # otomatik moddaysa evreni kur
     refresh_perp_map_if_due(force=True)     # statik modda da kontrat esle
+    refresh_observe_universe_if_due(force=True)   # dogrulanmamis gozlem listesi
     telegram_preflight()                    # token gecerli mi? (mesaj atmaz)
     # Telegram komut dinleyicisini yalnizca surekli modda baslat (--once'ta degil)
     if ENABLE_TELEGRAM and TELEGRAM_COMMANDS and not once:
@@ -1904,6 +2067,7 @@ def _run_forever_locked(once: bool = False,
         try:
             refresh_universe_if_due()
             refresh_perp_map_if_due()
+            refresh_observe_universe_if_due()
             n = scan_all(state)
             completed = datetime.now(timezone.utc).isoformat()
             LAST_SCAN_AT = completed
@@ -1944,7 +2108,8 @@ def _run_forever_locked(once: bool = False,
 
 
 def _priority(sig: dict) -> int:
-    return {"S1+S4": 0, "S1": 1, "S3": 2, "S2": 3}.get(sig["strategy"], 9)
+    return {"S1+S4": 0, "S1": 1, "S3": 2, "S2": 3,
+            "GOZLEM-S1+S4": 8, "GOZLEM-S1": 9}.get(sig["strategy"], 9)
 
 
 def collect_active_setups() -> tuple[list[dict], int]:
@@ -1966,6 +2131,18 @@ def collect_active_setups() -> tuple[list[dict], int]:
             errors += 1
             print(f"  uyari: {sym} taranamadi: {e}", file=sys.stderr, flush=True)
         time.sleep(0.15)
+    # Gozlem kanali: en iyi caba, hatalari ana sayaca YAZILMAZ (kurulumun
+    # kendisi dogrulanmamis; --check saglik gostergesini bozmamali).
+    if OBSERVE_ENABLED:
+        for sym in OBSERVE_SYMBOLS:
+            try:
+                found += scan_symbol(sym, state, snapshot=True, observe=True)
+            except (MarketRateLimitError, MarketTransientError):
+                break
+            except Exception as e:
+                print(f"  uyari: gozlem sembolu {sym} taranamadi: {e}",
+                      file=sys.stderr, flush=True)
+            time.sleep(0.15)
     found.sort(key=lambda s: (_priority(s), s["symbol"]))
     return found, errors
 
@@ -1977,7 +2154,10 @@ def run_check() -> int:
     oldugu icin soguk baslangicta hicbir sey gostermez)."""
     refresh_universe_if_due(force=True)
     refresh_perp_map_if_due(force=True)
-    print(f"anlik kontrol: {len(SYMBOLS)} sembol taraniyor "
+    refresh_observe_universe_if_due(force=True)
+    obs_note = (f" + {len(OBSERVE_SYMBOLS)} gozlem (DOGRULANMAMIS)"
+                if OBSERVE_ENABLED and OBSERVE_SYMBOLS else "")
+    print(f"anlik kontrol: {len(SYMBOLS)} sembol{obs_note} taraniyor "
           f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'})...",
           flush=True)
     found, errors = collect_active_setups()
@@ -1996,6 +2176,8 @@ def run_check() -> int:
             for label, val in _signal_detail_rows(sig):
                 print(f"    {label}: {val}")
             print(f"    {sig['note']}")
+            for w in _observe_lines(sig):
+                print(f"    !! {w}")
             for l in _ref_lines(sig):
                 print(f"    {l}")
             print()
@@ -2088,7 +2270,11 @@ def _realized_performance_unlocked(max_signals: int = None,
         # asagi ceker ve karar verirken yanlis yonlendirir. qc_export ayni
         # kayitlari "symbol_not_in_configured_universe" ile karantinaya alir;
         # iki arac tutarli olmali. Sayilari raporda gorunur tutuyoruz.
-        if sig.get("symbol") not in universe:
+        # Gozlem kayitlari bilerek MUAF: zaten "GOZLEM-" onekli AYRI strateji
+        # kovasinda dururlar, dogrulanmis S1/S2/S3 istatistigine karismazlar.
+        # Ek F'nin zarari kirlenmeydi; ayri kovada olcmek tam tersi — kanali
+        # veriyle degerlendirmenin tek yolu.
+        if not sig.get("observe") and sig.get("symbol") not in universe:
             excluded_out_of_universe += 1
             continue
         try:
@@ -2208,15 +2394,24 @@ def _format_performance(perf: dict) -> str:
                 "olculebilir hale gelir)." + excl_note)
     lines = [f"<b>Canli performans</b> (son {perf['n_total']} olgun sinyal; "
              "giris/cikis tanimi backtest ile ayni):"]
+    observe_lines = []
     for s, d in perf["strategies"].items():
         market = "USD-M perp" if d.get("performance_market") == "um_perp" else "spot"
         cmp_med = (f" (backtest medyan {d['bt_median_pct']:+.2f}%)"
                    if d.get("bt_median_pct") is not None else "")
         cmp_wr = (f" (backtest %{d['bt_winrate_pct']})"
                   if d.get("bt_winrate_pct") is not None else "")
-        lines.append(f"• <b>{s}</b>: N={d['n']} medyan {d['median_pct']:+.2f}%"
-                     f"{cmp_med} · isabet %{d['winrate_pct']}{cmp_wr} · "
-                     f"ort {d['mean_pct']:+.2f}% · {market}")
+        row = (f"• <b>{s}</b>: N={d['n']} medyan {d['median_pct']:+.2f}%"
+               f"{cmp_med} · isabet %{d['winrate_pct']}{cmp_wr} · "
+               f"ort {d['mean_pct']:+.2f}% · {market}")
+        # Gozlem kovasi AYRI blokta: dogrulanmis satirlarla ayni listede
+        # gorunmesi "ayni statude" izlenimi verirdi.
+        (observe_lines if s.startswith(OBSERVE_PREFIX) else lines).append(row)
+    if observe_lines:
+        lines.append("\n<b>Gozlem kanali</b> (DOGRULANMAMIS coinler — "
+                     "karsilastirilacak backtest YOK; karar icin degil, "
+                     "kanali olcmek icin):")
+        lines += observe_lines
     if perf["fetch_errors"]:
         lines.append(f"({perf['fetch_errors']} sinyal veri hatasindan olculemedi)")
     if excl_note:
@@ -2304,8 +2499,10 @@ def _signal_why(sig: dict) -> str:
     """Bu sinyalin TAM OLARAK hangi kosullarla tetiklendigini duz Turkce anlatir
     (panoda satira tiklayinca acilir)."""
     strat = sig.get("strategy", "")
-    base = strat.split("+")[0]
-    p = []
+    # Gozlem sinyali ayni S1 mantigiyle uretilir; oneki soyup ayni aciklamayi
+    # ver, ama basina DOGRULANMAMIS uyarisini koy.
+    base = strat.removeprefix(OBSERVE_PREFIX).split("+")[0]
+    p = list(_observe_lines(sig))
     if base == "S1":
         rsi = sig.get("rsi")
         p.append(f"RSI(14) = {rsi}: asiri satim esigi {RSI_OVERSOLD}'in altinda.")
@@ -2955,6 +3152,10 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
             f"Push esigi: {NOTIFY_MIN_CONFIDENCE}+ "
             f"(alti sessiz-kayit) · Kapali: "
             f"{', '.join(sorted(DISABLED_STRATEGIES)) or 'yok'}\n"
+            f"Gozlem kanali: "
+            + (f"{len(OBSERVE_SYMBOLS)} dogrulanmamis sembol, "
+               f"bildirim {'ACIK' if OBSERVE_PUSH else 'sessiz'}"
+               if OBSERVE_ENABLED else "kapali") + "\n"
             f"Aboneler: {len(TELEGRAM_SUBSCRIBERS)}\n"
             f"Email: {'acik' if ENABLE_EMAIL else 'kapali'}", chat_id=chat_id)
     elif cmd in ("performans", "performance", "perf"):

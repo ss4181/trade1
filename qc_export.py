@@ -25,6 +25,8 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 SCHEMA_VERSION = "1.0"
 VALID_STRATEGIES = {"S1", "S1+S4", "S2", "S3"}
+# signal_bot.OBSERVE_PREFIX ile ayni olmali (gozlem kanali disariya cikmaz).
+OBSERVE_PREFIX = "GOZLEM-"
 EXPECTED_HORIZONS = {"S1": 24, "S1+S4": 24, "S2": 72, "S3": 4}
 
 EVENT_FIELDS = [
@@ -234,6 +236,12 @@ def _parse_events(
         symbol = str(record.get("symbol") or "").strip().upper()
         if strategy.startswith("TEST"):
             _reject(rejected, number, "test_strategy", raw, record)
+            continue
+        # Gozlem kanali (GOZLEM-*) arastirma paketine ASLA girmez: bu coinlerde
+        # backtest yok, QC capraz dogrulamasinin karsilastiracagi bir sey de.
+        # "invalid_strategy" yerine ayri sebep -> denetimde sayilari gorunur.
+        if strategy.startswith(OBSERVE_PREFIX) or record.get("observe"):
+            _reject(rejected, number, "observation_channel", raw, record)
             continue
         if strategy not in VALID_STRATEGIES:
             _reject(rejected, number, "invalid_strategy", raw, record)

@@ -44,6 +44,32 @@ Bu mod, yeni/pump-dump coinleri içeri alabildiği ve canlı takipte ciddi evren
 kontaminasyonu ürettiği için varsayılan değildir. Ayrıntılı uyarılar ve filtreler
 `.env.example` içindedir.
 
+## Gözlem kanalı (doğrulanmamış — ayrı kova)
+
+2026-08-03'te eklendi. Doğrulanmış 89 coinin **dışında**, perp hacmine göre en
+likit ilk `OBSERVE_TOP_N` (varsayılan 20) coinde **yalnız S1 ailesi** çalışır.
+Sinyaller `GOZLEM-S1` / `GOZLEM-S1+S4` adıyla üretilir.
+
+| | Doğrulanmış yol | Gözlem kanalı |
+|---|---|---|
+| Eşikler | değişmedi | değişmedi (aynı S1 eşiği) |
+| Güven kademesi | ÇOK YÜKSEK…DÜŞÜK | **yok** (`GOZLEM`) |
+| Backtest referans seviyeleri | gösterilir | **gösterilmez** |
+| `/performans` | strateji kovaları | **ayrı blok**, karşılaştırma yok |
+| `qc_export` paketi | girer | **girmez** (`observation_channel`) |
+| `/health` hata oranı | sayılır | **sayılmaz** (en iyi çaba) |
+
+**Neden var:** Evren dışı coinlerde seçilmiş birkaç kurulumun sonucu, Ek F'nin
+ölçümüyle çelişiyor. Ek F o evrenin ürettiği **tüm** sinyalleri 24s
+zaman-çıkışıyla ölçtü (canlı S1 medyanı −22%); tekil olumlu örnekler ise hem
+küçük sayıda hem de seçim etkisi taşıyor — kanıt değil. Kanal bu çelişkiyi
+2–3 ayda sistematik ölçümle kapatmak için var. Ek F'nin asıl zararı
+doğrulanmamış coinlerin ana akışa **karışmasıydı**; ayrı kova bunu yapısal
+olarak engelliyor.
+
+Kapatma: `OBSERVE_ENABLED=false` · Sadece susturma (ölçüm sürer):
+`OBSERVE_PUSH=false`
+
 ## Bildirimlerdeki referans seviyeleri
 
 Her sinyal, 24 aylık backtest dağılımından türetilen **mekanik referanslar**

@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import signal_bot as bot  # noqa: E402
+import qc_export as qc  # noqa: E402
 
 # testler modulu monkeypatch'ler; orijinalleri sakla ki sonraki testler
 # oncekilerin sahtelerini cagirmasin
@@ -846,6 +847,116 @@ def test_perf_formatting():
     ok("performans bicimlendirme")
 
 
+def test_observation_channel(tmpdir):
+    """Gozlem kanali: S1-yalniz, GOZLEM- oneki, referans YOK, ayri kova,
+    dogrulanmis istatistigi kirletmiyor, qc_export'a sizmiyor."""
+    called = {"funding": 0}
+    bot.fetch_funding = lambda symbol, limit=3: called.__setitem__(
+        "funding", called["funding"] + 1) or [
+        {"time": i, "rate": -0.01} for i in range(3)]
+    closes = [1000 - i for i in range(250)]
+    bot.fetch_klines = lambda symbol, limit=250: [
+        {"open_time": i * 3600000, "open": closes[i] + 0.5, "high": closes[i] + 1,
+         "low": closes[i] - 1, "close": closes[i], "volume": 10}
+        for i in range(250)]
+    orig_div = bot.bullish_divergence
+    orig_push = bot.OBSERVE_PUSH
+    bot.bullish_divergence = lambda c, l, r, i: True
+    bot.DISABLED_STRATEGIES = set()
+    try:
+        sigs = bot.scan_symbol("ZZZFAKEUSDT", bot.ScanState(),
+                               snapshot=True, observe=True)
+        assert called["funding"] == 0, "gozlem kanalinda funding cekilmemeli"
+        strats = {s["strategy"] for s in sigs}
+        assert strats and all(s.startswith(bot.OBSERVE_PREFIX) for s in strats), \
+            f"tum gozlem sinyalleri GOZLEM- onekli olmali: {strats}"
+        assert not any(s in strats for s in ("S1", "S1+S4", "S2", "S3"))
+        sig = sigs[0]
+        assert sig["confidence"] == "GOZLEM" and sig["observe"] is True
+        assert sig["universe"] == "observe"
+        # backtest referanslari GOSTERILMEMELI (cekirdek-30 dagilimi gecersiz)
+        assert "ref" not in sig and bot._ref_lines(sig) == []
+        assert bot._observe_lines(sig) and "DOGRULANMAMIS" in bot._observe_lines(sig)[0]
+        # pano "neden geldi": uyari basta, S1 aciklamasi yine de gelmeli
+        why = bot._signal_why(sig)
+        assert why.startswith("GOZLEM KANALI") and "RSI(14)" in why, why
+        # GOZLEM kademesi her push esiginin altinda
+        assert bot.CONF_RANK["GOZLEM"] < min(
+            v for k, v in bot.CONF_RANK.items() if k != "GOZLEM")
+
+        # push kapisi CONF_RANK'a degil OBSERVE_PUSH'a bagli
+        bot.OBSERVE_PUSH = True
+        rec = bot._delivery_record(sig, push=True)
+        assert rec["push_allowed"] is True, "OBSERVE_PUSH acikken gitmeli"
+        bot.OBSERVE_PUSH = False
+        rec = bot._delivery_record(sig, push=True)
+        assert rec["push_allowed"] is False
+        assert rec["suppression_reason"] == "observe_channel_silent"
+        # dogrulanmis sinyal esikten etkilenmeye devam etmeli
+        low = {"strategy": "S2", "confidence": "DUSUK"}
+        assert bot._delivery_record(low, push=True)["push_allowed"] is False
+
+        # /performans: gozlem AYRI blokta, S1 satiriyla karismaz
+        txt = bot._format_performance({
+            "n_total": 8, "fetch_errors": 0,
+            "strategies": {
+                "S1": {"n": 5, "median_pct": 1.1, "mean_pct": 1.5,
+                       "winrate_pct": 60, "bt_median_pct": 0.93,
+                       "bt_winrate_pct": 62},
+                "GOZLEM-S1": {"n": 3, "median_pct": -9.0, "mean_pct": -8.0,
+                              "winrate_pct": 33}}})
+        assert "Gozlem kanali" in txt and "DOGRULANMAMIS" in txt
+        assert txt.index("<b>S1</b>") < txt.index("Gozlem kanali"), \
+            "gozlem satirlari dogrulanmis bloktan SONRA gelmeli"
+        assert "backtest medyan" in txt.split("Gozlem kanali")[0]
+        assert "backtest medyan" not in txt.split("Gozlem kanali")[1], \
+            "gozlem satirinda karsilastirilacak backtest OLMAMALI"
+
+        # olcum: evren disi olmasina ragmen gozlem kaydi kovaya girmeli
+        log = Path(tmpdir) / "observe.log"
+        old_log, old_cache = bot.SIGNAL_LOG, bot.PERF_CACHE_FILE
+        bar = (bot.datetime.now(bot.timezone.utc)
+               - bot.timedelta(hours=48)).replace(microsecond=0)
+        try:
+            bot.SIGNAL_LOG = str(log)
+            bot.PERF_CACHE_FILE = Path(tmpdir) / ".observe_cache.json"
+            rows = []
+            for strat, sym, obs in (("GOZLEM-S1", "ZZZFAKEUSDT", True),
+                                    ("S1", "QQQFAKEUSDT", False)):
+                r = {"strategy": strat, "symbol": sym, "direction": "LONG",
+                     "bar_time": bar.isoformat(), "horizon_hours": 24,
+                     "price": 100.0}
+                if obs:
+                    r["observe"] = True
+                rows.append(json.dumps(r))
+            log.write_text("\n".join(rows) + "\n", encoding="utf-8")
+            bot.fetch_klines_at = lambda symbol, start_ms, limit: [
+                {"open": 100.0, "close": 100.0, "high": 100.0, "low": 100.0}
+                for _ in range(limit)]
+            perf = bot.realized_performance()
+            assert "GOZLEM-S1" in perf["strategies"], perf
+            assert "S1" not in perf["strategies"], \
+                "evren disi dogrulanmis kayit hala karantinada olmali"
+            assert perf["excluded_out_of_universe"] == 1
+        finally:
+            bot.SIGNAL_LOG, bot.PERF_CACHE_FILE = old_log, old_cache
+
+        # qc_export: gozlem kayitlari arastirma paketine SIZMAMALI
+        events, rejected = qc._parse_events(
+            [json.dumps({"strategy": "GOZLEM-S1", "symbol": "ZZZFAKEUSDT",
+                         "direction": "LONG", "observe": True, "price": 1.0,
+                         "bar_time": bar.isoformat(), "horizon_hours": 24})],
+            configured_symbols={"ZZZFAKEUSDT"}, core_symbols=set(),
+            extended_symbols=set(), config_version="t",
+            confidence_rank=bot.CONF_RANK, min_confidence="ORTA")
+        assert events == [] and len(rejected) == 1
+        assert rejected[0]["rejection_reason"] == "observation_channel", rejected
+    finally:
+        bot.bullish_divergence = orig_div
+        bot.OBSERVE_PUSH = orig_push
+    ok("gozlem kanali (S1-yalniz, ayri kova, referans yok, qc sizintisi yok)")
+
+
 def main():
     with tempfile.TemporaryDirectory() as td:
         bot.SIGNAL_LOG = str(Path(td) / "signals.log")
@@ -868,6 +979,7 @@ def main():
         test_true_price_time_and_s2_perp_market()
         test_instance_file_lock(td)
         test_extended_universe_rules()
+        test_observation_channel(td)
         test_join_approval_flow(td)
         test_buttons_and_callbacks(td)
         test_notify_health_visibility()
