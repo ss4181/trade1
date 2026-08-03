@@ -1,0 +1,45 @@
+﻿==================================================================================
+REJIM DAGILIMI (2024-07 -> 2026-06, BTC 200 gunluk SMA)
+==================================================================================
+  BOGA       8389 saat  (%55, ~11.5 ay)
+  AYI        6732 saat  (%45, ~9.2 ay)
+  BTC 30g yatay           10205 saat (%61)
+  BTC 30g yukselis>%10     3453 saat (%21)
+  BTC 30g dusus>%10        3142 saat (%19)
+
+==================================================================================
+STRATEJI BAZINDA (tum 89 sembol, 24 ay, canli konfigurasyon)
+==================================================================================
+
+### S1 (RSI<=22.5 + divergence) (ufuk 24h) — toplam N=875
+  BTC 200g trendi:
+    rejim                N    pay  sin/ay  isabet   medyan     ort    edge
+    BOGA               299    34%    0.29     67%      158     119   0.154
+    AYI                436    50%    0.53     53%       31      68   0.157
+  BTC 30g getirisi:
+    rejim                N    pay  sin/ay  isabet   medyan     ort    edge
+    yatay              525    60%    0.42     59%       72      65   0.063
+    dusus>%10          276    32%    0.72     58%       79     175   0.376
+    yukselis>%10        24     3%    0.06     67%      216     283   0.522
+
+### S3 (log-z>=3.0, yukari-bar) (ufuk 4h) — toplam N=1008
+  BTC 200g trendi:
+    rejim                N    pay  sin/ay  isabet   medyan     ort    edge
+    BOGA               561    56%    1.63     58%       43      64   0.359
+    AYI                341    34%    1.23     47%       -8      19   0.106
+  BTC 30g getirisi:
+    rejim                N    pay  sin/ay  isabet   medyan     ort    edge
+    yatay              571    57%    1.36     54%       13      41   0.261
+    yukselis>%10       254    25%    1.79     54%       33      20   0.155
+    dusus>%10          156    15%    1.21     54%       32      78   0.332
+
+### S2 (funding<=-0.03%, persistence 2) (ufuk 72h) — toplam N=437
+  BTC 200g trendi:
+    rejim                N    pay  sin/ay  isabet   medyan     ort    edge
+    BOGA               157    36%    0.46     50%       10     -25   0.192
+    AYI                207    47%    0.75     49%        0      75   0.172
+  BTC 30g getirisi:
+    rejim                N    pay  sin/ay  isabet   medyan     ort    edge
+    yukselis>%10        41     9%    0.29     41%     -162    -124   0.224
+    yatay              249    57%    0.59     55%       82      85   0.216
+    dusus>%10          126    29%    0.98     48%       -9     111   0.186

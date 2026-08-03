@@ -23,6 +23,8 @@ venv/
 # arastirma ham verisi (scratchpad'te, repoya girmez; parquet cache buyuk)
 research/data/
 research/**/*.parquet
+# Ek I funding onbellegi (~6MB); sweep_funding_harvest.py yeniden indirir
+research/funding_cache/
 
 # mobil (Expo)
 mobile/node_modules/

@@ -416,6 +416,196 @@ kaynak (test medyanı, geniş evren, canlı) aynı yöne işaret ediyor.
 → S3 push'u susar (log/panoda kalır), telefona yalnız S1 ve S1+S4 gelir.
 S3 kaldırılmıyor; canlı kayıt birikmeye devam ediyor.
 
+## Ek I — Funding hasadı ("yüksek FR'de ödemeyi al") (2026-08-03): NEGATİF
+
+**Soru:** S2'yi yönlü bir sinyal olarak değil, **funding ödemesini toplayan**
+bir kurulum olarak kullanabilir miyiz? Funding oranı uç değerlere çıktığında
+(|FR| ≥ %1.5–2 gibi) ödemeyi ALAN tarafa geçip ödemeyi cebe atmak.
+
+**Adım 1 — böyle oranlar gerçekten oluyor mu?** 89 coin × 24 ay = 243.361
+funding kaydı (aralık dağılımı: 8h %58, 4h %41).
+
+| \|FR\| ≥ | olay | tüm kayıtların %'si | evren genelinde ayda |
+|---|---|---|---|
+| %0.30 | 771 | 0.317% | 32.1 |
+| %0.50 | 346 | 0.142% | 14.4 |
+| %1.00 | 98 | 0.040% | 4.1 |
+| %1.50 | 34 | 0.014% | 1.4 |
+| %2.00 | 17 | 0.007% | 0.7 |
+
+Olaylar var ama nadir, ve uçlar **tamamen negatif** tarafta (kalabalık short →
+long alır); değerler funding TAVANINA (−%2, tek seferde −%3) yapışıyor.
+
+**Adım 2 — ödeme fiyat riskini karşılıyor mu?** Kasıtlı **iyimser** kurulum:
+giriş sinyali olarak SETTLED oran kullanıldı — bu lookahead'dir (gerçekte
+yalnız tahmini oran görülebilir), yani ölçüm gerçekte ulaşılabilecek olanın
+ÜST SINIRI. Maliyet 10bp gidiş-dönüş. Yalnızca **train** (2024-07→2025-12).
+
+1h çözünürlük, ödemeden sonra 1 bar tutma:
+
+| eşik | N | funding (medyan) | fiyat (medyan) | **net** | isabet |
+|---|---|---|---|---|---|
+| %0.50 | 141 | +0.76% | −1.28% | **−0.65%** | %39 |
+| %1.00 | 49 | +1.29% | −2.44% | **−1.08%** | %33 |
+| %1.50 | 18 | +1.72% | −2.68% | **−1.14%** | %39 |
+| %2.00 | 8 | +2.00% | −3.61% | **−1.21%** | %38 |
+
+**Adım 3 — fikrin en güçlü hali** (5m çözünürlük; ödemeden **5 dk önce** gir,
+**5 dk sonra** çık = toplam ~10 dakika fiyat riski). "Kapanışa 5 dk kala
+bildirim gönder, ödemeyi al" önerisinin birebir ölçümü:
+
+| eşik | N | funding | fiyat | **net (medyan)** | isabet |
+|---|---|---|---|---|---|
+| %0.50 | 141 | +0.76% | −0.89% | **−0.08%** | %48 |
+| %0.75 | 74 | +1.11% | −1.34% | **−0.37%** | %43 |
+| %1.00 | 49 | +1.29% | −1.48% | **−0.50%** | %37 |
+| %1.50 | 18 | +1.72% | −2.99% | **−1.06%** | %44 |
+| %2.00 | 8 | +2.00% | −3.88% | **−1.91%** | %12 |
+
+**Karar: EKLENMEDİ. Test dilimine BAKILMADI** (train'de her eşikte ve her
+tutma penceresinde negatif — protokol gereği test atışı harcanmadı).
+
+**Mekanizma (neden böyle olmak zorunda):** Uç negatif funding, perp'in
+endekse göre derin **iskontoda** işlem görmesi demektir. Funding ödemesi tam
+olarak bu iskontonun tazminatıdır ve iskonto ödeme anının çevresinde kapanır.
+10 dakikalık pencerede bile fiyat, funding'in ~1.2–1.7 katını geri alıyor.
+Funding bedava para değil; dislokasyonun ters tarafını tutmanın ücreti.
+Dikkat: eşik yükseldikçe sonuç **kötüleşiyor** — "daha uç FR, daha iyi hasat"
+sezgisi verinin tam tersi.
+
+**Frekans şerhi:** İşe yarasaydı bile |FR| ≥ %1.5 evren genelinde **ayda ~1.4
+kez**, ≥ %2.0 **ayda ~0.7 kez** oluyor — bildirim hacmi olarak da neredeyse
+hiç.
+
+**Not:** Delta-nötr baz işlemi (spot al + perp short) bu ekin kapsamı DIŞINDA;
+o farklı bir ürün (iki bacaklı, spot bakiyesi gerektirir) ve bu bot tek-bacaklı
+perp sinyali üretiyor. Tekrar sorulursa bu ek gösterilsin.
+
+**Script:** `sweep_funding_harvest.py` · **konsol:**
+`results/funding_harvest_console.txt`
+
+## Ek J — "Daha çok sinyal + güçlendirici metrik" araması (2026-08-03): UYGULANMADI
+
+**Soru:** S1'in RSI eşiğini gevşetip daha çok sinyal üretelim, ama her sinyali
+değerlendiren bir metrik ekleyerek isabeti %55+ ve medyanı maliyetin üstünde
+tutalım. Böyle bir metrik var mı?
+
+**Önceden kayıtlı ölçüt:** isabet ≥ %55 **ve** medyan ≥ 12bp (gidiş-dönüş
+maliyet) **ve** sinyal sayısı mevcut RSI≤22.5 havuzundan fazla.
+**Adaylar (10):** uyumsuzluk gücü, RSI dönüşü, 168h zirveden düşüş, dip kırma
+derinliği, bar-içi kapanış konumu, sinyal barı hacim z'si, volatilite rejimi,
+ardışık düşüş sayısı, likidite oranı, BTC'nin o andaki RSI'ı.
+Script: `sweep_s1_filters.py` + `sweep_s1_filters_refine.py`, konsol:
+`results/s1_filter_console.txt`.
+
+**Aşama 1 — filtresiz havuzlar (çekirdek-30 train)** eşik gevşemesinin
+bedelini gösteriyor: RSI≤22.5 → 0.38 sinyal/ay, %64, +114bp · 25.0 → 0.76,
+%58, +84bp · 27.5 → 1.49, %56, +59bp · 30.0 → 2.52, %54, +44bp.
+
+**Aşama 2 — train'de 127 konfigürasyon ölçütü geçti.** Kazananların tamamı iki
+mekanizmanın varyantıydı: sinyal barında **hacim patlaması** ve 168h zirveden
+**derin düşüş**. (127 sayısı kanıt değil — ~240 denemede beklenen sayı.)
+
+**Aşama 3 — bağımsız küme (geniş-59, S1 filtre tasarımında kullanılmadı):**
+ilk 12 adayın **12'si de** aynı ölçütü geçti. Ek H'deki "bağımsız kümede
+çöküş" deseni burada **görülmedi** — bu yüzden test atışı hak edildi.
+
+**Aşama 4-5 — sağlamlık:** RSI≤30 · vol_z≥1.5 üç alt dönemde de pozitif
+(2024H2 %61/+189bp, 2025H1 %65/+183bp, 2025H2 %59/+99bp); sinyallerin %91'i
+mevcut konfigin üretmediği yeni sinyaller, %43'ü zaten S4 koşulunu taşıyor.
+
+**Aşama 6 — TEST 2026H1 (tek atış, konfig önceden donduruldu):**
+
+| Kurulum (tüm 89) | sin/ay | isabet | medyan | edge | p |
+|---|---|---|---|---|---|
+| KARAR: RSI≤30 · vol_z≥1.5 | 0.67 | %56 | +51bp | 0.228 | 0.000 |
+| MEVCUT: RSI≤22.5 | 0.45 | %60 | +82bp | 0.375 | 0.000 |
+
+Toplam beklenti (sinyal/ay × medyan): aday 34 vs mevcut 37 — **daha çok
+sinyal, toplamda daha az getiri.**
+
+**Ayrıştırma (aynı atışın alt kümesi) — kararı belirleyen bulgu:**
+
+| | train edge | test edge | test medyan |
+|---|---|---|---|
+| Yeni bant 22.5<RSI≤30, **filtresiz** | **−0.044** (p=0.99) | **+0.186** (p=0.000) | +49bp |
+| Yeni bant + **vol_z≥1.5** | **+0.196** (p=0.000) | **+0.188** (p=0.001) | +36bp |
+| Mevcut S1 (RSI≤22.5) | +0.199 | **+0.474** | +100bp |
+
+**Karar: UYGULANMADI.** İki bağımsız sebep:
+1. **Filtre test'te hiçbir şey katmıyor.** Train'de değersiz bir bandı
+   (edge −0.044) S1 seviyesine çıkarıyordu (+0.196); test'te filtreli ve
+   filtresiz edge aynı (0.188 vs 0.186) ve filtreli medyan daha **düşük**
+   (36 vs 49bp). Yani "güçlendirici metrik" iddiası OOS'ta doğrulanmadı —
+   train'deki gücü aşırı uydurmaydı.
+2. **Gevşetilmiş bandın kendisi dönemler arası işaret değiştiriyor**
+   (train −0.044 → test +0.186). Bir dönemde negatif, diğerinde pozitif olan
+   şey edge değil rejim şansıdır.
+
+Mevcut RSI≤22.5 test'te her ölçütte üstün kaldı (edge 0.474, %60, +100bp).
+
+**Maliyet:** Bu hipotez ailesi için **test atışı harcandı**. Aynı fikir
+(S1 gevşetme + bar-bazlı teyit metriği) yeniden test EDİLEMEZ; yeni bir veri
+dönemi birikmeden bu kapıya dönülmemeli.
+
+**Kayda değer yan bulgu:** Hacim teyidinin train'de bu kadar güçlü, test'te
+bu kadar etkisiz olması, S4'ün (zaten doğrulanmış hacim mekanizması) neden
+sadece *etiket* olarak tutulduğunu destekliyor.
+
+## Ek K — Rejim kırılımı: boğa piyasasında sinyaller ne olur? (2026-08-03)
+
+**Tanımsal analiz** — yeni strateji/eşik ARANMADI, test atışı harcanmadı.
+Mevcut canlı konfigürasyonun rejime göre hem **sıklığı** hem **sonucu**.
+Rejim: BTC kapanışı 200 günlük (4800 saat) SMA'nın üstünde → BOĞA.
+Script: `regime_breakdown.py`, konsol: `results/regime_console.txt`.
+
+**Örneklem gerçekten iki rejim içeriyor:** 24 ayın %55'i boğa (~11.5 ay),
+%45'i ayı (~9.2 ay). Yani aşağıdakiler ekstrapolasyon değil, ölçüm.
+
+| Strateji | Rejim | sinyal/sembol/ay | isabet | medyan | edge |
+|---|---|---|---|---|---|
+| **S1** (24h) | BOĞA | **0.29** | **%67** | **+158bp** | 0.154 |
+| | AYI | **0.53** | %53 | +31bp | 0.157 |
+| **S3** (4h) | BOĞA | **1.63** | **%58** | **+43bp** | 0.359 |
+| | AYI | 1.23 | %47 | **−8bp** | 0.106 |
+| **S2** (72h) | BOĞA | 0.46 | %50 | +10bp | 0.192 |
+| | AYI | 0.75 | %49 | 0bp | 0.172 |
+
+BTC'nin 30 günlük getirisine göre uçlar (küçük N şerhiyle):
+
+| Strateji | BTC 30g > +%10 | BTC 30g < −%10 |
+|---|---|---|
+| S1 | 0.06 sin/ay, %67, **+216bp** (N=24) | 0.72 sin/ay, %58, +79bp |
+| S3 | 1.79 sin/ay, %54, +33bp | 1.21 sin/ay, %54, +32bp |
+| S2 | 0.29 sin/ay, %41, **−162bp** (N=41) | 0.98 sin/ay, %48, −9bp |
+
+**Okunuşu:**
+
+1. **S1 boğada seyrekleşir ama güçlenir.** Sinyal sayısı neredeyse yarıya
+   iner (0.53 → 0.29), isabet %53'ten %67'ye, medyan +31bp'den +158bp'ye
+   çıkar. Güçlü yükselişte (BTC +%10/30g) neredeyse hiç tetiklenmez
+   (0.06 sin/ay ≈ sembol başına 16 ayda bir) ama tetiklendiğinde medyan
+   +216bp. Mekanik olarak beklenen: S1 bir kapitülasyon sinyali; her şey
+   yükselirken derin aşırı-satım nadirdir, olduğunda da hızlı toparlar.
+2. **S3 boğada hem çoğalır hem işe yarar; ayıda zarar eder.** Boğa medyanı
+   +43bp, ayı medyanı **−8bp** (yani ~12bp maliyetten sonra kayıp).
+   S3'ün genel zayıflığı (Ek H: test medyanı 0bp) bu iki rejimin
+   ortalamasıymış.
+3. **S2 güçlü yükselişte aktif olarak zararlı** (%41 isabet, −162bp, N=41):
+   ralli sırasında negatif funding "sıkışma adayı" değil, çoktan sıkışmış
+   pozisyonun kalıntısı oluyor.
+4. **Toplam bildirim hacmi rejimle pek değişmiyor, KARIŞIM değişiyor:**
+   çekirdek-30'da boğa ≈ 0.29 (S1) + 1.63 (S3) ≈ 1.9; ayı ≈ 0.53 + 1.23 ≈
+   1.8 sinyal/sembol/ay. Boğada S3 ağırlıklı, ayıda S1 ağırlıklı bir akış.
+
+**Bu bir kural DEĞİLDİR.** "Ayıda S3'ü kapat / boğada S1'i gevşet" gibi bir
+rejim anahtarı, Ek C'de (Kimi-S6) zaten reddedilmiş bir fikrin yeniden
+denenmesi olur ve YENİ bir test atışı gerektirir — Ek J ile S1 ailesinin
+atışı harcandığı için şu an mümkün değil. Ayrıca rejim etiketi gerçek zamanda
+gecikmelidir (200g SMA geç döner). Ayı piyasasında S3 gürültüsünden rahatsız
+olunursa **eşik değiştirmeyen** mevcut çözüm geçerli: `NOTIFY_MIN_CONFIDENCE=
+YUKSEK` (Ek H önerisi) S3 push'unu susturur, kayıt devam eder.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip
