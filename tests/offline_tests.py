@@ -941,6 +941,39 @@ def test_observation_channel(tmpdir):
         finally:
             bot.SIGNAL_LOG, bot.PERF_CACHE_FILE = old_log, old_cache
 
+        # gozlem evreni state'te KALICI olmali: --once (bulut, 5dk'da bir)
+        # her turda fetch_universe()'u tekrar cagirirsa gunde ~864 agir
+        # API cagrisi olur ve paylasimli IP yasaklanir.
+        old_state, old_syms, old_ref = (bot.STATE_FILE, bot.OBSERVE_SYMBOLS,
+                                        bot._last_observe_refresh)
+        try:
+            bot.STATE_FILE = Path(tmpdir) / ".observe_state.json"
+            bot.OBSERVE_SYMBOLS = ["ZZZFAKEUSDT", "QQQFAKEUSDT"]
+            bot._last_observe_refresh = 1234567.0
+            bot.ScanState().save()
+            bot.OBSERVE_SYMBOLS, bot._last_observe_refresh = [], 0.0
+            bot.ScanState.load()
+            assert bot.OBSERVE_SYMBOLS == ["ZZZFAKEUSDT", "QQQFAKEUSDT"], \
+                bot.OBSERVE_SYMBOLS
+            assert bot._last_observe_refresh == 1234567.0
+            # taze liste varken yenileme AGIR cagriyi YAPMAMALI
+            called = {"n": 0}
+            orig_fetch = bot.fetch_observe_universe
+            bot.fetch_observe_universe = lambda: (
+                called.__setitem__("n", called["n"] + 1) or ([], {}))
+            try:
+                bot._last_observe_refresh = bot.time.time()
+                bot.refresh_observe_universe_if_due()
+                assert called["n"] == 0, "taze listede yeniden indirme olmamali"
+                bot._last_observe_refresh = 0.0
+                bot.refresh_observe_universe_if_due()
+                assert called["n"] == 1, "bayat listede yenilenmeli"
+            finally:
+                bot.fetch_observe_universe = orig_fetch
+        finally:
+            (bot.STATE_FILE, bot.OBSERVE_SYMBOLS,
+             bot._last_observe_refresh) = old_state, old_syms, old_ref
+
         # qc_export: gozlem kayitlari arastirma paketine SIZMAMALI
         events, rejected = qc._parse_events(
             [json.dumps({"strategy": "GOZLEM-S1", "symbol": "ZZZFAKEUSDT",

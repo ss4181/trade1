@@ -1105,6 +1105,12 @@ class ScanState:
                 "last_fire": {f"{k[0]}|{k[1]}": v
                               for k, v in self.last_fire.items()},
                 "recent": list(RECENT_SIGNALS),
+                # Gozlem evrenini de tasi: --once modu (bulut, 5dk'da bir)
+                # her calismada sifirdan baslar; kalici olmazsa her turda
+                # fetch_universe() 3 AGIR cagri yapar (biri tum spot
+                # sembollerin 24s ticker'i, agirlik 80) — gunde ~864 kez.
+                "observe_symbols": list(OBSERVE_SYMBOLS),
+                "observe_refreshed_at": _last_observe_refresh,
             }
             tmp = STATE_FILE.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False),
@@ -1115,11 +1121,20 @@ class ScanState:
 
     @classmethod
     def load(cls) -> "ScanState":
+        global OBSERVE_SYMBOLS, _last_observe_refresh
         st = cls()
         if not STATE_FILE.exists():
             return st
         try:
             data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            saved = data.get("observe_symbols")
+            if isinstance(saved, list) and saved:
+                OBSERVE_SYMBOLS = [str(s) for s in saved]
+                try:
+                    _last_observe_refresh = float(
+                        data.get("observe_refreshed_at") or 0.0)
+                except (TypeError, ValueError):
+                    _last_observe_refresh = 0.0
             for k, v in data.get("prev_cond", {}).items():
                 a, _, b = k.partition("|")
                 st.prev_cond[(a, b)] = bool(v)
@@ -2028,7 +2043,9 @@ def _run_forever_locked(once: bool = False,
     LAST_LOOP_HEARTBEAT_AT = datetime.now(timezone.utc).isoformat()
     refresh_universe_if_due(force=True)     # otomatik moddaysa evreni kur
     refresh_perp_map_if_due(force=True)     # statik modda da kontrat esle
-    refresh_observe_universe_if_due(force=True)   # dogrulanmamis gozlem listesi
+    # force=True DEGIL: liste state'ten yuklendiyse yasina bakilir. --once
+    # (bulut, 5dk) her turda yeniden indirmesin diye kritik.
+    refresh_observe_universe_if_due()
     telegram_preflight()                    # token gecerli mi? (mesaj atmaz)
     # Telegram komut dinleyicisini yalnizca surekli modda baslat (--once'ta degil)
     if ENABLE_TELEGRAM and TELEGRAM_COMMANDS and not once:
