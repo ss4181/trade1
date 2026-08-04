@@ -1,0 +1,12 @@
+# OPSIYONEL sunucu katmani: FastAPI + uvicorn.
+# Yalnizca mobil uygulamanin uc noktalari (/signals/latest, /health, /ping)
+# icin gerekir. Bot bunlar olmadan da TAM calisir (tarama, Telegram komutlari,
+# bildirimler, LAN panosu) — bkz. requirements.txt.
+#
+# uvicorn[standard] KULLANMA: extras icindeki watchfiles (Rust/maturin),
+# uvloop ve httptools derleme ister; Android/aarch64 icin hazir wheel yok ve
+# rustup bu hedefi desteklemiyor. Repoda bu paketlerin hicbiri kullanilmiyor
+# (--reload yalnizca bir yorum satirinda gecer).
+-r requirements.txt
+fastapi>=0.110,<1.0
+uvicorn>=0.29,<1.0

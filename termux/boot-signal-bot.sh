@@ -38,38 +38,63 @@ log() {
 # Termux "pkg upgrade" Python'u yukseltince site-packages surum klasoruyle
 # birlikte gorunmez olur ve TUM pip paketleri kaybolur. 2026-08-01'de tam
 # bunu yasadik: uvicorn kayboldu, sarmalayici 3 GUN boyunca 15 saniyede bir
-# ayni hatayla yeniden denedi ve kimse fark etmedi. Bu yuzden baslatmadan
-# once bagimliliklar dogrulanir, eksikse BIR KEZ kurulmaya calisilir.
-ensure_deps() {
-  if python -c 'import uvicorn, fastapi, requests' 2>/dev/null; then
+# ayni hatayla yeniden denedi ve kimse fark etmedi.
+#
+# CEKIRDEK bagimlilik yalnizca `requests` (saf Python, her zaman kurulabilir).
+# Bot bununla TAM calisir: tarama, Telegram komutlari, bildirimler, LAN panosu.
+ensure_core_deps() {
+  if python -c 'import requests' 2>/dev/null; then
     return 0
   fi
-  log "bagimliliklar eksik -> pip install -r requirements.txt deneniyor"
+  log "cekirdek bagimlilik eksik -> pip install -r requirements.txt deneniyor"
   python -m pip install -r requirements.txt >> "$BOT_LOG" 2>&1
-  if python -c 'import uvicorn, fastapi, requests' 2>/dev/null; then
-    log "bagimliliklar onarildi"
+  if python -c 'import requests' 2>/dev/null; then
+    log "cekirdek bagimliliklar onarildi"
     return 0
   fi
-  log "BAGIMLILIKLAR HALA EKSIK — elle calistir: pip install -r requirements.txt"
+  log "CEKIRDEK BAGIMLILIK YOK — elle: pip install -r requirements.txt"
   return 1
+}
+
+# FastAPI/uvicorn OPSIYONEL: yalnizca mobil uygulamanin uc noktalari icin.
+# Android'de kurulamayabilir (2026-08-04: Python 3.14'te uvicorn[standard]
+# icindeki Rust tabanli watchfiles derlenemedi). Kurulamiyorsa bot dogrudan
+# signal_bot.py ile kosar — mobil uc nokta gider, geri kalan her sey calisir.
+have_server_stack() {
+  python -c 'import fastapi, uvicorn' 2>/dev/null
 }
 
 # Uvicorn, hem tarama liderini hem mobil /signals/latest API'sini tek proseste
 # baslatir. Beklenmeyen (sifirdan farkli) cikista yeniden kalkar: ilk
 # denemelerde 15sn, israrli basarisizlikta 5dk.
+# Sunucu katmanini BIR KEZ kurmayi dene (dongude tekrar tekrar deneme).
+if ensure_core_deps && ! have_server_stack; then
+  log "fastapi/uvicorn yok -> requirements-server.txt bir kez deneniyor"
+  python -m pip install -r requirements-server.txt >> "$BOT_LOG" 2>&1
+  if have_server_stack; then
+    log "sunucu katmani kuruldu (mobil uc nokta aktif)"
+  else
+    log "sunucu katmani KURULAMADI -> signal_bot.py dogrudan kosacak; mobil uc nokta devre disi, Telegram komutlari ve LAN panosu CALISIR"
+  fi
+fi
+
 fails=0
 while [ ! -f "$STOP_FILE" ]; do
   rotate_log
   started="$(date +%s)"
-  if ensure_deps; then
-    python -m uvicorn server:app --host 0.0.0.0 --port 8000 \
-      >> "$BOT_LOG" 2>&1 &
+  if ! ensure_core_deps; then
+    code=127                      # cekirdek yok: baslatmayi hic deneme
+  else
+    if have_server_stack; then
+      python -m uvicorn server:app --host 0.0.0.0 --port 8000 \
+        >> "$BOT_LOG" 2>&1 &
+    else
+      python signal_bot.py >> "$BOT_LOG" 2>&1 &
+    fi
     child_pid=$!
     wait "$child_pid"
     code=$?
     child_pid=""
-  else
-    code=127                      # bagimlilik yok: baslatmayi hic deneme
   fi
   # Uzun sure ayakta kaldiysa bu "israrli hata" degil, tekil bir cokme:
   # sayaci sifirla ki hizli yeniden baslatma hakkini geri kazansin.

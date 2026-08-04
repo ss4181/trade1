@@ -70,9 +70,12 @@ Bittiğinde servisin bir adresi olur: `https://signal-bot-XXXX.onrender.com`.
 Tarayıcıda aç — bir durum sayfası ve "Tarama thread'i canlı: evet" görmelisin.
 
 > **Alternatif (Blueprint çıkmazsa):** New + → **Web Service** → repo'yu seç →
-> Runtime: **Python 3** → Build Command: `pip install -r requirements.txt` →
-> Start Command: `uvicorn server:app --host 0.0.0.0 --port $PORT` → Plan:
+> Runtime: **Python 3** → Build Command: `pip install -r requirements-server.txt`
+> → Start Command: `uvicorn server:app --host 0.0.0.0 --port $PORT` → Plan:
 > **Free** → ortam değişkenlerini **Environment** sekmesinden ekle.
+>
+> Not: `requirements.txt` yalnızca çekirdeği (saf Python) kurar; FastAPI/uvicorn
+> gerektiren bu web servisi için `requirements-server.txt` gerekir.
 
 ## Adım 4 — Ortam değişkenleri (Render > Environment)
 

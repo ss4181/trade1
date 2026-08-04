@@ -1,6 +1,11 @@
-# signal_bot 7/24 web servisi bagimliliklari.
-# Sadece bulut deploy + bildirim icin; arastirma (research/) bagimliliklari ayri.
+# signal_bot CEKIRDEK bagimliliklari — tarama, Telegram komutlari, bildirimler
+# ve LAN panosu icin bunlar YETER. Hepsi saf Python: Termux/Android dahil her
+# yerde derleyici gerektirmeden kurulur.
+#
+# Web panosu stdlib http.server ile calisir; FastAPI/uvicorn SADECE mobil
+# uygulamanin /signals/latest uc noktasi icindir -> requirements-server.txt.
+# (2026-08-04: Termux Python 3.14'e yukselince uvicorn[standard] icindeki
+#  Rust ile derlenen watchfiles kurulamadi ve bot 3 gun ayaga kalkamadi.
+#  Cekirdek artik o zincire bagimli DEGIL.)
 requests>=2.31,<3.0
-fastapi>=0.110,<1.0
-uvicorn[standard]>=0.29,<1.0
 resend>=2.0,<3.0
