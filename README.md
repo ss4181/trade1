@@ -44,11 +44,18 @@ Bu mod, yeni/pump-dump coinleri içeri alabildiği ve canlı takipte ciddi evren
 kontaminasyonu ürettiği için varsayılan değildir. Ayrıntılı uyarılar ve filtreler
 `.env.example` içindedir.
 
-## Gözlem kanalı (doğrulanmamış — ayrı kova)
+## Gözlem kanalı — S5 / S6 (doğrulanmamış, ayrı kova)
 
-2026-08-03'te eklendi. Doğrulanmış 89 coinin **dışında**, perp hacmine göre en
-likit ilk `OBSERVE_TOP_N` (varsayılan 20) coinde **yalnız S1 ailesi** çalışır.
-Sinyaller `GOZLEM-S1` / `GOZLEM-S1+S4` adıyla üretilir.
+Doğrulanmış 89 coinin **dışında** kalan dinamik evren sembollerinde (perp/spot
+likidite süzgecinden geçenler) **yalnız S1 ailesi** çalışır:
+
+| Ad | Karşılığı | Ufuk |
+|---|---|---|
+| **S5** | dinamik evrende S1+S4 (hacimli kapitülasyon) | 24s |
+| **S6** | dinamik evrende sade S1 | 24s |
+
+Ölçülen hacim (2026-08, 28 evren-dışı sembol, son 30 gün): S5 ~0.1/gün,
+S6 ~0.4/gün. Karşılaştırma için doğrulanmış akış ~1.8/gün.
 
 | | Doğrulanmış yol | Gözlem kanalı |
 |---|---|---|

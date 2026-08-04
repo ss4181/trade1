@@ -165,9 +165,20 @@ UNIVERSE_REFRESH_HOURS = _env("UNIVERSE_REFRESH_HOURS", 24)
 # (sinyaller yine loglanir ve olculur, sadece Telegram/email'e gitmez).
 OBSERVE_ENABLED = _env("OBSERVE_ENABLED", True, cast=_flag)
 OBSERVE_PUSH = _env("OBSERVE_PUSH", True, cast=_flag)
-OBSERVE_TOP_N = _env("OBSERVE_TOP_N", 20)
+# 0 = sinir yok: fetch_universe()'un likidite suzgecinden gecen TUM evren-disi
+# semboller (dinamik evren). Pozitif sayi verirsen hacim sirasina gore ilk N.
+OBSERVE_TOP_N = _env("OBSERVE_TOP_N", 0)
 OBSERVE_MAX_PUSH_PER_SCAN = _env("OBSERVE_MAX_PUSH_PER_SCAN", 3)
-OBSERVE_PREFIX = "GOZLEM-"
+# Gozlem sinyalleri AYRI strateji adlariyla yayinlanir; boylece /performans ve
+# pano onlari dogrulanmis S1/S1+S4 ile ayni kovaya KOYAMAZ.
+#   S5 = dinamik evrende S1+S4 (hacimli kapitulasyon)
+#   S6 = dinamik evrende sade S1
+# Izolasyonu saglayan sey ISIM DEGIL, kayittaki `observe: true` bayragidir —
+# qc_export ve performans filtreleri onu okur. Isimler yalnizca kullanicinin
+# bildirimleri ayirt edebilmesi icin.
+OBSERVE_STRATEGY_NAMES = {"S1+S4": "S5", "S1": "S6"}
+OBSERVE_STRATEGIES = set(OBSERVE_STRATEGY_NAMES.values())
+OBSERVE_BASE_OF = {v: k for k, v in OBSERVE_STRATEGY_NAMES.items()}
 
 # 5dk tarama: sinyaller 1h bar KAPANISINDA dogar — daha sik tarama sinyal
 # setini DEGISTIRMEZ (kenar-tetikleme ayni kosulu tekrar bildirmez); kazanci
@@ -783,8 +794,8 @@ STRATEGY_CONF = {
     # Gozlem kanali: kademe yok cunku bu coinlerde HIC backtest yapilmadi.
     # CONF_RANK -1 -> her NOTIFY_MIN_CONFIDENCE degerinin altinda kalir;
     # push'u ayrica OBSERVE_PUSH kontrol eder (bkz. _delivery_record).
-    "GOZLEM-S1+S4": ("GOZLEM", "DOGRULANMAMIS coin — hicbir backtest yok"),
-    "GOZLEM-S1":    ("GOZLEM", "DOGRULANMAMIS coin — hicbir backtest yok"),
+    "S5": ("GOZLEM", "dinamik evren S1+S4 — DOGRULANMAMIS coin, backtest yok"),
+    "S6": ("GOZLEM", "dinamik evren S1 — DOGRULANMAMIS coin, backtest yok"),
 }
 NOTIFY_MIN_CONFIDENCE = _env("NOTIFY_MIN_CONFIDENCE", "ORTA").strip().upper()
 
@@ -1053,7 +1064,9 @@ def fetch_observe_universe() -> tuple[list[str], dict[str, str]]:
     tek farki sonucu evren disiyla sinirlayip N ile kesmesi."""
     syms, pmap = fetch_universe()
     configured = set(SYMBOLS)
-    picked = [s for s in syms if s not in configured][:max(0, OBSERVE_TOP_N)]
+    picked = [s for s in syms if s not in configured]
+    if OBSERVE_TOP_N > 0:
+        picked = picked[:OBSERVE_TOP_N]
     return picked, {s: pmap[s] for s in picked if s in pmap}
 
 
@@ -1223,9 +1236,9 @@ def scan_symbol(symbol: str, state: ScanState,
         recent_spike = any(
             (not math.isnan(z)) and z >= VOLUME_ZSCORE_THRESHOLD
             for z in zs[max(0, i - CONFLUENCE_LOOKBACK_HOURS):i + 1])
+        _base = "S1" + ("+S4" if recent_spike else "")
         signals.append({
-            "strategy": (OBSERVE_PREFIX if observe else "")
-                        + "S1" + ("+S4" if recent_spike else ""),
+            "strategy": OBSERVE_STRATEGY_NAMES[_base] if observe else _base,
             "symbol": symbol, "direction": "LONG",
             "signal_market": "spot", "performance_market": "spot",
             "strength": "STRONG" if recent_spike else "NORMAL",
@@ -1380,12 +1393,12 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
 
 
 OBSERVE_WARNING = (
-    "GOZLEM KANALI — DOGRULANMAMIS. Bu sembol botun 89-coin dogrulanmis "
-    "evreninde DEGIL; bu coinde hicbir backtest yapilmadi. Referans "
-    "seviyeleri bilerek gosterilmiyor (S1'in +0.93% medyani cekirdek-30'da "
-    "olculdu, burada gecerli degil). Ek F'de benzer dogrulanmamis coinlerde "
+    "S5/S6 = DINAMIK EVREN, DOGRULANMAMIS. Bu sembol botun 89-coin "
+    "dogrulanmis evreninde DEGIL; bu coinde hicbir backtest yapilmadi. "
+    "Referans seviyeleri bilerek gosterilmiyor (S1'in +0.93% medyani "
+    "cekirdek-30'da olculdu, burada gecerli degil). Ek F'de ayni tur evrende "
     "canli S1 medyani -22% cikmisti. Bu bildirim, kanali OLCEBILMEK icin "
-    "uretiliyor; kademe atanmadi."
+    "uretiliyor; guven kademesi atanmadi."
 )
 
 
@@ -2126,7 +2139,7 @@ def _run_forever_locked(once: bool = False,
 
 def _priority(sig: dict) -> int:
     return {"S1+S4": 0, "S1": 1, "S3": 2, "S2": 3,
-            "GOZLEM-S1+S4": 8, "GOZLEM-S1": 9}.get(sig["strategy"], 9)
+            "S5": 8, "S6": 9}.get(sig["strategy"], 9)
 
 
 def collect_active_setups() -> tuple[list[dict], int]:
@@ -2423,11 +2436,11 @@ def _format_performance(perf: dict) -> str:
                f"ort {d['mean_pct']:+.2f}% · {market}")
         # Gozlem kovasi AYRI blokta: dogrulanmis satirlarla ayni listede
         # gorunmesi "ayni statude" izlenimi verirdi.
-        (observe_lines if s.startswith(OBSERVE_PREFIX) else lines).append(row)
+        (observe_lines if s in OBSERVE_STRATEGIES else lines).append(row)
     if observe_lines:
-        lines.append("\n<b>Gozlem kanali</b> (DOGRULANMAMIS coinler — "
-                     "karsilastirilacak backtest YOK; karar icin degil, "
-                     "kanali olcmek icin):")
+        lines.append("\n<b>Gozlem kanali — S5/S6</b> (dinamik evren, "
+                     "DOGRULANMAMIS coinler; karsilastirilacak backtest YOK — "
+                     "karar icin degil, kanali olcmek icin):")
         lines += observe_lines
     if perf["fetch_errors"]:
         lines.append(f"({perf['fetch_errors']} sinyal veri hatasindan olculemedi)")
@@ -2516,9 +2529,9 @@ def _signal_why(sig: dict) -> str:
     """Bu sinyalin TAM OLARAK hangi kosullarla tetiklendigini duz Turkce anlatir
     (panoda satira tiklayinca acilir)."""
     strat = sig.get("strategy", "")
-    # Gozlem sinyali ayni S1 mantigiyle uretilir; oneki soyup ayni aciklamayi
-    # ver, ama basina DOGRULANMAMIS uyarisini koy.
-    base = strat.removeprefix(OBSERVE_PREFIX).split("+")[0]
+    # Gozlem sinyali (S5/S6) ayni S1 mantigiyle uretilir; taban stratejiye
+    # cevirip ayni aciklamayi ver, ama basina DOGRULANMAMIS uyarisini koy.
+    base = OBSERVE_BASE_OF.get(strat, strat).split("+")[0]
     p = list(_observe_lines(sig))
     if base == "S1":
         rsi = sig.get("rsi")

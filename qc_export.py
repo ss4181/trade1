@@ -25,7 +25,9 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 SCHEMA_VERSION = "1.0"
 VALID_STRATEGIES = {"S1", "S1+S4", "S2", "S3"}
-# signal_bot.OBSERVE_PREFIX ile ayni olmali (gozlem kanali disariya cikmaz).
+# signal_bot.OBSERVE_STRATEGIES ile ayni olmali. Gozlem kanali (dinamik evren)
+# arastirma paketine ASLA girmez; eski "GOZLEM-" onekli kayitlar da elenir.
+OBSERVE_STRATEGIES = {"S5", "S6"}
 OBSERVE_PREFIX = "GOZLEM-"
 EXPECTED_HORIZONS = {"S1": 24, "S1+S4": 24, "S2": 72, "S3": 4}
 
@@ -237,10 +239,14 @@ def _parse_events(
         if strategy.startswith("TEST"):
             _reject(rejected, number, "test_strategy", raw, record)
             continue
-        # Gozlem kanali (GOZLEM-*) arastirma paketine ASLA girmez: bu coinlerde
-        # backtest yok, QC capraz dogrulamasinin karsilastiracagi bir sey de.
+        # Gozlem kanali (S5/S6, eskiden GOZLEM-*) arastirma paketine ASLA
+        # girmez: bu coinlerde backtest yok, QC capraz dogrulamasinin
+        # karsilastiracagi bir sey de. Uc ayri kapi bilerek: isim, eski onek ve
+        # kayittaki `observe` bayragi — biri atlanirsa digerleri tutar.
         # "invalid_strategy" yerine ayri sebep -> denetimde sayilari gorunur.
-        if strategy.startswith(OBSERVE_PREFIX) or record.get("observe"):
+        if (strategy in OBSERVE_STRATEGIES
+                or strategy.startswith(OBSERVE_PREFIX)
+                or record.get("observe")):
             _reject(rejected, number, "observation_channel", raw, record)
             continue
         if strategy not in VALID_STRATEGIES:

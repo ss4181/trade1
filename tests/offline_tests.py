@@ -868,9 +868,10 @@ def test_observation_channel(tmpdir):
                                snapshot=True, observe=True)
         assert called["funding"] == 0, "gozlem kanalinda funding cekilmemeli"
         strats = {s["strategy"] for s in sigs}
-        assert strats and all(s.startswith(bot.OBSERVE_PREFIX) for s in strats), \
-            f"tum gozlem sinyalleri GOZLEM- onekli olmali: {strats}"
-        assert not any(s in strats for s in ("S1", "S1+S4", "S2", "S3"))
+        assert strats and strats <= bot.OBSERVE_STRATEGIES, \
+            f"gozlem sinyalleri yalniz S5/S6 olmali: {strats}"
+        # dogrulanmis adlarla ASLA karismamali (perf kovasi ayri kalsin)
+        assert not (strats & {"S1", "S1+S4", "S2", "S3"})
         sig = sigs[0]
         assert sig["confidence"] == "GOZLEM" and sig["observe"] is True
         assert sig["universe"] == "observe"
@@ -879,7 +880,8 @@ def test_observation_channel(tmpdir):
         assert bot._observe_lines(sig) and "DOGRULANMAMIS" in bot._observe_lines(sig)[0]
         # pano "neden geldi": uyari basta, S1 aciklamasi yine de gelmeli
         why = bot._signal_why(sig)
-        assert why.startswith("GOZLEM KANALI") and "RSI(14)" in why, why
+        assert why.startswith("S5/S6") and "DOGRULANMAMIS" in why, why
+        assert "RSI(14)" in why, "S1 aciklamasi da gelmeli: " + why
         # GOZLEM kademesi her push esiginin altinda
         assert bot.CONF_RANK["GOZLEM"] < min(
             v for k, v in bot.CONF_RANK.items() if k != "GOZLEM")
@@ -903,8 +905,8 @@ def test_observation_channel(tmpdir):
                 "S1": {"n": 5, "median_pct": 1.1, "mean_pct": 1.5,
                        "winrate_pct": 60, "bt_median_pct": 0.93,
                        "bt_winrate_pct": 62},
-                "GOZLEM-S1": {"n": 3, "median_pct": -9.0, "mean_pct": -8.0,
-                              "winrate_pct": 33}}})
+                "S6": {"n": 3, "median_pct": -9.0, "mean_pct": -8.0,
+                       "winrate_pct": 33}}})
         assert "Gozlem kanali" in txt and "DOGRULANMAMIS" in txt
         assert txt.index("<b>S1</b>") < txt.index("Gozlem kanali"), \
             "gozlem satirlari dogrulanmis bloktan SONRA gelmeli"
@@ -921,7 +923,7 @@ def test_observation_channel(tmpdir):
             bot.SIGNAL_LOG = str(log)
             bot.PERF_CACHE_FILE = Path(tmpdir) / ".observe_cache.json"
             rows = []
-            for strat, sym, obs in (("GOZLEM-S1", "ZZZFAKEUSDT", True),
+            for strat, sym, obs in (("S6", "ZZZFAKEUSDT", True),
                                     ("S1", "QQQFAKEUSDT", False)):
                 r = {"strategy": strat, "symbol": sym, "direction": "LONG",
                      "bar_time": bar.isoformat(), "horizon_hours": 24,
@@ -934,7 +936,7 @@ def test_observation_channel(tmpdir):
                 {"open": 100.0, "close": 100.0, "high": 100.0, "low": 100.0}
                 for _ in range(limit)]
             perf = bot.realized_performance()
-            assert "GOZLEM-S1" in perf["strategies"], perf
+            assert "S6" in perf["strategies"], perf
             assert "S1" not in perf["strategies"], \
                 "evren disi dogrulanmis kayit hala karantinada olmali"
             assert perf["excluded_out_of_universe"] == 1
@@ -975,15 +977,22 @@ def test_observation_channel(tmpdir):
              bot._last_observe_refresh) = old_state, old_syms, old_ref
 
         # qc_export: gozlem kayitlari arastirma paketine SIZMAMALI
-        events, rejected = qc._parse_events(
-            [json.dumps({"strategy": "GOZLEM-S1", "symbol": "ZZZFAKEUSDT",
-                         "direction": "LONG", "observe": True, "price": 1.0,
-                         "bar_time": bar.isoformat(), "horizon_hours": 24})],
-            configured_symbols={"ZZZFAKEUSDT"}, core_symbols=set(),
-            extended_symbols=set(), config_version="t",
-            confidence_rank=bot.CONF_RANK, min_confidence="ORTA")
-        assert events == [] and len(rejected) == 1
-        assert rejected[0]["rejection_reason"] == "observation_channel", rejected
+        # Uc kapinin her biri tek basina tutmali: isim, eski onek, observe
+        # bayragi. Biri unutulursa gozlem kaydi arastirma paketine sizar.
+        for rec in ({"strategy": "S6", "observe": True},
+                    {"strategy": "S5"},                 # yalniz isim
+                    {"strategy": "GOZLEM-S1"},          # eski kayitlar
+                    {"strategy": "S1", "observe": True}):  # yalniz bayrak
+            events, rejected = qc._parse_events(
+                [json.dumps({**rec, "symbol": "ZZZFAKEUSDT",
+                             "direction": "LONG", "price": 1.0,
+                             "bar_time": bar.isoformat(),
+                             "horizon_hours": 24})],
+                configured_symbols={"ZZZFAKEUSDT"}, core_symbols=set(),
+                extended_symbols=set(), config_version="t",
+                confidence_rank=bot.CONF_RANK, min_confidence="ORTA")
+            assert events == [] and len(rejected) == 1, rec
+            assert rejected[0]["rejection_reason"] == "observation_channel", rec
     finally:
         bot.bullish_divergence = orig_div
         bot.OBSERVE_PUSH = orig_push
