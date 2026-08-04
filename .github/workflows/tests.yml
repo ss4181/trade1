@@ -31,12 +31,15 @@ jobs:
             "numpy>=1.26,<3" "pandas>=2.2,<3"
 
       - name: Python sözdizimi
-        run: python -m py_compile signal_bot.py server.py research/*.py tests/*.py
+        run: |
+          python -m py_compile signal_bot.py server.py watchdog.py \
+            research/*.py tests/*.py
 
       - name: Bot çevrimdışı testleri
         run: |
           python -B tests/offline_tests.py
           python -B tests/test_cloud_report.py
+          python -B tests/test_watchdog.py
 
       - name: Sunucu readiness testleri
         run: python -B tests/server_tests.py
