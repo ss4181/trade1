@@ -213,20 +213,23 @@ Tablet yeniden başladığında bot kendiliğinden kalksın:
 2. Termux'ta:
    ```bash
    mkdir -p ~/.termux/boot
-   chmod +x ~/trade1/termux/boot-signal-bot.sh
    ln -sfn ~/trade1/termux/boot-signal-bot.sh \
      ~/.termux/boot/boot-signal-bot.sh
-   chmod +x ~/.termux/boot/boot-signal-bot.sh
    ```
    Symlink kullanıldığı için sonraki `git pull`, Boot betiğinin güncel
    sürümünü otomatik kullanır; yeniden kopyalama gerekmez.
+   `chmod +x` **gerekmez** — betik depoda çalıştırılabilir (`100755`) olarak
+   kayıtlı. (2026-08-04'e kadar `100644` idi ve dokümanda `chmod +x` yazıyordu;
+   Termux'ta `core.fileMode` açık olduğu için bu chmod *yerel değişiklik* sayılıp
+   `git pull`'u bloke ediyordu, stash'lenince de betik `Exit 126` veriyordu.)
 3. Test: tableti yeniden başlat → 1-2 dk sonra Telegram'dan `/status` at →
    cevap geliyorsa otomatik başlatma çalışıyor. Çıktılar `~/trade1/bot.out.log`
    dosyasına yazılır.
 
 > Boot betiği kuruluyken bot açılışta zaten çalışır. Elle ikinci kopya
-> başlatma; tek-instance kilidi bunu reddeder. Durumu `pgrep -af
-> "uvicorn server:app"` ve `http://127.0.0.1:8000/health` ile kontrol et.
+> başlatma; tek-instance kilidi bunu reddeder. Durumu
+> `pgrep -af "signal_bot.py|uvicorn server:app"` ile kontrol et
+> (FastAPI kuruluysa ayrıca `http://127.0.0.1:8000/health`).
 
 ### Boot servisini güvenli durdur / güncelle / başlat
 
