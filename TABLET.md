@@ -242,7 +242,30 @@ nohup ./termux/boot-signal-bot.sh >/dev/null 2>&1 &
 ```
 
 Temiz kapanış veya stop dosyası wake-lock'u bırakır; gerçek bir çökmede wrapper
-15 saniye sonra yeniden dener.
+yeniden dener (ilk denemelerde 15 sn; 5 ardışık başarısızlıktan sonra 5 dk'ya
+çıkar ve loga `DIKKAT: ... Bot AYAKTA DEGIL` yazar).
+
+### Arıza: `No module named uvicorn` (paketler kayboldu)
+
+**Belirti:** `bot.out.log` aynı satırı sürekli tekrarlar, `pgrep -af "uvicorn
+server:app"` boş döner, Telegram komutları cevapsız kalır (komut dinleyicisi
+uygulamanın içinde çalıştığı için bot ayakta değilse hiçbir komut işlemez).
+
+**Sebep:** Termux'ta `pkg upgrade` Python'u yükseltince site-packages sürüm
+klasörüyle birlikte görünmez olur ve pip ile kurulmuş **tüm** paketler kaybolur.
+2026-08-01'de bu yaşandı; bot 3 gün ayakta değildi. Bulut yedeği arada sinyal
+göndermeye devam ettiği için fark edilmesi gecikti.
+
+**Çözüm:**
+```bash
+cd ~/trade1
+pip install -r requirements.txt
+```
+Sonra yukarıdaki "güvenli durdur / güncelle / başlat" bloğunu çalıştır.
+
+Boot betiği artık bunu kendi başına da denemektedir: her başlatmadan önce
+`uvicorn`/`fastapi`/`requests` import edilebiliyor mu diye bakar, edilemiyorsa
+bir kez `pip install -r requirements.txt` çalıştırır ve sonucu loga yazar.
 
 ## Web panosu (telefondan/bilgisayardan izleme)
 
