@@ -11,6 +11,8 @@ signals.log
 .subscribers.json
 .signal_bot.lock
 .stop-signal-bot
+.server-stack-unavailable
+.watchdog_state.json
 market_archive_*.jsonl
 tmp/
 

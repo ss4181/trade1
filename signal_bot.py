@@ -1124,6 +1124,9 @@ class ScanState:
                 # sembollerin 24s ticker'i, agirlik 80) — gunde ~864 kez.
                 "observe_symbols": list(OBSERVE_SYMBOLS),
                 "observe_refreshed_at": _last_observe_refresh,
+                # Listeyi hangi ayarla urettigimizi de tasi: ayar degisince
+                # 24 saat beklemeden yenilensin (bkz. ScanState.load).
+                "observe_top_n": OBSERVE_TOP_N,
             }
             tmp = STATE_FILE.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False),
@@ -1147,6 +1150,14 @@ class ScanState:
                     _last_observe_refresh = float(
                         data.get("observe_refreshed_at") or 0.0)
                 except (TypeError, ValueError):
+                    _last_observe_refresh = 0.0
+                # Ayar degistiyse onbellek GECERSIZ: aksi halde OBSERVE_TOP_N'i
+                # degistirmek 24 saat boyunca hicbir sey yapmaz ve kullanici
+                # eski evrenle kaldigini fark etmez (2026-08-04'te yasandi).
+                if data.get("observe_top_n") != OBSERVE_TOP_N:
+                    print("gozlem evreni ayari degismis "
+                          f"({data.get('observe_top_n')} -> {OBSERVE_TOP_N}); "
+                          "liste yeniden kurulacak", flush=True)
                     _last_observe_refresh = 0.0
             for k, v in data.get("prev_cond", {}).items():
                 a, _, b = k.partition("|")

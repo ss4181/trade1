@@ -972,6 +972,26 @@ def test_observation_channel(tmpdir):
                 assert called["n"] == 1, "bayat listede yenilenmeli"
             finally:
                 bot.fetch_observe_universe = orig_fetch
+
+            # AYAR degisirse onbellek gecersiz olmali; yoksa OBSERVE_TOP_N'i
+            # degistirmek 24 saat boyunca hicbir sey yapmaz (2026-08-04).
+            old_n = bot.OBSERVE_TOP_N
+            try:
+                bot.OBSERVE_SYMBOLS = ["AUSDT", "BUSDT"]
+                bot._last_observe_refresh = bot.time.time()
+                bot.ScanState().save()
+                bot.OBSERVE_TOP_N = old_n + 7        # ayar degisti
+                bot.ScanState.load()
+                assert bot._last_observe_refresh == 0.0, \
+                    "ayar degisince liste bayat sayilmali"
+                # ayar ayniysa taze kalmali
+                bot._last_observe_refresh = bot.time.time()
+                bot.ScanState().save()
+                bot.ScanState.load()
+                assert bot._last_observe_refresh > 0.0, \
+                    "ayar aynidayken gereksiz yenileme olmamali"
+            finally:
+                bot.OBSERVE_TOP_N = old_n
         finally:
             (bot.STATE_FILE, bot.OBSERVE_SYMBOLS,
              bot._last_observe_refresh) = old_state, old_syms, old_ref

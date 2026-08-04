@@ -67,14 +67,26 @@ have_server_stack() {
 # Uvicorn, hem tarama liderini hem mobil /signals/latest API'sini tek proseste
 # baslatir. Beklenmeyen (sifirdan farkli) cikista yeniden kalkar: ilk
 # denemelerde 15sn, israrli basarisizlikta 5dk.
-# Sunucu katmanini BIR KEZ kurmayi dene (dongude tekrar tekrar deneme).
+# Sunucu katmanini kurmayi dene. Android'de pydantic-core/watchfiles Rust ile
+# derlendigi ve wheel olmadigi icin bu genelde BASARISIZ olur ve dakikalar
+# surer. Her yeniden baslatmada tekrarlamamak icin sonuc isaretlenir; isaret
+# requirements-server.txt'in imzasini tasir, dosya degisirse yeniden denenir.
+SERVER_FAIL_MARK=".server-stack-unavailable"
 if ensure_core_deps && ! have_server_stack; then
-  log "fastapi/uvicorn yok -> requirements-server.txt bir kez deneniyor"
-  python -m pip install -r requirements-server.txt >> "$BOT_LOG" 2>&1
-  if have_server_stack; then
-    log "sunucu katmani kuruldu (mobil uc nokta aktif)"
+  want="$(cksum requirements-server.txt 2>/dev/null || echo none)"
+  seen="$(cat "$SERVER_FAIL_MARK" 2>/dev/null || echo "")"
+  if [ "$want" = "$seen" ]; then
+    log "sunucu katmani daha once kurulamadi (isaret: $SERVER_FAIL_MARK) -> kurulum atlandi, signal_bot.py dogrudan kosacak"
   else
-    log "sunucu katmani KURULAMADI -> signal_bot.py dogrudan kosacak; mobil uc nokta devre disi, Telegram komutlari ve LAN panosu CALISIR"
+    log "fastapi/uvicorn yok -> requirements-server.txt deneniyor"
+    python -m pip install -r requirements-server.txt >> "$BOT_LOG" 2>&1
+    if have_server_stack; then
+      log "sunucu katmani kuruldu (mobil uc nokta aktif)"
+      rm -f "$SERVER_FAIL_MARK"
+    else
+      printf '%s' "$want" > "$SERVER_FAIL_MARK"
+      log "sunucu katmani KURULAMADI -> signal_bot.py dogrudan kosacak; mobil uc nokta devre disi, Telegram komutlari ve LAN panosu CALISIR. Yeniden denemek icin: rm $SERVER_FAIL_MARK"
+    fi
   fi
 fi
 
