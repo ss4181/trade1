@@ -1,5 +1,8 @@
 name: Trade1 cloud scanner
 
+# GitHub scheduled workflows kesin zamanlayici DEGILDIR. */5 yalniz hedef
+# sikliktir; yogunlukta calisma dakikalar/saatler gecikebilir. Bu is tablet
+# tarayicisinin 5 dakikalik SLA'si degil, best-effort yedektir.
 on:
   schedule:
     - cron: "*/5 * * * *"

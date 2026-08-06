@@ -23,12 +23,6 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
-      - key: RESEND_API_KEY
-        sync: false
-      - key: NOTIFICATION_EMAIL
-        sync: false
-      - key: EMAIL_FROM
-        sync: false
       # --- Sir olmayan ayarlar ---
       - key: SCAN_INTERVAL_MINUTES
         value: "5"

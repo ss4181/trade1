@@ -1,0 +1,9 @@
+C1 delta-notr carry — ON-KAYITLI TEK KONFIG
+APR72>=15% basis>=0.05% exitAPR<5% max=30d fill=7bp x4 train<2026-01-01
+hazir: 20/89
+hazir: 40/89
+hazir: 60/89
+hazir: 80/89
+TRAIN core30            N= 193 pending= 0 net=-0.124% med=-0.067% WR=33.2% PF=0.38 q10=-0.13% q90=+0.28% fund=+0.132% basisPnL=-0.114% cost=0.143% p(day)=0.9473 hold-med=30h stress=2.6% top5=41.5%
+TRAIN extended59        N= 796 pending= 0 net=-0.094% med=-0.098% WR=13.8% PF=0.22 q10=-0.17% q90=+0.04% fund=+0.053% basisPnL=-0.007% cost=0.140% p(day)=1.0000 hold-med=10h stress=0.4% top5=33.8%
+KARAR: RED — train/bağımsız-evren kapısı geçilmedi; TESTE BAKILMADI.

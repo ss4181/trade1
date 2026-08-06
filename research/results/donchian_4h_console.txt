@@ -1,0 +1,9 @@
+D1 4h Donchian trend — ON-KAYITLI TEK KONFIG
+entry=20 exit=10 ATR=20 stop=2.0N risk=1.0% cost=0.12% train<2026-01-01
+hazir: 20/89
+hazir: 40/89
+hazir: 60/89
+hazir: 80/89
+TRAIN core30            N=1524 pending= 3 net ort=+0.673% med=-2.841% WR=32.2% PF=1.24 q10=-6.38% q90=+9.85% scaled=+0.243% p(day)=0.1580 hold-med=60h stop=38.0% top5=18.2%
+TRAIN extended59        N=2872 pending= 8 net ort=+0.244% med=-3.820% WR=29.9% PF=1.07 q10=-7.44% q90=+11.20% scaled=+0.089% p(day)=0.2826 hold-med=56h stop=40.2% top5=10.0%
+KARAR: RED — train/bağımsız-evren kapısı geçilmedi; TESTE BAKILMADI.

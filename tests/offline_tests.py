@@ -4,6 +4,7 @@ Her degisiklikten sonra calistir:  python tests/offline_tests.py
 Botun kritik davranislarini dogrular; hepsi gecmeden push etme.
 """
 
+import base64
 import json
 import math
 import sys
@@ -56,6 +57,9 @@ def test_snapshot_isolation():
          "close": 100, "volume": 10} for i in range(250)]
     bot.fetch_funding = lambda symbol, limit=3: [
         {"time": i, "rate": -0.001} for i in range(3)]
+    # S2 kosulu aktif oldugunda scan_symbol perpetual ticker fiyatini da okur.
+    # Bu test tamamen offline olmali; aksi halde gercek Binance agina sizar.
+    bot.fetch_futures_price = lambda symbol: 100.0
     bot.scan_symbol("TESTUSDT", st, snapshot=True)
     assert not st.prev_cond and not st.last_fire
     bot.scan_symbol("TESTUSDT", st, snapshot=False)
@@ -66,7 +70,6 @@ def test_snapshot_isolation():
 def test_notify_gating_and_push_flag():
     pushed = []
     bot.send_telegram_message = lambda s: pushed.append(("tg", s["strategy"]))
-    bot.send_email_notification = lambda s: pushed.append(("em", s["strategy"]))
     bot.RECENT_SIGNALS.clear()
     base = {"direction": "LONG", "strength": "NORMAL", "price": 1,
             "bar_time": "2026-07-19T12:00:00+00:00", "note": "n",
@@ -75,7 +78,7 @@ def test_notify_gating_and_push_flag():
     bot.notify({**base, "strategy": "S1", "confidence": "YUKSEK"})
     bot.notify({**base, "strategy": "S1", "confidence": "YUKSEK"}, push=False)
     assert len(bot.RECENT_SIGNALS) == 3          # hepsi tamponda
-    assert pushed == [("tg", "S1"), ("em", "S1")]  # yalniz 1 push
+    assert pushed == [("tg", "S1")]                    # yalniz 1 push
     rows = list(bot.RECENT_SIGNALS)
     assert rows[0]["suppressed"] is True
     assert rows[0]["suppression_reason"] == "scan_push_cap"
@@ -88,11 +91,9 @@ def test_notify_gating_and_push_flag():
 def test_overflow_summary_fanout():
     old_enabled = bot.ENABLE_TELEGRAM
     old_subscribers = bot.TELEGRAM_SUBSCRIBERS
-    old_email = bot.ENABLE_EMAIL
     old_sender = bot._telegram_send_text
     sent = []
     bot.ENABLE_TELEGRAM = True
-    bot.ENABLE_EMAIL = False
     bot.TELEGRAM_SUBSCRIBERS = ["111", "222"]
     bot._telegram_send_text = lambda text, chat_id=None: sent.append(chat_id)
     try:
@@ -102,7 +103,6 @@ def test_overflow_summary_fanout():
         }])
     finally:
         bot.ENABLE_TELEGRAM = old_enabled
-        bot.ENABLE_EMAIL = old_email
         bot.TELEGRAM_SUBSCRIBERS = old_subscribers
         bot._telegram_send_text = old_sender
     assert sent == ["111", "222"]
@@ -143,7 +143,6 @@ def test_ref_lines():
     for must in ("Guven: COK YUKSEK", "son: 2026-07-20 13:00 UTC",
                  "Dokunma olasiliklari", "medyan"):
         assert must in joined, must
-    assert "Referans" in bot._email_html(sig)
     ok("bildirim referans satirlari")
 
 
@@ -252,8 +251,21 @@ def test_market_archiver(tmpdir):
         if "ticker/price" in url:
             return R([{"symbol": "1000PEPEUSDT", "price": "0.002002"},
                       {"symbol": "BTCUSDT", "price": "60060"}])
+        if "premiumIndex" in url:
+            return R([{"symbol": "1000PEPEUSDT", "markPrice": "0.002",
+                       "indexPrice": "0.00199", "lastFundingRate": "-0.0002",
+                       "nextFundingTime": 1700000000000, "time": 1699999999000},
+                      {"symbol": "BTCUSDT", "markPrice": "60055",
+                       "indexPrice": "60000", "lastFundingRate": "0.0001",
+                       "nextFundingTime": 1700000000000, "time": 1699999999000}])
         if "openInterest" in url:
-            return R({"openInterest": "12345.6"})
+            return R({"openInterest": "12345.6", "time": 1699999999000})
+        if "globalLongShortAccountRatio" in url:
+            return R([{"longShortRatio": "0.75", "longAccount": "0.4286",
+                       "shortAccount": "0.5714", "timestamp": 1699999800000}])
+        if "takerlongshortRatio" in url:
+            return R([{"buySellRatio": "1.25", "buyVol": "125",
+                       "sellVol": "100", "timestamp": 1699999800000}])
         raise AssertionError(url)
 
     bot.requests.get = fake_get
@@ -268,6 +280,9 @@ def test_market_archiver(tmpdir):
     # 1000'lik kontrat olcegi: 0.002002/(0.000002*1000)-1 = +0.001
     assert abs(pepe["basis"] - 0.001) < 1e-6
     assert pepe["oi"] == 12345.6
+    assert pepe["global_ls_ratio"] == 0.75
+    assert pepe["taker_buy_sell_ratio"] == 1.25
+    assert pepe["funding_rate_snapshot"] == -0.0002
     # ayni saat icinde ikinci cagri yazmamali
     bot.archive_market_state()
     assert len(files[0].read_text(encoding="utf-8").splitlines()) == 2
@@ -324,19 +339,23 @@ def test_dashboard_data(tmpdir):
     d = bot.build_dashboard_data()
     rows = {r["symbol"]: r for r in d["signals"]}
     assert rows["AAAUSDT"]["status"] == "OLGUN"
-    assert rows["AAAUSDT"]["pnl_pct"] == 2.5       # cache'ten gerceklesen
+    assert rows["AAAUSDT"]["gross_pnl_pct"] == 2.5
+    assert rows["AAAUSDT"]["pnl_pct"] == 2.38      # 12bp sonrasi NET
     assert rows["BBBUSDT"]["status"] == "AKTIF"
-    assert abs(rows["BBBUSDT"]["pnl_pct"] - 5.0) < 0.01   # 210/200-1
+    assert abs(rows["BBBUSDT"]["gross_pnl_pct"] - 5.0) < 0.01
+    assert abs(rows["BBBUSDT"]["pnl_pct"] - 4.88) < 0.01
     assert rows["BBBUSDT"]["price_stale"] is False
     assert rows["BBBUSDT"]["remaining_h"] is not None
     s1 = next(s for s in d["strategies"] if s["name"] == "S1")
-    assert s1["live_n"] == 1 and s1["live_med"] == 2.5
+    assert s1["live_n"] == 1 and s1["live_med"] == 2.38
+    assert s1["live_cohorts"][0]["sample_warning"] == "small_sample"
     assert s1["bt_med"] == 0.67 and "test" in s1["bt_scope"]
     assert d["status"]["interval_min"] == bot.SCAN_INTERVAL_MINUTES
     # zenginlestirilmis alanlar: docs (tiklanabilir strateji) + why (neden geldi)
     assert "S1" in d["docs"] and "Nasil" in d["docs"]["S1"]["how"] or \
         "calisir" in d["docs"]["S1"]["how"] or d["docs"]["S1"]["how"]
     assert d["docs"]["S1+S4"]["title"]
+    assert "S5" in d["docs"] and "backtest YOK" in d["docs"]["S5"]["stats"]
     aktif_row = rows["BBBUSDT"]
     assert "Log-hacim z-skoru" in aktif_row["why"]      # S3 aciklamasi
     assert "RSI(14)" in rows["AAAUSDT"]["why"]           # S1 aciklamasi
@@ -389,6 +408,14 @@ def test_exact_strategy_performance_and_median(tmpdir):
     assert perf["strategies"]["S1"]["median_pct"] == 2.0
     assert perf["strategies"]["S1+S4"]["n"] == 1
     assert perf["strategies"]["S2"]["performance_market"] == "um_perp"
+    s1_cohort = next(c for c in perf["cohorts"] if c["strategy"] == "S1")
+    assert s1_cohort["universe"] == "core30"
+    assert s1_cohort["config_version"] == "legacy"
+    assert s1_cohort["net_median_pct"] == 1.88
+    assert s1_cohort["sample_warning"] == "small_sample"
+    s2_cohort = next(c for c in perf["cohorts"] if c["strategy"] == "S2")
+    assert s2_cohort["performance_market"] == "um_perp"
+    assert s2_cohort["funding_cost_status"] == "not_modeled"
     # Cache yokken S2 mutlaka USD-M perp fetcher'ini kullanmali.
     s2 = {
         "strategy": "S2", "symbol": "ADAUSDT", "direction": "LONG",
@@ -574,6 +601,55 @@ def test_extended_universe_rules():
         bot.bullish_divergence = orig_div
         bot.fetch_futures_price = orig_futures_price
     ok("genis evren kurallari (S1-yalniz, kademeli guven, 89 sembol)")
+
+
+def test_s3_shadow_market_regime():
+    """Rejim etiketi kapanmis 1d mumdan gelir ama S3 kosulunu filtrelemez."""
+    old = (bot._spot_get, bot.fetch_klines, bot.fetch_funding,
+           bot.fetch_futures_price, bot.bullish_divergence,
+           set(bot.DISABLED_STRATEGIES), dict(bot.MARKET_REGIME),
+           bot._last_market_regime_refresh)
+
+    class R:
+        def json(self):
+            now_ms = int(bot.time.time() * 1000)
+            day = 86_400_000
+            return [
+                [now_ms - (202 - i) * day, "0", "0", "0", str(100 + i),
+                 "0", now_ms - (201 - i) * day]
+                for i in range(201)
+            ]
+
+    try:
+        bot._spot_get = lambda *a, **k: R()
+        bot._last_market_regime_refresh = 0.0
+        assert bot.refresh_market_regime_if_due(force=True) is True
+        assert bot.MARKET_REGIME["label"] == "BULL"
+
+        bot.fetch_klines = lambda symbol, limit=250: [
+            {"open_time": i * 3_600_000,
+             "open": 99.0 if i == 249 else 100.0,
+             "high": 102.0, "low": 98.0, "close": 101.0 if i == 249 else 100.0,
+             "volume": 1e100 if i == 249 else 10.0}
+            for i in range(250)
+        ]
+        bot.fetch_funding = lambda *a, **k: []
+        bot.fetch_futures_price = lambda symbol: 100.0
+        bot.bullish_divergence = lambda *a, **k: False
+        bot.DISABLED_STRATEGIES = set()
+        sigs = bot.scan_symbol("BTCUSDT", bot.ScanState(), snapshot=True)
+        s3 = next(s for s in sigs if s["strategy"] == "S3")
+        assert s3["market_regime"] == "BULL"
+        assert s3["market_regime_source"] == "btc_1d_close_vs_sma200_shadow"
+        assert any(label.startswith("Piyasa rejimi")
+                   for label, _ in bot._signal_detail_rows(s3))
+    finally:
+        (bot._spot_get, bot.fetch_klines, bot.fetch_funding,
+         bot.fetch_futures_price, bot.bullish_divergence,
+         bot.DISABLED_STRATEGIES, regime, bot._last_market_regime_refresh) = old
+        bot.MARKET_REGIME.clear()
+        bot.MARKET_REGIME.update(regime)
+    ok("S3 shadow piyasa rejimi (kapali 1d mum; filtre yok)")
 
 
 def test_join_approval_flow(tmpdir):
@@ -772,8 +848,7 @@ def test_notify_health_visibility():
 
         # panoda gorunuyor mu
         st = bot.build_dashboard_data(max_rows=1)["status"]
-        for key in ("telegram_enabled", "email_enabled", "telegram_identity",
-                    "notify_health"):
+        for key in ("telegram_enabled", "telegram_identity", "notify_health"):
             assert key in st, key
         assert st["notify_health"]["telegram"]["fail"] >= 1
     finally:
@@ -785,6 +860,8 @@ def test_notify_health_visibility():
 
 def test_github_publish():
     calls = []
+    branches = {"main"}
+    files = {}
 
     class R:
         def __init__(s, code=200, js=None):
@@ -796,43 +873,59 @@ def test_github_publish():
         def json(s): return s._js
     bot.GITHUB_TOKEN = "ghsecret"
     bot.GITHUB_REPO = "u/r"
+    bot.GITHUB_PAGES_BRANCH = "gh-pages"
+    bot.GITHUB_DATA_BRANCH = "trade1-data"
     bot.PUBLISH_ENABLED = True
     bot._last_publish = 0.0
     bot._gh_sha = None
     bot.build_dashboard_data = lambda: {"ok": 1}
 
     def fake_get(url, params=None, timeout=None, headers=None):
-        calls.append(("GET", url))
-        if url.endswith("/git/ref/heads/gh-pages"):
-            return R(404)                   # pages branch yok -> olustur
+        calls.append(("GET", url, (params or {}).get("ref")))
+        if "/git/ref/heads/" in url:
+            branch = url.rsplit("/", 1)[-1]
+            if branch in branches:
+                return R(200, {"object": {"sha": f"{branch}-sha"}})
+            return R(404)
         if url.endswith("/repos/u/r"):
             return R(200, {"default_branch": "main"})
-        if url.endswith("/git/ref/heads/main"):
-            return R(200, {"object": {"sha": "mainsha"}})
-        return R(404)                       # contents: dosya yok
+        if "/contents/" in url:
+            path = url.split("/contents/", 1)[1]
+            sha = files.get(((params or {}).get("ref"), path))
+            return R(200, {"sha": sha}) if sha else R(404)
+        return R(404)
     def fake_post(url, json=None, timeout=None, headers=None):
         calls.append(("POST", url, json.get("ref")))
+        branches.add(json["ref"].rsplit("/", 1)[-1])
         return R(201, {})
     def fake_put(url, json=None, timeout=None, headers=None):
         calls.append(("PUT", url, json.get("branch")))
         assert "ghsecret" in headers["Authorization"]
         assert "content" in json and "message" in json
-        return R(200, {"content": {"sha": "newsha"}})
+        content = base64.b64decode(json["content"])
+        sha = bot._git_blob_sha(content)
+        files[(json["branch"], url.split("/contents/", 1)[1])] = sha
+        return R(200, {"content": {"sha": sha}})
     bot.requests.get = fake_get
     bot.requests.post = fake_post
     bot.requests.put = fake_put
     bot.publish_to_github(force=True)
-    # branch olusturma cagrisi yapildi mi
+    # Iki branch de ilk yayinda otomatik olusturulur.
     assert any(c[0] == "POST" and c[2] == "refs/heads/gh-pages" for c in calls)
+    assert any(c[0] == "POST" and c[2] == "refs/heads/trade1-data" for c in calls)
     puts = [c for c in calls if c[0] == "PUT"]
-    # ilk yayinda hem index.html hem data.json yazilmali, dogru branch'e
-    paths = {c[1].rsplit("/", 1)[-1] for c in puts}
-    assert "index.html" in paths and "data.json" in paths
-    assert all(c[2] == "gh-pages" for c in puts)
-    assert bot._gh_sha == "newsha"
+    branches_by_path = {c[1].rsplit("/", 1)[-1]: c[2] for c in puts}
+    assert branches_by_path == {"index.html": "gh-pages",
+                                "data.json": "trade1-data"}
+    assert bot._gh_sha == files[("trade1-data", "data.json")]
+    # Icerik degismediyse ikinci yayinda hicbir dosya yeniden gonderilmez.
+    before = len(puts)
+    bot._last_publish = 0.0
+    bot.publish_to_github(force=True)
+    assert len([c for c in calls if c[0] == "PUT"]) == before
     # token loglarda sizmamali
     assert bot._redact("hata ghsecret var") == "hata ***TOKEN*** var"
-    ok("github pages yayini (index+data, dogru branch, token redakte)")
+    ok("github pages yayini (statik/data branch ayrimi + degisiklik kontrolu)")
 
 
 def test_perf_formatting():
@@ -1041,6 +1134,7 @@ def main():
         test_true_price_time_and_s2_perp_market()
         test_instance_file_lock(td)
         test_extended_universe_rules()
+        test_s3_shadow_market_regime()
         test_observation_channel(td)
         test_join_approval_flow(td)
         test_buttons_and_callbacks(td)

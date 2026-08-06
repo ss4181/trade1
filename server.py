@@ -1,4 +1,4 @@
-"""FastAPI web servisi — signal_bot'u 7/24 canli tutar + mobil endpoint.
+"""FastAPI web servisi — signal_bot'u 7/24 canli tutar + sinyal API'si.
 
 Tablet/VPS mimarisi:
   * Bu FastAPI uygulamasi tek-worker bir WEB SERVISI olarak kosar.
@@ -7,7 +7,7 @@ Tablet/VPS mimarisi:
   * /ping     -> dis keep-alive pinger'i icin yalnizca proses liveness.
   * /health   -> scan lideri, thread ve son basarili tarama icin readiness;
                  sorun varsa teshis JSON'i ile HTTP 503 doner.
-  * /signals/latest -> iPhone (Expo Go) uygulamasi buradan son sinyalleri ceker.
+  * /signals/latest -> son sinyalleri JSON olarak verir (pano/entegrasyonlar).
 
 Baslatma:
     uvicorn server:app --host 0.0.0.0 --port $PORT
@@ -232,6 +232,7 @@ def health(response: Response) -> dict:
         "archive_worker_active": getattr(bot, "ARCHIVE_WORKER_ACTIVE", False),
         "archive_worker_last_error": getattr(
             bot, "ARCHIVE_WORKER_LAST_ERROR", None),
+        "force_order_archive": bot.force_order_archive_status(),
         "performance_worker_active": getattr(
             bot, "PERFORMANCE_WORKER_ACTIVE", False),
         "performance_worker_last_error": getattr(
@@ -239,6 +240,9 @@ def health(response: Response) -> dict:
         "publish_worker_active": getattr(bot, "PUBLISH_WORKER_ACTIVE", False),
         "publish_worker_last_error": getattr(
             bot, "PUBLISH_WORKER_LAST_ERROR", None),
+        "market_regime_shadow": bot.market_regime_snapshot(),
+        "github_pages_branch": getattr(bot, "GITHUB_PAGES_BRANCH", None),
+        "github_data_branch": getattr(bot, "GITHUB_DATA_BRANCH", None),
         "scans_completed": bot.SCANS_COMPLETED,
         "last_scan_signal_count": bot.LAST_SCAN_COUNT,
         "recent_buffered": len(bot.RECENT_SIGNALS),
@@ -255,14 +259,13 @@ def health(response: Response) -> dict:
         "universe_last_error": bot.UNIVERSE_LAST_ERROR,
         "perp_map_last_error": getattr(bot, "PERP_MAP_LAST_ERROR", None),
         "telegram_enabled": bot.ENABLE_TELEGRAM,
-        "email_enabled": bot.ENABLE_EMAIL,
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
 
 
 @app.get("/signals/latest")
 def signals_latest(limit: int = 20) -> dict:
-    """iPhone uygulamasinin polladigi endpoint: en yeni sinyaller once.
+    """Genel JSON endpoint'i: en yeni sinyaller once.
     `limit` 1..100 araligina sikistirilir."""
     limit = max(1, min(int(limit), bot.RECENT_MAXLEN))
     with bot._recent_lock:
@@ -294,12 +297,11 @@ def root() -> str:
    tamamlanan tarama: <b>{bot.SCANS_COMPLETED}</b> &middot;
    son tarama: {bot.LAST_SCAN_AT or "(henuz yok)"}</p>
 <p>Tamponlanan sinyal: <b>{len(bot.RECENT_SIGNALS)}</b> &middot;
-   Telegram: {"acik" if bot.ENABLE_TELEGRAM else "kapali"} &middot;
-   Email: {"acik" if bot.ENABLE_EMAIL else "kapali"}</p>
+   Telegram: {"acik" if bot.ENABLE_TELEGRAM else "kapali"}</p>
 <ul>
   <li><a href="/ping">/ping</a> &mdash; liveness / keep-alive</li>
   <li><a href="/health">/health</a> &mdash; tarama readiness / teshis</li>
-  <li><a href="/signals/latest">/signals/latest</a> &mdash; mobil endpoint</li>
+  <li><a href="/signals/latest">/signals/latest</a> &mdash; sinyal JSON endpoint'i</li>
   <li><a href="/docs">/docs</a> &mdash; API dokumantasyonu</li>
 </ul>
 <p style="color:#999;font-size:12px">Otomatik uyari sistemi. Yatirim tavsiyesi degildir.</p>

@@ -1,7 +1,7 @@
 name: Trade1 tablet watchdog
 
 # Tablet susarsa Telegram'dan haber verir. Binance'e HIC dokunmaz — yalnizca
-# botun gh-pages'e yayimladigi data.json'u okur. Bu yuzden IP yasagi riski yok
+# botun trade1-data branch'ine yayimladigi data.json'u okur. Bu yuzden IP yasagi riski yok
 # ve tarama isiyle yarismaz.
 #
 # ONEMLI SERH: GitHub zamanlanmis is akislarini yogunlukta DUSURUR. Olculdu
@@ -41,12 +41,12 @@ jobs:
       - name: Bekci kodunu al
         uses: actions/checkout@v6
 
-      - name: Pano verisini al (gh-pages)
+      - name: Pano verisini al (trade1-data)
         uses: actions/checkout@v6
         continue-on-error: true          # branch henuz yoksa sessiz kal
         with:
-          ref: gh-pages
-          path: gh-pages
+          ref: trade1-data
+          path: trade1-data
 
       - name: Python kur
         uses: actions/setup-python@v6
@@ -67,10 +67,10 @@ jobs:
 
       - name: Tabletin son taramasini kontrol et
         run: |
-          if [ ! -f gh-pages/data.json ]; then
-            echo "gh-pages/data.json yok — yayin kurulu degil, sessiz kaliniyor"
+          if [ ! -f trade1-data/data.json ]; then
+            echo "trade1-data/data.json yok — yayin kurulu degil, sessiz kaliniyor"
             exit 0
           fi
-          python watchdog.py --data gh-pages/data.json \
+          python watchdog.py --data trade1-data/data.json \
             --state .watchdog_state.json \
             ${{ inputs.dry_run == true && '--dry-run' || '' }}

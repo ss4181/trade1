@@ -75,7 +75,7 @@ def build_payload(
         "observedAtUtc": now.isoformat().replace("+00:00", "Z"),
         "component": "89 coin kripto tarayıcı",
         "mode": "Uyarı · emir üretmez",
-        "schedule": "Yaklaşık 5 dakikada bir",
+        "schedule": "GitHub schedule best-effort (*/5 hedefi; gecikebilir)",
         "runUrl": run_url,
         "facts": ["1 saatlik mum", "S1/S2/S3/S4", "Durum korumalı"],
         "metrics": [

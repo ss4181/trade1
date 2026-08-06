@@ -40,15 +40,15 @@ log() {
 # bunu yasadik: uvicorn kayboldu, sarmalayici 3 GUN boyunca 15 saniyede bir
 # ayni hatayla yeniden denedi ve kimse fark etmedi.
 #
-# CEKIRDEK bagimlilik yalnizca `requests` (saf Python, her zaman kurulabilir).
-# Bot bununla TAM calisir: tarama, Telegram komutlari, bildirimler, LAN panosu.
+# CEKIRDEK bagimliliklar `requests` + `websocket-client` (ikisi de saf Python).
+# Ikincisi geriye oynatilamayan USD-M likidasyon akisini arsivler.
 ensure_core_deps() {
-  if python -c 'import requests' 2>/dev/null; then
+  if python -c 'import requests, websocket' 2>/dev/null; then
     return 0
   fi
   log "cekirdek bagimlilik eksik -> pip install -r requirements.txt deneniyor"
   python -m pip install -r requirements.txt >> "$BOT_LOG" 2>&1
-  if python -c 'import requests' 2>/dev/null; then
+  if python -c 'import requests, websocket' 2>/dev/null; then
     log "cekirdek bagimliliklar onarildi"
     return 0
   fi
@@ -56,7 +56,7 @@ ensure_core_deps() {
   return 1
 }
 
-# FastAPI/uvicorn OPSIYONEL: yalnizca mobil uygulamanin uc noktalari icin.
+# FastAPI/uvicorn OPSIYONEL: yalnizca HTTP API uc noktalari icin.
 # Android'de kurulamayabilir (2026-08-04: Python 3.14'te uvicorn[standard]
 # icindeki Rust tabanli watchfiles derlenemedi). Kurulamiyorsa bot dogrudan
 # signal_bot.py ile kosar — mobil uc nokta gider, geri kalan her sey calisir.

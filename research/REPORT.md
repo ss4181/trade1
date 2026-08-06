@@ -606,6 +606,135 @@ gecikmelidir (200g SMA geç döner). Ayı piyasasında S3 gürültüsünden raha
 olunursa **eşik değiştirmeyen** mevcut çözüm geçerli: `NOTIFY_MIN_CONFIDENCE=
 YUKSEK` (Ek H önerisi) S3 push'unu susturur, kayıt devam eder.
 
+## Ek L — S7 VWAP mean-reversion tek-atışı (2026-08-06): RED
+
+**Aday:** Kimi-S5'in yalnız LONG ve sabit biçimi; 1h spotta VWAP24
+iskontosu (`Z20 < -2`), `ADX14 < 20`, yeşil bar, sonraki bar açılışı giriş,
+`Z >= -0.2`/24h çıkış ve `1.8×ATR14` stop. Maliyet 12bp. Parametre taraması
+yapılmadı; karar kapısı script çalıştırılmadan önce sabitlendi.
+
+| Train kümesi | N | Net ortalama | Net medyan | İsabet | Gün-kümeli p |
+|---|---:|---:|---:|---:|---:|
+| çekirdek-30 | 251 | **−%0.219** | +%0.152 | %51.8 | 0.8803 |
+| geniş-59 | 458 | +%0.143 | +%0.680 | %59.8 | 0.2104 |
+
+**Karar: RED.** Önceden kayıtlı çekirdek train kapısını (net ortalama >0,
+isabet ≥%55 ve p≤0.05) geçemedi; test dilimine bakılmadı. Strateji canlı bota
+eklenmedi. Yeniden eşik ayarlayıp aynı test dilimine bakmak yasaktır. Script:
+`eval_vwap_mr.py`; çıktı: `results/vwap_mr_console.txt`.
+
+## Ek M — D1 4h Donchian trend tek-atışı (2026-08-06): RED / shadow adayı değil
+
+**Ön kayıt:** `PREREG_DONCHIAN_4H.md`. Spot 1h verisi UTC 4h mumlara
+çevrildi; önceki 20 bar tepe kırılımı, sonraki bar açılışı giriş, önceki 10 bar
+dip çıkışı, `2×ATR20` stop, `%1` risk bütçeli ve kaldıraçsız volatilite ölçeği,
+12bp maliyet kullanıldı. Parametre taraması yapılmadı.
+
+| Train kümesi | N | Net ort. | Medyan | İsabet | PF | Ölçekli ort. | p(gün) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| çekirdek-30 | 1.524 | +%0.673 | −%2.841 | %32.2 | 1.24 | +%0.243 | **0.1580** |
+| geniş-59 | 2.872 | +%0.244 | −%3.820 | %29.9 | 1.07 | +%0.089 | 0.2826 |
+
+Ham beklenti ve PF pozitif olsa da çekirdek kapının önceden belirlenmiş
+`p<=0.05` şartı geçmedi. Sinyaller coinler arasında aynı giriş günlerinde
+kümeleniyor; görünen işlem sayısı bağımsız kanıt sayısını abartıyor. Sağ kuyruk
+güçlü (`q90 +%9.85/+%11.20`) fakat tipik işlem negatif ve stop oranı
+`%38–40`. **Karar: RED.** Test dönemi hesaplanmadı, canlı bota veya shadow
+bildirim kanalına eklenmedi. Script: `eval_donchian_4h.py`; çıktı:
+`results/donchian_4h_console.txt`.
+
+## Ek N — C1 delta-nötr spot/perp carry (2026-08-06): RED
+
+**Ön kayıt:** `PREREG_DELTA_NEUTRAL_CARRY.md`. Resmî arşivden 89/89 sembolün
+24 aylık USD-M perp 1h verisi eksiksiz indirildi; spot long + eşit baz miktarda
+perp short, son 72h funding APR `%15`, üç pozitif settlement, basis `≥%0.05`,
+30 gün tavanı ve dört dolumda `7bp/fill` kullanıldı. Funding yalnız pozisyon
+settlement öncesinde açıkken yazıldı; 1000-kontratlar baz birime çevrildi.
+
+| Train kümesi | N | Net ort. | Medyan | İsabet | PF | Funding | Basis PnL | Maliyet | p(gün) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| çekirdek-30 | 193 | **−%0.124** | −%0.067 | %33.2 | 0.38 | +%0.132 | −%0.114 | %0.143 | 0.9473 |
+| geniş-59 | 796 | **−%0.094** | −%0.098 | %13.8 | 0.22 | +%0.053 | −%0.007 | %0.140 | 1.0000 |
+
+**Mekanizma sonucu:** funding tahsil edildi, fakat çekirdekte basis'in girişten
+sonra aleyhe genişlemesi ve her iki evrende dört dolum maliyeti carry'yi aştı.
+Çekirdekte `%2.6` marjin-stres olayı da ön-kayıtlı `%1` tavanını geçti. Bu,
+funding'in tek başına net arbitraj olmadığını iki bacaklı muhasebeyle doğrular.
+**Karar: RED.** Test dönemi hesaplanmadı ve canlı bota eklenmedi. Exchange
+iflası/ADL/transfer riski backtest edilemediğinden gerçek risk sonuçtan daha
+düşük değil, daha yüksektir. Script: `eval_delta_neutral_carry.py`; veri aracı:
+`download_um89.py`; çıktı: `results/delta_neutral_carry_console.txt`.
+
+## Ek O — R1 cross-sectional relative-strength (2026-08-06): RED
+
+**Ön kayıt:** `PREREG_CROSS_SECTIONAL_MOMENTUM.md`. Her 72 saatte son 24 saati
+atlayan 30 günlük getiri sıralandı; pozitif ilk `%20`, geçmiş 30 günlük
+volatilitenin tersiyle ve coin başına `%25` tavanla long/cash sepete alındı.
+Her kolda 12bp maliyet düşüldü. Edge, aynı evrenin eşit-ağırlıklı brüt 72h
+getirisine göre `alpha` olarak da ölçüldü.
+
+| Train kümesi | N dönem | Net ort. | Medyan | PF | Alpha | p(alpha) | q10 | Max DD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| çekirdek-30 | 167 | +%0.299 | −%0.174 | 1.13 | +%0.253 | **0.1816** | −%8.20 | **−%64.4** |
+| geniş-59 | 169 | **−%0.416** | −%0.257 | 0.88 | **−%0.300** | 0.7860 | −%11.49 | **−%82.2** |
+
+Çekirdek sonuç küçük pozitif görünse de alpha anlamlı değil ve drawdown kabul
+kapısının çok dışında. Genişletilmiş bağımsız evrende hem mutlak getiri hem
+alpha işaret değiştirdi. Bu nedenle sonuç piyasa/evren şansı olarak kabul
+edildi. **Karar: RED.** Test dönemi hesaplanmadı; canlı veya shadow strateji
+eklenmedi. Survivorship riski sonucu daha güçlü değil, daha zayıf yorumlamayı
+gerektirir. Script: `eval_cross_sectional_momentum.py`; çıktı:
+`results/cross_sectional_momentum_console.txt`.
+
+## Ek P — L1 pump + short crowding + squeeze vekili (2026-08-06): RED / veri sınırı
+
+**Ön kayıt:** `PREREG_PUMP_SHORT_SQUEEZE.md`. Resmî USD-M daily `metrics`
+arşivinden, önceden sabit `%5/6h` pump görülen 14.259 sembol-günü indirildi:
+89/89 sembol, 4.106.519 adet 5m satır, eksik gün ve ağ hatası yok. Resmî USD-M
+`liquidationSnapshot` yolu aynı tarihte 404 olduğu için “likidasyon bölgesi”
+uydurulmadı. Fiyat↑ + OI↓ + agresif alış, yalnız **gerçekleşmiş squeeze vekili**
+olarak adlandırıldı.
+
+Sabit birleşim: pump `≥%5/6h`, genel hesap L/S `<0.80`, OI 1h `≤−%3`, saatlik
+medyan taker buy/sell `>1.20`, son settled funding değişimi `≥+0.0001` ve en
+fazla 4 saat eski. Sonraki saat açılışı giriş, 4h çıkış, 12bp maliyet.
+
+| Train kümesi | N | 4h net | Medyan | p(gün) | Pump tabanı | Karar |
+|---|---:|---:|---:|---:|---:|---|
+| çekirdek-30 | **0** | — | — | — | N=2.619 | RED |
+| geniş-59 | **1** | +%0.398 | +%0.398 | 0.4953 | −%0.075 | RED |
+
+**Örneklem çöküşü:** train'de 39.606 pump-saatinin 1.862'si short-crowded;
+OI filtresiyle 68, taker filtresiyle 3, funding değişimiyle **1** kaldı. Tek
+olayın 24h'de +%6.25 olması edge değildir; seçim etkisine açık bir anekdottur.
+Minimum örnek kapısı çok büyük farkla geçilmediği için test dönemi hesaplanmadı
+ve eşikler gevşetilmedi. Canlı/shadow sinyal eklenmedi.
+
+**Sonuç:** fikir mekanik olarak makul fakat kamu verisinde gerçek USD-M
+likidasyon seviyeleri yok; test edilebilen dürüst proxy ise istatistik üretmeye
+yetecek sıklıkta birlikte gerçekleşmiyor. İleri çalışma ancak gerçek force-order
+akışı ve oranların aylarca önceden arşivlenmesiyle yeni bir veri döneminde
+yapılabilir. Script: `eval_pump_short_squeeze.py`; indirici:
+`download_pump_metrics.py`; çıktı: `results/pump_short_squeeze_console.txt`.
+
+## Ek Q — L2 ileri-arşiv başlangıcı (2026-08-06): VERİ TOPLANIYOR
+
+Ek P'nin veri sınırını dürüstçe çözmek için `!forceOrder@arr` USD-M akışı ayrı,
+yeniden bağlanabilen bir worker ile aylık JSONL'e alınmaya başladı. Olayların
+yanında `connected` / `heartbeat` / `disconnected` satırları tutulur; böylece
+collector'ın kapalı olduğu süre "likidasyon yoktu" diye kodlanamaz. Mevcut
+saatlik arşiv de OI+bazis+fiyata ek olarak global hesap L/S, taker buy/sell ve
+funding görüntüsü taşır. Akış tüm USD-M sembollerini toplar, fakat ilk araştırma
+evreni değişmeyen 89 semboldür.
+
+Bu bir strateji eklemesi değildir. Eşikler, minimum örnek kapısı, giriş/çıkış ve
+tek test bakışı veri gelmeden önce
+`PREREG_FORWARD_SQUEEZE_ARCHIVE.md` içinde donduruldu. En az 180 gün, train'de
+100 ve testte 30 olay oluşmadan Telegram/shadow sinyal üretilmeyecek. Binance
+force-order akışının sembol başına 1000 ms'de yalnız son snapshot'ı verdiği ve
+CoinGlass-benzeri ileri likidasyon bölgesi sağlamadığı sonuçlarda açıkça
+korunacaktır.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip

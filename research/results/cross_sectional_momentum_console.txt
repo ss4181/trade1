@@ -1,0 +1,9 @@
+R1 cross-sectional momentum — ON-KAYITLI TEK KONFIG
+lookback=30d skip=1d hold=72h top=20% cap=25% cost=0.12% train<2026-01-01
+hazir: 20/89
+hazir: 40/89
+hazir: 60/89
+hazir: 80/89
+TRAIN core30            N=167 net=+0.299% med=-0.174% WR=47.3% PF=1.13 q10=-8.20% q90=+7.73% alpha=+0.253% p(alpha)=0.1816 bench=+0.046% maxDD=-64.4% sec=4.7 invested=86.4%
+TRAIN extended59        N=169 net=-0.416% med=-0.257% WR=48.5% PF=0.88 q10=-11.49% q90=+11.57% alpha=-0.300% p(alpha)=0.7860 bench=-0.116% maxDD=-82.2% sec=8.6 invested=92.8%
+KARAR: RED — train/bağımsız-evren kapısı geçilmedi; TESTE BAKILMADI.

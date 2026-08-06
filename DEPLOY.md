@@ -31,7 +31,7 @@ Bu bölümdeki fiyat/plan bilgileri de tarihsel olabilir; güncel öneri değild
 ```bash
 git init
 git add .
-git commit -m "signal bot: 7/24 servis + bildirim + mobil"
+git commit -m "signal bot: 7/24 servis + Telegram + web panosu"
 ```
 
 Sonra GitHub'da **yeni, boş, private bir repo** oluştur (adı örn. `signal-bot`;
@@ -86,11 +86,8 @@ Aşağıdaki **değişken adlarını** Render'ın Environment bölümüne ekle v
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token'ı | Adım 4a |
 | `TELEGRAM_CHAT_ID` | Sana mesaj gidecek chat id | Adım 4a |
-| `RESEND_API_KEY` | Resend email API anahtarı | Adım 4b |
-| `NOTIFICATION_EMAIL` | Email'in gideceği adres (kendi email'in) | Adım 4b |
-| `EMAIL_FROM` | (opsiyonel) gönderen; boş bırak = sandbox | Adım 4b |
 
-Not: hepsi boş bırakılırsa bot yine çalışır, sadece o kanaldan bildirim atmaz.
+Not: bu alanlar boş bırakılırsa bot yine çalışır, Telegram bildirimi atmaz.
 Her değişikliğin ardından Render servisi otomatik yeniden başlatır.
 
 ### Adım 4a — Telegram token + chat id
@@ -103,17 +100,6 @@ Her değişikliğin ardından Render servisi otomatik yeniden başlatır.
    söyler → `TELEGRAM_CHAT_ID`. (Alternatif: tarayıcıda
    `https://api.telegram.org/botTOKEN/getUpdates` aç, `"chat":{"id":...}`
    değerini al.)
-
-### Adım 4b — Resend email
-
-1. [resend.com](https://resend.com) → ücretsiz kaydol (kalıcı 3000 email/ay).
-2. **API Keys** → **Create API Key** → değeri kopyala → `RESEND_API_KEY`.
-3. `NOTIFICATION_EMAIL` = email'lerin gitmesini istediğin kendi adresin.
-4. **Kendi alan adın yoksa** `EMAIL_FROM`'u boş bırak (varsayılan
-   `onboarding@resend.dev`). Bu durumda Resend sandbox kuralı gereği email
-   **yalnızca Resend hesabına kayıtlı/doğrulanmış kendi adresine** gider —
-   `NOTIFICATION_EMAIL`'i o adresle aynı yap. (İleride kendi alan adını
-   doğrularsan istediğin adrese gönderebilirsin.)
 
 ## Adım 5 — Uykuyu engelle (keep-alive pinger)
 
@@ -150,12 +136,11 @@ Artık her 10 dk'da bir `/ping` çağrılır, servis uyanık kalır.
   `"scan_thread_alive":true` görmelisin. Ölü/eski tarama HTTP 503 döner.
 - `.../signals/latest` → `{"count":0,...}` (henüz sinyal yoksa normal; sinyal
   ürettikçe dolacak).
-- İlk gerçek sinyalde Telegram + email gelmeli. (Bot varsayılan 5 dakikada bir
+- İlk gerçek sinyalde Telegram gelmeli. (Bot varsayılan 5 dakikada bir
   son kapanmış saatlik barı kontrol eder; sinyal yalnız gerçek
   piyasa koşuluna göre üretilir — hemen gelmeyebilir; bu beklenen davranış.)
 
 ---
 
-Deploy'u tamamladığında (servis ayakta, `/health` "ok" dönüyor) bana haber ver
-— **Faz 3'ün mobil kurulumunu** ([mobile/README.md](mobile/README.md)) birlikte
-tamamlarız (o adım da senin telefonunda QR taraman gerektiği için sende).
+Deploy'u tamamladığında (servis ayakta, `/health` "ok" dönüyor) Telegram testini
+ve public GitHub Pages panosunu doğrula.

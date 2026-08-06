@@ -3,12 +3,12 @@
 Evde prize takılı bir Android tablet, bu bot için **ücretsiz bulutlardan daha
 iyi** bir sunucudur: ev internetinin IP'si temizdir (Binance bulut paylaşımlı
 IP'lerini yasaklıyor — Render'ın bu yüzden öldüğünü gördük), aylık ücret yok,
-uyku/idle sorunu yok. Bildirimler Telegram/email ile geldiği için botun
+uyku/idle sorunu yok. Bildirimler Telegram ile geldiği için botun
 NEREDE koştuğu fark etmez — tablet evde çalışır, sinyaller telefonuna düşer.
 
 > iPhone bu iş için uygun DEĞİL: iOS, arka planda serbest işlem çalıştırmaya
-> izin vermez (birkaç dakikada dondurur). iPhone'un rolü izleyicilik
-> (Telegram bildirimleri / istersen mobile/ altındaki Expo uygulaması).
+> izin vermez (birkaç dakikada dondurur). Telefonda Telegram bildirimleri ve
+> public GitHub Pages panosu kullanılır.
 
 ## Kurulum (bir kez, ~15 dk)
 
@@ -23,7 +23,6 @@ Termux'u aç, sırayla yaz:
 ```bash
 pkg update -y && pkg upgrade -y
 pkg install -y python
-pip install requests resend
 ```
 
 Kodu tablete indir (iki yoldan biri):
@@ -51,18 +50,23 @@ git clone git@github.com:ss4181/trade1.git
 cd trade1
 ```
 
+Her iki indirme yolundan sonra proje bağımlılıklarını kur:
+
+```bash
+cd ~/trade1
+pip install -r requirements.txt
+```
+
 ### 3) .env dosyasını oluştur
 ```bash
 cp .env.example .env
 nano .env
 ```
-Şu 4 satırı kendi değerlerinle doldur (değerler sende — BotFather ve Resend
+Şu 2 satırı kendi değerlerinle doldur (değerler sende — BotFather
 panelinden; kimseyle paylaşma):
 ```
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
-RESEND_API_KEY=...
-NOTIFICATION_EMAIL=...
 ```
 Kaydet: `Ctrl+O`, Enter, `Ctrl+X`.
 Dosya izinlerini daralt:
@@ -72,7 +76,7 @@ chmod 600 .env
 
 ### 4) Test et
 ```bash
-python signal_bot.py --test-notify   # Telegram + email'e TEST mesaji gelmeli
+python signal_bot.py --test-notify   # Telegram'a TEST mesaji gelmeli
 python signal_bot.py --check         # su an aktif kurulumlar
 ```
 
@@ -81,7 +85,7 @@ python signal_bot.py --check         # su an aktif kurulumlar
 termux-wake-lock
 python -m uvicorn server:app --host 0.0.0.0 --port 8000
 ```
-Bu birleşik mod hem tarama döngüsünü hem `/signals/latest` mobil API'sini
+Bu birleşik mod hem tarama döngüsünü hem `/signals/latest` JSON API'sini
 başlatır. Aynı anda ayrıca `python signal_bot.py` çalıştırma; tek-instance
 kilidi ikinci tarayıcıyı reddeder.
 Termux bildirimi durum çubuğunda kalır — **kaydırıp kapatma** (kapatırsan
@@ -198,7 +202,7 @@ gider).
 
 ## Günlük kullanım
 
-- Sinyaller kendiliğinden Telegram + email'e gelir; tablete dokunman gerekmez.
+- Sinyaller kendiliğinden Telegram'a gelir; tablete dokunman gerekmez.
 - Anlık kontrol için en kolayı Telegram'dan **/check** yazmaktır; çalışan
   Boot servisini durdurmaya gerek yok.
 - Tablet yeniden başlarsa: ya aşağıdaki **Otomatik başlatma**yı kur (önerilir)
@@ -237,6 +241,7 @@ Tablet yeniden başladığında bot kendiliğinden kalksın:
 cd ~/trade1
 touch .stop-signal-bot
 pkill -f "uvicorn server:app"     # wrapper stop dosyasini gorup yeniden baslatmaz
+pkill -f "python signal_bot.py" 2>/dev/null || true  # FastAPI yoksa dogrudan mod
 termux-wake-unlock
 
 git pull                          # gerekliyse guncelle
@@ -276,12 +281,12 @@ ayrıldı:
 
 | Dosya | İçerik | Gerekli mi? |
 |---|---|---|
-| `requirements.txt` | `requests`, `resend` — saf Python | **Zorunlu.** Tarama, Telegram komutları, bildirimler, LAN panosu bununla çalışır |
-| `requirements-server.txt` | + `fastapi`, `uvicorn` (extras YOK) | Opsiyonel. Sadece mobil uygulamanın `/signals/latest` uç noktası için |
+| `requirements.txt` | `requests` + `websocket-client` — saf Python | **Zorunlu.** Tarama, Telegram ve geriye oynatılamayan USD-M likidasyon arşivi bununla çalışır |
+| `requirements-server.txt` | + `fastapi`, `uvicorn` (extras YOK) | Opsiyonel. `/signals/latest`, `/health` ve `/ping` HTTP uçları için |
 
 Boot betiği bunu kendi başına yönetir: çekirdek paket eksikse bir kez kurmayı
 dener; FastAPI/uvicorn yoksa bir kez `requirements-server.txt` dener, yine
-olmazsa **`python signal_bot.py`** ile doğrudan başlar. Bu modda mobil uç nokta
+olmazsa **`python signal_bot.py`** ile doğrudan başlar. Bu modda HTTP API
 devre dışıdır, **Telegram komutları ve LAN panosu çalışır**.
 
 ## Web panosu (telefondan/bilgisayardan izleme)
@@ -350,9 +355,13 @@ Kaydet (`Ctrl+O`, Enter, `Ctrl+X`), botu yeniden başlat:
 python -m uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 Açılışta `GitHub Pages yayini ACIK ... https://ss4181.github.io/trade1/`
-satırını görmelisin. Bot ilk taramada `gh-pages` branch'ini **otomatik
-oluşturur** ve `index.html` + `data.json` yazar (senin git ile uğraşman
-gerekmez).
+satırını görmelisin. Bot ilk taramada iki branch'i **otomatik oluşturur**:
+
+- `gh-pages`: yalnız değiştiğinde yazılan statik `index.html`
+- `trade1-data`: sık güncellenen `data.json`
+
+Bu ayrım, her veri güncellemesinin gereksiz bir Pages build'i başlatmasını
+engeller. Senin git ile branch açman gerekmez.
 
 **3) Repo'yu public yap + Pages'i aç** (ücretsiz Pages public repo ister):
 - GitHub'da repo → **Settings** → **General** → en altta **Change visibility**
@@ -364,18 +373,59 @@ gerekmez).
 
 Pano orada ~15 dakikada bir güncellenir (bot her yayında GitHub'a yazar).
 Daha sık/seyrek istersen `.env`'e `PUBLISH_INTERVAL_MIN=10` gibi ekle.
+Varsayılan branch adlarını değiştirirsen `GITHUB_PAGES_BRANCH` ile
+`GITHUB_DATA_BRANCH` farklı kalmalıdır. Watchdog varsayılan olarak
+`trade1-data/data.json` okur.
 
 > İptal etmek istersen: `.env`'den `GITHUB_TOKEN`'ı sil → bot artık yayımlamaz;
 > istersen GitHub'da token'ı da revoke et ve repo'yu tekrar private yap.
 
-## Piyasa arşivi (otomatik — gelecek araştırma verisi)
+## Türev arşivi (otomatik — gelecek araştırma verisi)
 
-Bot her saat, evrendeki tüm sembollerin **open interest + bazis + fiyat**
-fotoğrafını `market_archive_YYYY-MM.jsonl` dosyalarına kaydeder (~5MB/ay).
-Amaç: Binance OI geçmişini sadece ~30 gün sakladığı için OI-tabanlı strateji
-fikirleri (REPORT Ek C'deki S8 gibi) test edilemiyordu — bu arşiv 3-6 ay
-birikince kendi verimizle test edilebilir olacaklar. Kapatmak istersen:
-`.env`'e `ARCHIVE_MARKET_DATA=false`. Bu dosyaları silme; araştırma sermayesi.
+Bot iki bağımsız arşiv tutar:
+
+1. Her saat evrendeki sembollerin **OI + bazis + fiyat + genel hesap
+   long/short + taker buy/sell + funding görüntüsünü**
+   `market_archive_YYYY-MM.jsonl` dosyasına yazar. Long/short oranı hesap
+   sayısıdır; yatırılan para/pozisyon büyüklüğü değildir.
+2. Ayrı bir WebSocket worker'ı tüm USD-M piyasasındaki gerçekleşmiş
+   likidasyon snapshot'larını ve bağlantı/kesinti anlarını
+   `liquidation_archive_YYYY-MM.jsonl` dosyasına yazar. Bu, Binance'in sembol
+   başına 1000 ms'deki son olayı veren snapshot akışıdır; eksiksiz tape değildir.
+
+Yeni sürümü çektikten sonra bağımlılığı ve botu yenile:
+
+```bash
+cd ~/trade1
+touch .stop-signal-bot
+pkill -f "uvicorn server:app" 2>/dev/null || true
+pkill -f "python signal_bot.py" 2>/dev/null || true
+termux-wake-unlock 2>/dev/null || true
+git pull
+pip install -r requirements.txt
+rm -f .stop-signal-bot
+nohup ./termux/boot-signal-bot.sh >/dev/null 2>&1 &
+```
+
+Başlangıç logunda `USD-M likidasyon arsivi basladi` görünmelidir. Başka bir
+terminalden dosya kapsamını istediğin an kontrol edebilirsin:
+
+```bash
+cd ~/trade1
+python signal_bot.py --archive-status
+ls -lh market_archive_*.jsonl liquidation_archive_*.jsonl 2>/dev/null
+```
+
+Henüz likidasyon olayı gelmediyse dosyada yalnız `connected` durum satırı
+bulunması normaldir. `--archive-status`, kaç olay ve durum kaydı bulunduğunu,
+ilk/son olay zamanını gösterir. Web sunucusu kullanılıyorsa `/health` içindeki
+`force_order_archive.connected` alanı canlı bağlantıyı doğrular.
+
+Dosyalar `.gitignore` kapsamındadır; GitHub'a ve public panoya yüklenmez. Ayda
+bir harici diske/özel buluta yedeklemek gerekir. Kapatmak istersen `.env` içine
+`ARCHIVE_MARKET_DATA=false` veya `ARCHIVE_FORCE_ORDERS=false` ekle. Dosyaları
+silme: anlamlı değerlendirme için en az 3–6 ay ve yeterli bağımsız olay günü
+gerekecek.
 
 ## Sınırlar
 

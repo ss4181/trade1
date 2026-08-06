@@ -70,29 +70,3 @@ jobs:
 
       - name: Termux betiği sözdizimi
         run: sh -n termux/boot-signal-bot.sh
-
-  mobile:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Kodu al
-        uses: actions/checkout@v6
-
-      - name: Node.js kur
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
-
-      - name: Mobil bağımlılıkları kilitten kur
-        working-directory: mobile
-        run: npm ci
-
-      - name: Mobil sözdizimi ve Expo yapılandırması
-        working-directory: mobile
-        run: |
-          npm run check
-          npm run doctor
-          npm audit --audit-level=high

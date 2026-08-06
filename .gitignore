@@ -14,6 +14,7 @@ signals.log
 .server-stack-unavailable
 .watchdog_state.json
 market_archive_*.jsonl
+liquidation_archive_*.jsonl
 tmp/
 
 # python
@@ -28,11 +29,6 @@ research/**/*.parquet
 # Ek I funding onbellegi (~6MB); sweep_funding_harvest.py yeniden indirir
 research/funding_cache/
 
-# mobil (Expo)
-mobile/node_modules/
-mobile/.expo/
-mobile/dist/
-mobile/npm-debug.*
 
 # isletim sistemi / editor
 .DS_Store

@@ -1,0 +1,16 @@
+L1 pump/short-crowding squeeze vekili — ON-KAYITLI
+pump6>=5% LS<0.80 OI1h<=-3% taker>1.20 dFunding>=0.0001 primary=4h
+hazir: 20/89
+hazir: 40/89
+hazir: 60/89
+hazir: 80/89
+TRAIN core30 4h          N=0 pumpN=2619
+TRAIN extended59 4h      N=   1 net=+0.398% med=+0.398% WR=100.0% q10=+0.40% q90=+0.40% p(day)=0.4953 pump=-0.075% edge=+0.473% top5=100.0%
+TRAIN all89 1h diag      N=   1 net=+0.508% med=+0.508% WR=100.0% q10=+0.51% q90=+0.51% p(day)=0.4953 pump=-0.063% edge=+0.571% top5=100.0%
+TRAIN all89 12h diag     N=   1 net=+4.454% med=+4.454% WR=100.0% q10=+4.45% q90=+4.45% p(day)=0.4953 pump=+0.116% edge=+4.338% top5=100.0%
+TRAIN all89 24h diag     N=   1 net=+6.251% med=+6.251% WR=100.0% q10=+6.25% q90=+6.25% p(day)=0.4953 pump=+0.096% edge=+6.155% top5=100.0%
+KARAR: RED — train/bağımsız-evren kapısı geçilmedi; TESTE BAKILMADI.
+
+Tanısal train hunisi (eşik ayarı için kullanılmadı):
+pump-hours individual filters {'pump': 39606, 'short': 1862, 'oi': 974, 'taker': 4670, 'fund': 3688, 'all': 1}
+sequential pump->short->oi->taker->fund {'pump': 39606, 'short': 1862, 'oi': 68, 'taker': 3, 'fund': 1, 'all': 1}

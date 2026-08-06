@@ -1,5 +1,5 @@
 # OPSIYONEL sunucu katmani: FastAPI + uvicorn.
-# Yalnizca mobil uygulamanin uc noktalari (/signals/latest, /health, /ping)
+# Yalnizca HTTP API uc noktalari (/signals/latest, /health, /ping)
 # icin gerekir. Bot bunlar olmadan da TAM calisir (tarama, Telegram komutlari,
 # bildirimler, LAN panosu) — bkz. requirements.txt.
 #

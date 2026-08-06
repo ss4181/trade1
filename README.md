@@ -77,6 +77,36 @@ olarak engelliyor.
 Kapatma: `OBSERVE_ENABLED=false` · Sadece susturma (ölçüm sürer):
 `OBSERVE_PUSH=false`
 
+Varsayılan `OBSERVE_PUSH=true` olduğundan, istek üzerine S5/S6 Telegram
+bildirimleri açıktır. `GOZLEM` etiketi bir başarı/güven seviyesi değil;
+backtest bulunmadığını özellikle anlatır.
+
+Yeni bağımsız strateji adayı olarak sabit kurallı long-only VWAP mean-reversion
+(`S7`) sınandı. Çekirdek-30 train'de N=251, net ortalama −%0.219, isabet %51.8
+ve gün-kümeli p=0.8803 çıktığı için önceden kayıtlı kapıda elendi; test dilimine
+bakılmadı ve canlı bota eklenmedi. Ayrıntı: `research/REPORT.md` Ek L.
+
+Ön-kayıtlı 4h Donchian long/flat trend adayı (`D1`) da sınandı. Net beklenti
+pozitif görünmesine rağmen coinler arası gün kümelenmesi nedeniyle çekirdek
+train anlamlılık kapısını geçmedi (`p=0.1580`); test dilimine bakılmadı ve canlı
+veya shadow kanala eklenmedi. Ayrıntı: `research/REPORT.md` Ek M.
+
+Delta-nötr spot long + perp short carry adayı (`C1`) 89 sembolün eksiksiz
+spot/perp/funding verisiyle sınandı. Funding geliri maliyet ve basis PnL'ını
+karşılamadı (train net ortalama çekirdek −%0.124, geniş −%0.094); test dilimine
+bakılmadı ve canlı bota eklenmedi. Ayrıntı: `research/REPORT.md` Ek N.
+
+Cross-sectional relative-strength sepeti (`R1`) de ön-kayıtlı olarak sınandı.
+Çekirdekte alpha anlamlı değildi (`p=0.1816`, max drawdown −%64.4); bağımsız
+geniş evrende net ve alpha negatifti. Test dilimine bakılmadı ve canlı/shadow
+kanala eklenmedi. Ayrıntı: `research/REPORT.md` Ek O.
+
+Pump + short-crowding + OI düşüşü + agresif alış + funding sıçraması (`L1`)
+resmî USD-M metrics verisiyle sınandı. Gerçek USD-M liquidation bölgesi arşivi
+olmadığı için OI/taker yalnız gerçekleşmiş squeeze vekiliydi. Train'de
+çekirdekte 0, geniş evrende 1 olay kaldı; istatistik üretilemedi, test dilimine
+bakılmadı ve canlı/shadow kanala eklenmedi. Ayrıntı: `research/REPORT.md` Ek P.
+
 ## Bildirimlerdeki referans seviyeleri
 
 Her sinyal, 24 aylık backtest dağılımından türetilen **mekanik referanslar**
@@ -99,7 +129,10 @@ python signal_bot.py --once     # tek dongu adimi (kenar-tetikleme; canli davran
 ## Bilgisayar kapalıyken bulut taraması
 
 `Trade1 cloud scanner` GitHub Actions iş akışı doğrulanmış 89 coinlik evreni
-yaklaşık beş dakikada bir tek tur tarar. `.bot_state.json` ve sinyal günlüğü
+`*/5` hedefiyle tek tur tarayan **best-effort yedektir**. GitHub scheduled
+workflows kesin zamanlayıcı değildir; yoğunlukta dakikalar, ölçülen durumda
+1–3 saat gecikebilir. Gerçek 5 dakikalık çalışma tablet/7×24 süreçten gelir.
+`.bot_state.json` ve sinyal günlüğü
 koşular arasında taşındığı için False→True kenar tetiklemesi ile cooldown
 korunur; her koşu Serhan / Lab proje kartını gerçek tarama sonucuyla günceller.
 Bulut ortamında `TELEGRAM_BOT_TOKEN` ve `TELEGRAM_CHAT_ID` repository secret
@@ -115,10 +148,36 @@ olarak birlikte tanımlanır. İş akışı emir üretmez.
   tasarım; anlık durumu görmek için `--check` kullan.
 
 Binance için API anahtarı gerekmez (yalnızca halka açık uçlar). Sinyaller
-stdout'a ve `signals.log`'a (JSONL) yazılır; ayrıca **Telegram + email**
-gönderilir (anahtar tanımlıysa — yoksa o kanal sessizce atlanır).
+stdout'a ve `signals.log`'a (JSONL) yazılır; push izni varsa **Telegram**'a
+gönderilir.
 
-7/24 web servisi olarak (mobil endpoint dâhil) çalıştırmak için aşağıdaki
+## Türev araştırma arşivi
+
+Sürekli çalışan bot, strateji kurallarından tamamen ayrı iki ileriye-dönük veri
+seti biriktirir:
+
+- `market_archive_YYYY-MM.jsonl`: saatlik fiyat, OI, bazis, genel hesap
+  long/short oranı, taker buy/sell oranı ve funding görüntüsü. Long/short alanı
+  hesap sayısı oranıdır; pozisyon büyüklüğü değildir.
+- `liquidation_archive_YYYY-MM.jsonl`: Binance USD-M `!forceOrder@arr`
+  WebSocket akışındaki gerçekleşmiş likidasyon snapshot'ları ve bağlantı/kesinti
+  kayıtları. Binance sembol başına her 1000 ms'de yalnız son olayı yayımladığı
+  için bu veri eksiksiz işlem bandı olarak yorumlanmaz.
+
+Arşiv sinyal üretmez, güven puanını değiştirmez ve emir açmaz. Kapsamı görmek:
+
+```bash
+python signal_bot.py --archive-status
+```
+
+Dosyalar Git'e veya GitHub Pages'a gönderilmez. Varsayılan iki kanal da açıktır;
+`ARCHIVE_MARKET_DATA=false` ve/veya `ARCHIVE_FORCE_ORDERS=false` ile kapatılabilir.
+Araştırma kararı en az 3–6 aylık veri ve önceden dondurulmuş train/test protokolü
+oluşmadan canlı stratejiye dönüştürülmez. Kurallar veri gelmeden önce
+[`research/PREREG_FORWARD_SQUEEZE_ARCHIVE.md`](research/PREREG_FORWARD_SQUEEZE_ARCHIVE.md)
+dosyasında dondurulmuştur.
+
+7/24 web servisi ve JSON API ile çalıştırmak için aşağıdaki
 **tek birleşik modu** kullan. Aynı anda ayrıca `python signal_bot.py` başlatma;
 tek-instance kilidi ikinci kopyayı reddeder:
 
@@ -126,20 +185,20 @@ tek-instance kilidi ikinci kopyayı reddeder:
 uvicorn server:app --host 0.0.0.0 --port 8000
 # /ping = proses liveness
 # /health = tarama readiness; ölü/eski taramada HTTP 503
-# /signals/latest = mobil sinyal sözleşmesi
+# /signals/latest = son sinyallerin JSON sözleşmesi
 ```
 
 `--workers 2` gibi çok-worker kullanma: sinyal tamponu proses içi olduğu için
 sunucu başlangıçta tek tarama liderini zorunlu kılar ve lider olamayan worker'ı
 reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
 
-## 7/24 Deploy + bildirimler + iPhone
+## 7/24 çalıştırma + Telegram + web panosu
 
 - **7/24 çalıştırma (önerilen, ücretsiz):** evdeki Android tablet + Termux —
   [TABLET.md](TABLET.md). (Render yolu ölü: Binance bulut paylaşımlı IP'lerini
   yasaklıyor — 451/418; ayrıntı [DEPLOY.md](DEPLOY.md) başındaki uyarıda.)
 - **Bildirim testi:** `python signal_bot.py --test-notify` — .env'deki
-  anahtarlarla her iki kanala TEST mesajı yollar; gerçek sinyal beklemeden
+  anahtarlarla Telegram'a TEST mesajı yollar; gerçek sinyal beklemeden
   kurulumu doğrular.
 - **Telegram düğmeleri:** `/start` → kalıcı menü klavyesi (Kontrol/Performans/
   Durum/Yardım); katılım isteklerinde satır-içi **Onayla/Reddet** düğmeleri
@@ -164,17 +223,13 @@ reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
   verebilir ve otomatik sinyalleri alır (abone). Arkadaş kendi ID'sini `/myid`
   ile öğrenir. Listede olmayan biri yalnızca `/myid` alır, gerisi yok sayılır.
   Tam açık mod: `TELEGRAM_OPEN=true`.
-- **Bildirimler:** push izni verilen her sinyal **hem Telegram hem email** ile gider (biri
-  diğerinin yerine geçmez). Anti-spam tek kapıdan yönetilir (`ScanState`
-  kenar-tetikleme + strateji-başı cooldown); iki kanal aynı deduplike sinyali
-  alır. Eşik altı ve tarama tavanını aşan kayıtlar `push_allowed=false`,
-  `suppressed=true` ve gerekçesiyle API/log'da kalır; mobil istemci bu kararı
-  geçersiz kılmaz. Anahtar adları: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
-  `RESEND_API_KEY`, `NOTIFICATION_EMAIL` (bkz. `.env.example`).
-- **iPhone:** [mobile/](mobile/) — Expo Go uygulaması. Sunucuyu pollar, yeni
-  sinyalde **yerel bildirim** gösterir. Kısıt: yalnızca uygulama **açıkken**
-  çalışır (Expo Go SDK 53 uzak push desteklemez); 7/24 kaçırmasız uyarı için
-  Telegram/email vardır. Kurulum: [mobile/README.md](mobile/README.md).
+- **Bildirimler:** push izni verilen sinyaller Telegram'a gider. Anti-spam tek
+  kapıdan yönetilir (`ScanState` kenar-tetikleme + strateji-başı cooldown).
+  Eşik altı ve tarama tavanını aşan kayıtlar `push_allowed=false`,
+  `suppressed=true` ve gerekçesiyle API/log'da kalır. Anahtar adları:
+  `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (bkz. `.env.example`).
+- E-posta/Resend kanalı ve Expo mobil istemcisi 2026-08-06'da kullanıcı isteğiyle
+  kaldırıldı. Telefon erişimi Telegram ve public GitHub Pages panosuyla sağlanır.
 
 ## Dışarıdan gelen değişiklikler (başka bir AI / kişi)
 
@@ -183,7 +238,16 @@ koy, PR aç, testlerin yeşilini bekle: adım adım [KATKI.md](KATKI.md).
 
 ## Bilinen sınırlar
 
-- Uyarı botudur; işlem maliyeti/slipaj modellenmedi, yatırım tavsiyesi değildir.
+- Uyarı botudur; emir vermez ve yatırım tavsiyesi değildir. Pano ve
+  `/performans`, ham getiriden varsayılan **12bp round-trip** maliyet düşerek
+  net sonuç gösterir; bu bir varsayımdır, gerçek borsa/hesap maliyeti değildir.
+  S2 funding maliyeti modellenmez ve açıkça `not_modeled` yazılır.
+- Canlı karneler strateji + piyasa + evren + güven + config sürümü bazında ayrı
+  kohortlardır. N<30 `small_sample` işaretlenir; net isabet için %95 Wilson
+  güven aralığı ve q10 kuyruk getirisi gösterilir. Farklı evrenler tek başarı
+  sayısında birleştirilmez.
+- S3 için BTC son kapanmış günlük mum / SMA200 `BULL|BEAR` etiketi ileriye dönük
+  **shadow gözlemdir**; sinyali filtrelemez, güveni veya bildirimi değiştirmez.
 - S2 edge'i ayı rejiminde zayıfladı ve sinyaller az sayıda sembolde
   yoğunlaşıyor (top-5 payı ~%60) — canlıda takip edilmeli.
 - S3'ün nihai biçimi test verisine ikinci bakışla seçildi (rapor §S3'te
@@ -204,5 +268,4 @@ koy, PR aç, testlerin yeşilini bekle: adım adım [KATKI.md](KATKI.md).
 python -B tests/offline_tests.py
 python -B tests/server_tests.py
 cd research && python -B -m unittest -v test_methodology.py
-cd ../mobile && npm ci && npm run check && npm run doctor
 ```
