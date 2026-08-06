@@ -14,6 +14,8 @@ padding:3px 10px;font-size:12px;color:var(--mut)}.chip b{color:var(--tx)}
 .card:hover{border-color:var(--bl)}.card h3{font-size:15px;display:flex;justify-content:space-between;align-items:center;gap:6px}
 .badge{font-size:10px;border-radius:8px;padding:2px 7px;font-weight:700;white-space:nowrap}
 .b3{background:#1d4ed8}.b2{background:#0e7490}.b1{background:#a16207}.b0{background:#7f1d1d}
+.bo{background:#4b5563}.cohort{border-top:1px solid var(--line);margin-top:7px;
+padding-top:6px;font-size:11px;color:var(--mut);line-height:1.45}.cohort b{color:var(--tx)}
 .card .row{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-top:5px}
 .card .row b{color:var(--tx)}.off{opacity:.55}.hint{color:var(--bl);font-size:11px;margin-top:7px}
 .doc{background:var(--card);border:1px solid var(--bl);border-radius:12px;padding:14px 16px;margin-bottom:14px}
@@ -43,7 +45,8 @@ tr.sig{cursor:pointer}tr.sig:hover td{background:#16203a}
 <div id="docWrap"></div>
 <div class="ctrl">
  Strateji <select id="fStrat"><option value="">hepsi</option>
- <option>S1+S4</option><option>S1</option><option>S3</option><option>S2</option></select>
+ <option>S1+S4</option><option>S1</option><option>S3</option><option>S2</option>
+ <option>S5</option><option>S6</option></select>
  Durum <select id="fStat"><option value="">hepsi</option>
  <option>AKTIF</option><option>OLGUN</option></select>
  Pozisyon $ <input id="fNot" type="number" value="100" min="1" style="width:84px">
@@ -51,12 +54,12 @@ tr.sig{cursor:pointer}tr.sig:hover td{background:#16203a}
 </div>
 <div class="tablewrap"><table><thead><tr>
 <th>Zaman (UTC)</th><th>Strateji</th><th>Güven</th><th>Sembol</th><th>Giriş ref</th>
-<th>Son çıkış</th><th>Durum</th><th>K/Z %</th><th>K/Z $</th><th>Not</th>
+<th>Son çıkış</th><th>Durum</th><th>Net K/Z %</th><th>Net K/Z $</th><th>Not</th>
 </tr></thead><tbody id="rows"></tbody></table></div>
 <div class="foot" id="foot"></div>
 <script>
-const DATA_URL="./data.json";
-const B={3:"b3",2:"b2",1:"b1",0:"b0"},R={"COK YUKSEK":3,"YUKSEK":2,"ORTA":1,"DUSUK":0};
+const DATA_URL="https://raw.githubusercontent.com/ss4181/trade1/trade1-data/data.json";
+const B={3:"b3",2:"b2",1:"b1",0:"b0",[-1]:"bo"},R={"COK YUKSEK":3,"YUKSEK":2,"ORTA":1,"DUSUK":0,"GOZLEM":-1};
 const esc=s=>(s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const fp=x=>{if(x==null)return "—";x=Number(x);
  if(x>=1)return x.toPrecision(6).replace(/\.?0+$/,"");
@@ -65,14 +68,13 @@ const fpc=x=>x==null?'<span class="tag">ölçülüyor</span>':
  `<span class="${x>=0?'up':'dn'}">${x>=0?'+':''}${x.toFixed(2)}%</span>`;
 let D=null,openDoc=null,openRow=null;
 function notifyChip(s){
- const h=s.notify_health||{},tg=h.telegram||{},em=h.email||{};
+ const h=s.notify_health||{},tg=h.telegram||{};
  const bad=(ch,on)=>on===false?"kapalı":(ch.last_error&&!ch.last_ok?"HATA":
    (ch.fail&&ch.last_error?"son hata var":"çalışıyor"));
- const tgTxt=bad(tg,s.telegram_enabled),emTxt=bad(em,s.email_enabled);
+ const tgTxt=bad(tg,s.telegram_enabled);
  const warn=(t)=>t==="çalışıyor"?"":' style="border-color:#e06c6c;color:#e06c6c"';
  return `<span class="chip"${warn(tgTxt)}>Telegram <b>${tgTxt}</b>`+
   `${tg.ok?` (${tg.ok} ok`:""}${tg.fail?`, ${tg.fail} hata`:""}${tg.ok?")":""}</span>`+
-  `<span class="chip"${warn(emTxt)}>E-posta <b>${emTxt}</b></span>`+
   (tg.last_error?`<span class="chip" style="border-color:#e06c6c;color:#e06c6c">son TG hatası: ${esc(tg.last_error)}</span>`:"");}
 function toggleDoc(name){openDoc=openDoc===name?null:name;drawDoc();}
 function drawDoc(){const w=document.getElementById("docWrap");
@@ -99,8 +101,12 @@ function drawer(r){const rf=r.ref||{};
   ${touch?`<span>Hedefe dokunma olasılığı</span><b>${touch}</b>`:""}
   ${stopt?`<span>Stop'a dokunma olasılığı</span><b>${stopt}</b>`:""}
  </div>`;
+ const meta=[`Evren: <b>${esc(r.universe)}</b>`,`Config: <b>${esc(r.config_version)}</b>`,
+  `Round-trip maliyet: <b>${r.round_trip_cost_bps}bp</b>`,
+  r.funding_cost_status==="not_modeled"?"Funding maliyeti: <b>modellenmedi</b>":""].filter(Boolean).join(" · ");
  const det=(r.detail||[]).map(d=>`${esc(d[0])}: <b>${esc(d[1])}</b>`).join(" · ");
  return `<div class="why">🔍 <b>Neden geldi:</b> ${esc(r.why)}</div>
+  <div class="kv" style="margin-bottom:8px"><span>Ölçüm kohortu</span><b>${meta}</b></div>
   ${det?`<div class="kv" style="margin-bottom:8px"><span>Ölçümler</span><b>${det}</b></div>`:""}
   ${ref}
   <div style="font-size:11px;color:var(--mut);margin-top:8px">Fiyat senaryoları 24 aylık dağılımdan; emir seviyesi değil. Fiyat-bazlı stop/hedef backtest'te zaman çıkışını yenemedi.</div>`;}
@@ -112,16 +118,24 @@ function draw(){if(!D)return;const s=D.status;
   `<span class="chip">hata <b>${s.errors}</b></span>`+
   `<span class="chip">push eşiği <b>${s.min_conf}+</b></span>`+
   `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`+
+  `<span class="chip">net maliyet <b>${s.round_trip_cost_bps}bp</b></span>`+
+  `<span class="chip">S3 rejim <b>${esc((s.market_regime||{}).label||"UNKNOWN")}</b></span>`+
   notifyChip(s);
  document.getElementById("cards").innerHTML=D.strategies.map(x=>{
-   const live=x.live_n?`<b>${x.live_med>=0?'+':''}${x.live_med}%</b> / %${x.live_wr} (N=${x.live_n})`:"henüz yok";
+   const live=(x.live_cohorts||[]).length?(x.live_cohorts||[]).map(c=>{
+    const ci=c.net_winrate_ci95_low_pct==null?"—":`%${c.net_winrate_ci95_low_pct}–%${c.net_winrate_ci95_high_pct}`;
+    return `<div class="cohort"><b>${esc(c.universe)} · ${esc(c.confidence)} · ${esc(c.config_version)}</b><br>`+
+     `net med ${c.net_median_pct>=0?'+':''}${c.net_median_pct}% · isabet %${c.net_winrate_pct} `+
+     `(95% GA ${ci}) · q10 ${c.q10_net_return_pct}% · N=${c.n}`+
+     `${c.sample_warning?' · ⚠ küçük N':''}${c.funding_cost_status==='not_modeled'?' · funding yok':''}</div>`}).join(""):
+     '<div class="cohort">henüz olgun kohort yok</div>';
    const bt=(x.bt_med==null)?"—":`${x.bt_med>=0?'+':''}${x.bt_med}% / %${x.bt_wr} (N=${x.bt_n})`;
    const tails=(x.bt_q10==null||x.bt_q90==null)?"raporlanmadı":`${x.bt_q10}% / +${x.bt_q90}%`;
    return `<div class="card ${x.pushed?'':'off'}" onclick="toggleDoc('${x.name}')"><h3>${x.name}
     <span class="badge ${B[R[x.confidence]]}">${x.confidence}</span></h3>
-    <div class="row"><span>Test (${x.bt_h}h)</span><b>${bt}</b></div>
-    <div class="row"><span>Canlı</span><span>${live}</span></div>
-    <div class="row"><span>Kötü %10 / İyi %10</span><b>${tails}</b></div>
+    <div class="row"><span>Tarihsel test (ham${x.bt_h?' · '+x.bt_h+'h':''})</span><b>${bt}</b></div>
+    <div class="row"><span>Tarihsel kötü %10 / iyi %10</span><b>${tails}</b></div>
+    ${live}
     <div class="row"><span>Push</span><b>${x.pushed?"açık":"SESSİZ"}</b></div>
    <div class="hint">▸ nasıl çalışır (tıkla)</div></div>`}).join("");
  drawDoc();
@@ -144,13 +158,14 @@ function draw(){if(!D)return;const s=D.status;
   return main+dr}).join("")
   ||'<tr><td colspan="10" style="color:var(--mut)">kayıt yok</td></tr>';
  document.getElementById("foot").innerHTML=D.foot||FOOT;}
-const FOOT='K/Z tanımı: <b>AKTİF</b> satırlarda sinyal anındaki aynı piyasa fiyatı geçici giriş referansıdır; gerçek gözlem zamanı tazelik sınırını aşarsa veya giriş/performans piyasası uyuşmazsa K/Z gösterilmez. <b>OLGUN</b> satırlarda gerçekleşen sonuç giriş = sonraki bar açılışı, çıkış = ufuk kapanışıyla hesaplanır. S2 sonucu USD-M perpetual, diğerleri spot mumlarından ölçülür. Ücret, slipaj ve funding düşülmemiştir. "SESSİZ" = teslim politikası nedeniyle loglandı ama push edilmedi. Bu bir izleme panosudur; yatırım tavsiyesi değildir.';
+const FOOT='K/Z tanımı: <b>AKTİF</b> satırlarda sinyal anındaki aynı piyasa fiyatı geçici giriş referansıdır; gerçek gözlem zamanı tazelik sınırını aşarsa veya giriş/performans piyasası uyuşmazsa K/Z gösterilmez. <b>OLGUN</b> satırlarda gerçekleşen sonuç giriş = sonraki bar açılışı, çıkış = ufuk kapanışıyla hesaplanır. Gösterilen K/Z, açıkça yazılan round-trip maliyet varsayımı düşülmüş NET değerdir; S2 funding maliyeti modellenmemiştir. S2 sonucu USD-M perpetual, diğerleri spot mumlarından ölçülür. "SESSİZ" = teslim politikası nedeniyle loglandı ama push edilmedi. S3 BULL/BEAR etiketi salt gözlemdir, sinyali filtrelemez. Bu bir izleme panosudur; yatırım tavsiyesi değildir.';
 document.getElementById("rows").addEventListener("click",e=>{
  const tr=e.target.closest("tr.sig");if(!tr)return;
  const rows=D.signals.filter(r=>{const fs=document.getElementById("fStrat").value,
   ft=document.getElementById("fStat").value;return(!fs||r.strategy===fs)&&(!ft||r.status===ft)});
  const r=rows[+tr.dataset.i];const key=r.t+r.symbol;openRow=openRow===key?null:key;draw();});
-async function load(){try{const r=await fetch(DATA_URL,{cache:"no-store"});D=await r.json();
+async function load(){try{const sep=DATA_URL.includes("?")?"&":"?";
+ const r=await fetch(DATA_URL+sep+"t="+Date.now(),{cache:"no-store"});D=await r.json();
  if(!D.foot)D.foot=FOOT;draw();}
  catch(e){document.getElementById("chips").innerHTML='<span class="chip">bağlantı hatası</span>';}}
 ["fStrat","fStat","fNot"].forEach(id=>document.getElementById(id).addEventListener("input",draw));
