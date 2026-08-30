@@ -52,6 +52,7 @@ jobs:
             .bot_state.json
             signals.log
             .perf_cache.json
+            .price_target_state.json
             .subscribers.json
           key: trade1-cloud-state-${{ github.run_id }}
           restore-keys: |

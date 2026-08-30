@@ -113,8 +113,19 @@ Her sinyal, 24 aylık backtest dağılımından türetilen **mekanik referanslar
 içerir: giriş referansı (bar kapanışı), **zaman çıkışı** (backtest'te
 doğrulanan tek çıkış kuralı: S1 ~24h, S2 ~72h, S3 ~4h), tarihsel medyan /
 kötü %10 / iyi %10 senaryolarının fiyat karşılıkları ve ±1σ dalgalanma bandı.
-**Bunlar tavsiye değildir**; fiyat-bazlı stop/hedef backtest'te test edilmedi
-ve kaldıraç kayıpları/tasfiye riskini büyütür.
+5 dakikalık fiyat yolu analizinde hedef/stop dokunmaları ayrıca ölçüldü; ancak
+sabit bracket çıkışları doğrulanmış zaman çıkışını istikrarlı biçimde yenemedi
+([araştırma raporu](research/REPORT.md), Ek B2). Bu nedenle **bunlar tavsiye
+veya otomatik emir değildir**; kaldıraç kayıpları/tasfiye riskini büyütür.
+
+Kullanıcının “coin fiyatı +%2/+%3 görünce çıkıyorum” yaklaşımını ayrıca ölçmek
+için bot, yalnız Telegram'a gerçekten gönderilmiş sinyalleri bildirim fiyatından
+itibaren kapanmış 5 dakikalık mumlarla izler. Hedef görülürse bir kez Telegram
+mesajı yollar; panoda TP2/TP3, hedef fiyatı, ilk dokunma zamanı ve hedef öncesi
+en ters hareket görünür. Bu oran **coinin kaldıraçsız brüt fiyat değişimidir,
+ücret/slippage düşülmez ve ROE değildir**. Bildirimden önce başlamış 5 dakikalık mum sayılmaz; bot pozisyon
+açmaz veya kapatmaz. Ayarlar: `PRICE_TARGET_TRACKING_ENABLED`,
+`PRICE_TARGET_LEVELS_PCT`, `PRICE_TARGET_NOTIFY`.
 
 ## Çalıştırma (yerel)
 
@@ -209,7 +220,8 @@ reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
   Kapatmak: `TELEGRAM_COMMANDS=false`.
 - **Web panosu:** bot çalışırken `http://<cihaz-ip>:8181` (yalnız yerel ağ) —
   sinyal geçmişi, aktiflerde anlık K/Z, olgunlarda gerçekleşen sonuç,
-  backtest-vs-canlı strateji karneleri. **Strateji kartına** tıkla → nasıl
+  TP2/TP3 canlı fiyat-hedefi durumu ve backtest-vs-canlı strateji karneleri.
+  **Strateji kartına** tıkla → nasıl
   çalışır; **sinyal satırına** tıkla → neden geldi. Ayrıntı: [TABLET.md](TABLET.md).
 - **Her yerden erişim (GitHub Pages):** `GITHUB_TOKEN`+`GITHUB_REPO`
   tanımlıysa bot panoyu `https://<kullanıcı>.github.io/<repo>/` adresine

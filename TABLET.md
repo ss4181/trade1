@@ -203,6 +203,12 @@ gider).
 ## Günlük kullanım
 
 - Sinyaller kendiliğinden Telegram'a gelir; tablete dokunman gerekmez.
+- Push edilen bir sinyalden sonra coin fiyatı bildirim fiyatına göre +%2 veya
+  +%3 hedefe ulaşırsa bot ayrıca bir kez hedef bildirimi yollar. Bu yüzde
+  **brüt coin fiyat değişimidir; ücret/slippage düşülmez, kaldıraçlı ROE
+  değildir** ve bot emri kapatmaz.
+  Hedef geçmişi web panosunda da görünür. Kayıt `.price_target_state.json`
+  dosyasında tutulur; dosyayı elle silme.
 - Anlık kontrol için en kolayı Telegram'dan **/check** yazmaktır; çalışan
   Boot servisini durdurmaya gerek yok.
 - Tablet yeniden başlarsa: ya aşağıdaki **Otomatik başlatma**yı kur (önerilir)

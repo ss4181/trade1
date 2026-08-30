@@ -69,7 +69,10 @@ def test_snapshot_isolation():
 
 def test_notify_gating_and_push_flag():
     pushed = []
-    bot.send_telegram_message = lambda s: pushed.append(("tg", s["strategy"]))
+    def delivered(s):
+        pushed.append(("tg", s["strategy"]))
+        return True
+    bot.send_telegram_message = delivered
     bot.RECENT_SIGNALS.clear()
     base = {"direction": "LONG", "strength": "NORMAL", "price": 1,
             "bar_time": "2026-07-19T12:00:00+00:00", "note": "n",
@@ -85,7 +88,102 @@ def test_notify_gating_and_push_flag():
     assert rows[1]["push_allowed"] is True
     assert rows[2]["suppression_reason"] == "confidence_below_threshold"
     assert all(r.get("event_id") and r.get("schema_version") == 2 for r in rows)
+    assert len(bot.PRICE_TARGET_STATE["events"]) == 1, \
+        "yalniz gercekten teslim edilen S1 hedef takibine girmeli"
     ok("guven esigi + push bayragi")
+
+
+def test_coin_price_target_tracking(tmpdir):
+    """TP2/TP3 coinin fiyat degisimidir; dedupe, zamanlama ve hata izolasyonu."""
+    old_file = bot.PRICE_TARGET_STATE_FILE
+    old_state = bot.PRICE_TARGET_STATE
+    old_enabled = bot.PRICE_TARGET_TRACKING_ENABLED
+    old_levels = bot.PRICE_TARGET_LEVELS_PCT
+    old_fetch = bot.fetch_price_target_klines
+    try:
+        bot.PRICE_TARGET_STATE_FILE = Path(tmpdir) / "price-targets.json"
+        bot.PRICE_TARGET_STATE = bot._empty_price_target_state()
+        bot.PRICE_TARGET_TRACKING_ENABLED = True
+        bot.PRICE_TARGET_LEVELS_PCT = (2.0, 3.0)
+        record = {
+            "event_id": "a" * 32, "strategy": "S1", "symbol": "BTCUSDT",
+            "direction": "LONG", "price": 100.0, "horizon_hours": 24,
+            "notified_at": "2026-08-01T12:01:00+00:00",
+            "push_allowed": True, "performance_market": "spot",
+        }
+        profile = bot._register_price_targets(record)
+        assert profile and profile["basis"] == "signal_notification_price"
+        assert [t["price"] for t in profile["targets"]] == [102.0, 103.0]
+        # 12:01 bildirimi: 12:00-12:05 mumu sayilmaz; ilk tam mum 12:05'tir.
+        event = bot.PRICE_TARGET_STATE["events"][record["event_id"]]
+        assert event["next_start_ms"] == 1785585900000
+        assert bot._register_price_targets(record) is not None
+        assert len(bot.PRICE_TARGET_STATE["events"]) == 1
+
+        start = event["next_start_ms"]
+        gap_event = json.loads(json.dumps(event))
+        assert bot._apply_price_target_bars(gap_event, [{
+            "open_time": start + 300_000, "high": 110.0, "low": 90.0,
+            "close_time": start + 599_999,
+        }], start + 600_000) == []
+        assert gap_event["next_start_ms"] == start, \
+            "eksik fiyat yolu hedef/miss olarak uydurulmamali"
+        first_hits = bot._apply_price_target_bars(event, [{
+            "open_time": start, "high": 102.2, "low": 98.7,
+            "close_time": start + 299_999,
+        }], start + 300_000)
+        assert first_hits == ["2"]
+        assert event["targets"]["2"]["hit_at"]
+        assert event["targets"]["3"]["hit_at"] is None
+        assert event["max_favorable_pct"] == 2.2
+        assert event["max_adverse_pct"] == -1.3
+        assert bot._apply_price_target_bars(event, [], start + 300_000) == []
+
+        second_hits = bot._apply_price_target_bars(event, [{
+            "open_time": start + 300_000, "high": 103.1, "low": 99.5,
+            "close_time": start + 599_999,
+        }], start + 600_000)
+        assert second_hits == ["3"] and event["status"] == "completed"
+        summary = bot.price_target_summary()
+        assert summary["S1"]["2"]["hit_rate_pct"] == 100.0
+        assert summary["S1"]["3"]["resolved"] == 1
+        assert bot.price_target_for_event(record["event_id"])["targets"][1][
+            "status"] == "HIT"
+
+        missed = {**record, "event_id": "d" * 32, "symbol": "SOLUSDT"}
+        bot._register_price_targets(missed)
+        bot.PRICE_TARGET_STATE["events"][missed["event_id"]][
+            "status"] = "expired"
+        summary = bot.price_target_summary()
+        assert summary["S1"]["2"]["hit"] == 1
+        assert summary["S1"]["2"]["missed"] == 1
+        assert summary["S1"]["2"]["hit_rate_pct"] == 50.0
+
+        suppressed = {**record, "event_id": "b" * 32,
+                      "push_allowed": False}
+        assert bot._register_price_targets(suppressed) is None
+        preview = {**record, "event_id": "e" * 32, "symbol": "XRPUSDT"}
+        assert bot._register_price_targets(preview, persist=False) is not None
+        assert preview["event_id"] not in bot.PRICE_TARGET_STATE["events"]
+
+        # Piyasa/API hatasi ana taramaya yayilmaz.
+        failing = {**record, "event_id": "c" * 32, "symbol": "ETHUSDT",
+                   "notified_at": "2026-08-01T13:01:00+00:00"}
+        bot._register_price_targets(failing)
+        bot.fetch_price_target_klines = lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("offline hata"))
+        result = bot.update_price_target_tracking(
+            bot.datetime.fromisoformat("2026-08-01T13:20:00+00:00"))
+        assert result["errors"] == 1
+        assert "offline hata" in bot.PRICE_TARGET_STATE["events"][
+            failing["event_id"]]["last_error"]
+        ok("coin fiyati TP2/TP3 (dedupe + 5dk zamanlama + hata izolasyonu)")
+    finally:
+        bot.PRICE_TARGET_STATE_FILE = old_file
+        bot.PRICE_TARGET_STATE = old_state
+        bot.PRICE_TARGET_TRACKING_ENABLED = old_enabled
+        bot.PRICE_TARGET_LEVELS_PCT = old_levels
+        bot.fetch_price_target_klines = old_fetch
 
 
 def test_overflow_summary_fanout():
@@ -1115,10 +1213,13 @@ def test_observation_channel(tmpdir):
 def main():
     with tempfile.TemporaryDirectory() as td:
         bot.SIGNAL_LOG = str(Path(td) / "signals.log")
+        bot.PRICE_TARGET_STATE_FILE = Path(td) / "price-target-state.json"
+        bot.PRICE_TARGET_STATE = bot._empty_price_target_state()
         test_confidence()
         test_zero_division_guards()
         test_snapshot_isolation()
         test_notify_gating_and_push_flag()
+        test_coin_price_target_tracking(td)
         test_overflow_summary_fanout()
         test_state_persistence(td)
         test_ref_lines()

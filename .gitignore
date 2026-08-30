@@ -8,6 +8,7 @@ signals.log
 *.log
 .bot_state.json
 .perf_cache.json
+.price_target_state.json
 .subscribers.json
 .signal_bot.lock
 .stop-signal-bot

@@ -191,6 +191,31 @@ SCAN_INTERVAL_MINUTES = _env("SCAN_INTERVAL_MINUTES", 5)
 KLINE_LIMIT = _env("KLINE_LIMIT", 250)          # >= VOLUME_ZSCORE_WINDOW + 24 olmali
 SIGNAL_LOG = _env("SIGNAL_LOG", "signals.log")
 
+# Kullaniciya ozel fiyat-hedefi gozlem katmani. Sinyal kosullarini, guven
+# kademesini veya dogrulanmis zaman-cikisini DEGISTIRMEZ. Yalniz Telegram'a
+# gercekten teslim edilen sinyallerde, bildirim fiyatindan itibaren coinin
+# gercek fiyat hareketinde +%2/+%3 seviyelerine dokunmayi izler.
+PRICE_TARGET_TRACKING_ENABLED = _env(
+    "PRICE_TARGET_TRACKING_ENABLED", True, cast=_flag)
+PRICE_TARGET_NOTIFY = _env("PRICE_TARGET_NOTIFY", True, cast=_flag)
+
+
+def _parse_price_target_levels(raw: str) -> tuple[float, ...]:
+    levels = []
+    for item in str(raw).split(","):
+        try:
+            level = float(item.strip())
+        except ValueError:
+            continue
+        if math.isfinite(level) and 0 < level <= 100:
+            levels.append(level)
+    return tuple(sorted(set(levels)))
+
+
+PRICE_TARGET_LEVELS_PCT = _parse_price_target_levels(
+    _env("PRICE_TARGET_LEVELS_PCT", "2,3"))
+PRICE_TARGET_RETENTION_DAYS = _env("PRICE_TARGET_RETENTION_DAYS", 365)
+
 # --- S1: RSI uyumsuzlugu (long-only) ---
 RSI_PERIOD = _env("RSI_PERIOD", 14)
 RSI_OVERSOLD = _env("RSI_OVERSOLD", 22.5)       # 20 -> 22.5 (train taramasi; test edge +0.31 vol, p=0.006)
@@ -869,9 +894,10 @@ def calc_volume_zscore(volumes: list[float], window: int = VOLUME_ZSCORE_WINDOW)
 # --------------------------------------------------------------------------
 # 24 aylik backtest'in (2024-07 -> 2026-06, research/REPORT.md) dogrulanmis
 # ufuktaki HAM getiri dagilimlari. Onemli durustluk notu: backtest'te tek
-# dogrulanan cikis kurali ZAMAN cikisidir (ufuk sonunda kapat); fiyat-bazli
-# stop/hedef HIC test edilmedi. q10/q90 sadece tarihsel dagilimin uc yuzdelik
-# dilimleri — "buradan kes/su fiyattan al" talimati degildir.
+# dogrulanan cikis kurali ZAMAN cikisidir (ufuk sonunda kapat). Fiyat-yolu
+# hedef/stop dokunmalari Ek B2'de test edildi, fakat bracket cikislari zaman
+# cikisini istikrarli bicimde yenemedi. q10/q90 sadece tarihsel dagilimin uc
+# yuzdelik dilimleri — "buradan kes/su fiyattan al" talimati degildir.
 # "bracket": Ek B2'nin (results/bracket_analysis_console.txt, all-sample, 5m yol
 # cozunurlugu, 10bp RT ucret) KUCUK-HEDEF olcumu. "Kucuk kar hedefiyle daha cok
 # islem" fikri tam olarak burada olculdu: kucuk hedef ISABETI yukseltir
@@ -1638,11 +1664,33 @@ def _ref_lines(sig: dict) -> list[str]:
     return lines
 
 
-def send_telegram_message(sig: dict) -> None:
+def _price_target_lines(sig: dict) -> list[str]:
+    profile = sig.get("price_target")
+    if not isinstance(profile, dict):
+        return []
+    targets = profile.get("targets") or []
+    if not targets:
+        return []
+    prices = " · ".join(
+        f"TP{float(t['level_pct']):g} {_fmt_price(t.get('price'))}"
+        for t in targets)
+    direction_text = ("yukari" if str(sig.get("direction")).upper() == "LONG"
+                      else "asagi")
+    return [
+        "— Kisisel fiyat-hedefi takibi (sinyal kuralini degistirmez) —",
+        f"{prices} (coin fiyatinda lehte {direction_text} hareket; "
+        "kaldirac ROE'si degil)",
+        "Ilk tam kapanmis 5dk mumdan itibaren izlenir; hedef gorulurse "
+        "bir kez Telegram mesaji gelir. Brut dokunmadir; ucret/slippage "
+        "dusulmez. Bot emir acmaz veya kapatmaz.",
+    ]
+
+
+def send_telegram_message(sig: dict) -> bool:
     """Telegram Bot API ile sinyal gonderir. Anahtar yoksa sessizce atlar;
     hata olursa uyarir ama tarama dongusunu ASLA durdurmaz."""
     if not ENABLE_TELEGRAM:
-        return
+        return False
     icon = "‼️" if sig.get("strength") == "STRONG" else "\U0001f514"
     conf = sig.get("confidence")
     head_tail = (f"({sig['strength']} · Guven: {conf})" if conf
@@ -1664,10 +1712,17 @@ def send_telegram_message(sig: dict) -> None:
         lines.append("")
         lines += [f"<i>{_html.escape(l)}</i>" if l.startswith(("—", "Fiyat-bazli"))
                   else _html.escape(l) for l in ref_lines]
+    target_lines = _price_target_lines(sig)
+    if target_lines:
+        lines.append("")
+        lines += [f"<i>{_html.escape(l)}</i>" if l.startswith("—")
+                  else _html.escape(l) for l in target_lines]
     lines.append(f"<i>{_html.escape(sig['bar_time'])}</i>")
     text = "\n".join(lines)
+    delivered = False
     for cid in TELEGRAM_SUBSCRIBERS:          # sahip + izinli arkadaslar
-        _telegram_send_text(text, chat_id=cid)
+        delivered = _telegram_send_text(text, chat_id=cid) or delivered
+    return delivered
 
 
 def _redact(text: str) -> str:
@@ -1831,6 +1886,363 @@ def _signal_event_id(sig: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
 
 
+PRICE_TARGET_STATE_FILE = Path(__file__).parent / ".price_target_state.json"
+PRICE_TARGET_STATE_SCHEMA_VERSION = 1
+_price_target_lock = threading.RLock()
+
+
+def _target_dt(raw) -> datetime:
+    text = str(raw or "").strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    dt = datetime.fromisoformat(text)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _target_level_key(level: float) -> str:
+    return f"{float(level):g}"
+
+
+def _empty_price_target_state() -> dict:
+    return {"schema_version": PRICE_TARGET_STATE_SCHEMA_VERSION, "events": {}}
+
+
+def _load_price_target_state() -> dict:
+    if not PRICE_TARGET_STATE_FILE.exists():
+        return _empty_price_target_state()
+    try:
+        data = json.loads(PRICE_TARGET_STATE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("events"), dict):
+            raise ValueError("gecersiz hedef state semasi")
+        return {"schema_version": PRICE_TARGET_STATE_SCHEMA_VERSION,
+                "events": data["events"]}
+    except (OSError, ValueError, TypeError) as e:
+        print(f"uyari: fiyat-hedefi durumu okunamadi, sifirdan: {e}",
+              file=sys.stderr, flush=True)
+        return _empty_price_target_state()
+
+
+PRICE_TARGET_STATE = _load_price_target_state()
+
+
+def _save_price_target_state() -> None:
+    try:
+        tmp = PRICE_TARGET_STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(PRICE_TARGET_STATE, ensure_ascii=False,
+                                  sort_keys=True), encoding="utf-8")
+        tmp.replace(PRICE_TARGET_STATE_FILE)
+    except OSError as e:
+        print(f"uyari: fiyat-hedefi durumu kaydedilemedi: {e}",
+              file=sys.stderr, flush=True)
+
+
+def _price_target_public(event: dict, now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    expired = event.get("status") == "expired"
+    targets = []
+    for key, target in sorted((event.get("targets") or {}).items(),
+                              key=lambda item: float(item[0])):
+        hit_at = target.get("hit_at")
+        targets.append({
+            "level_pct": float(key),
+            "price": target.get("price"),
+            "hit_at": hit_at,
+            "status": "HIT" if hit_at else "MISSED" if expired else "PENDING",
+        })
+    return {
+        "basis": "signal_notification_price",
+        "entry_ref": event.get("entry_ref"),
+        "started_at": event.get("started_at"),
+        "expires_at": event.get("expires_at"),
+        "status": event.get("status", "active"),
+        "targets": targets,
+        "max_favorable_pct": event.get("max_favorable_pct"),
+        "max_adverse_pct": event.get("max_adverse_pct"),
+        "last_error": event.get("last_error"),
+        "as_of": now.isoformat(timespec="seconds"),
+    }
+
+
+def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
+    """Teslim edilen sinyali fiyat-hedefi gozlemine bir kez kaydeder.
+
+    Referans, kullanicinin Telegram'da gordugu sinyal fiyatidir. Bu katman emir
+    acmaz ve kanonik next-bar-open performans tanimini degistirmez.
+    """
+    if (not PRICE_TARGET_TRACKING_ENABLED or not PRICE_TARGET_LEVELS_PCT
+            or not record.get("push_allowed")
+            or str(record.get("strategy", "")).startswith("TEST")):
+        return None
+    try:
+        entry = float(record["price"])
+        horizon = float(record["horizon_hours"])
+        notified = _target_dt(record["notified_at"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    direction = str(record.get("direction") or "").upper()
+    if (not math.isfinite(entry) or entry <= 0 or not math.isfinite(horizon)
+            or horizon <= 0 or direction not in ("LONG", "SHORT")):
+        return None
+    event_id = _signal_event_id(record)
+    with _price_target_lock:
+        events = PRICE_TARGET_STATE.setdefault("events", {})
+        event = events.get(event_id)
+        if not isinstance(event, dict):
+            start_ms = ((int(notified.timestamp() * 1000) + 299_999)
+                        // 300_000) * 300_000
+            expires = notified + timedelta(hours=horizon)
+            targets = {}
+            for level in PRICE_TARGET_LEVELS_PCT:
+                factor = (1 + level / 100.0 if direction == "LONG"
+                          else 1 - level / 100.0)
+                targets[_target_level_key(level)] = {
+                    # Karsilastirmada yuvarlama yapma; yalniz sunum _fmt_price
+                    # ile kisaltilir. Boylece dusuk fiyatli coinlerde esik kaymaz.
+                    "price": entry * factor, "hit_at": None,
+                }
+            strategy = str(record.get("strategy") or "?")
+            market = record.get("performance_market") or (
+                "um_perp" if strategy == "S2" else "spot")
+            event = {
+                "event_id": event_id,
+                "strategy": strategy,
+                "symbol": str(record.get("symbol") or ""),
+                "direction": direction,
+                "market": market,
+                "performance_symbol": record.get("performance_symbol"),
+                "entry_ref": entry,
+                "started_at": notified.isoformat(),
+                "expires_at": expires.isoformat(),
+                "next_start_ms": start_ms,
+                "status": "active",
+                "targets": targets,
+                "max_favorable_pct": 0.0,
+                "max_adverse_pct": 0.0,
+                "last_error": None,
+            }
+            if persist:
+                events[event_id] = event
+                _save_price_target_state()
+        return _price_target_public(event, notified)
+
+
+def fetch_price_target_klines(event: dict, start_ms: int,
+                              end_ms: int) -> list[dict]:
+    """Hedef izlemesi icin kapanmis 5dk mumlari (spot veya USD-M perp)."""
+    if end_ms <= start_ms:
+        return []
+    market = event.get("market") or "spot"
+    symbol = (event.get("performance_symbol") or perp_symbol(event["symbol"])) \
+        if market == "um_perp" else event["symbol"]
+    params = {"symbol": symbol, "interval": "5m", "startTime": start_ms,
+              "endTime": end_ms - 1, "limit": 1000}
+    response = (_futures_get("/fapi/v1/klines", params)
+                if market == "um_perp" else
+                _spot_get("/api/v3/klines", params))
+    return [{"open_time": int(k[0]), "high": float(k[2]),
+             "low": float(k[3]), "close_time": int(k[6])}
+            for k in response.json()]
+
+
+def _apply_price_target_bars(event: dict, bars: list[dict],
+                             coverage_end_ms: int) -> list[str]:
+    """Saf cekirdek: mumlari uygular, ilk dokunulan hedef anahtarlarini verir."""
+    entry = float(event["entry_ref"])
+    direction = event["direction"]
+    next_start = int(event.get("next_start_ms") or 0)
+    newly_hit = []
+    for bar in sorted(bars, key=lambda b: int(b["open_time"])):
+        open_ms = int(bar["open_time"])
+        if open_ms < next_start:
+            continue
+        # Bir bosluk varsa sonraki mumu isleyip aradaki bilinmeyen fiyat yolunu
+        # "hedefe degmedi" sayma. Bir sonraki tur ayni noktadan yeniden dener.
+        if open_ms > next_start or open_ms >= coverage_end_ms:
+            break
+        high, low = float(bar["high"]), float(bar["low"])
+        if not all(math.isfinite(x) and x > 0 for x in (high, low)):
+            break
+        if direction == "LONG":
+            favorable = (high / entry - 1) * 100
+            adverse = (low / entry - 1) * 100
+        else:
+            favorable = (1 - low / entry) * 100
+            adverse = (1 - high / entry) * 100
+        event["max_favorable_pct"] = round(max(
+            float(event.get("max_favorable_pct") or 0.0), favorable), 4)
+        event["max_adverse_pct"] = round(min(
+            float(event.get("max_adverse_pct") or 0.0), adverse), 4)
+        for key, target in event["targets"].items():
+            if target.get("hit_at"):
+                continue
+            touched = (high >= float(target["price"]) if direction == "LONG"
+                       else low <= float(target["price"]))
+            if touched:
+                target["hit_at"] = datetime.fromtimestamp(
+                    open_ms / 1000, tz=timezone.utc).isoformat()
+                newly_hit.append(key)
+        next_start = max(next_start, open_ms + 300_000)
+    event["next_start_ms"] = next_start
+    if event.get("targets") and all(
+            t.get("hit_at") for t in event["targets"].values()):
+        event["status"] = "completed"
+    return newly_hit
+
+
+def _send_price_target_alert(event: dict, hit_keys: list[str]) -> None:
+    if not PRICE_TARGET_NOTIFY or not ENABLE_TELEGRAM or not hit_keys:
+        return
+    levels = sorted((float(k) for k in hit_keys))
+    sign = "+" if event.get("direction") == "LONG" else "-"
+    level_text = " ve ".join(f"{sign}%{x:g}" for x in levels)
+    target_rows = []
+    for level in levels:
+        target = event["targets"][_target_level_key(level)]
+        target_rows.append(
+            f"• {sign}%{level:g}: <b>{_fmt_price(target['price'])}</b>")
+    text = "\n".join([
+        f"🎯 <b>Fiyat hedefi goruldu</b> — "
+        f"<b>{_html.escape(event['strategy'])}</b> "
+        f"<b>{_html.escape(event['symbol'])}</b>",
+        f"Referans giris: <b>{_fmt_price(event['entry_ref'])}</b>",
+        *target_rows,
+        f"Ulasilan seviye: <b>{level_text}</b>",
+        f"Hedef oncesi/en fazla ters hareket: "
+        f"<b>{float(event.get('max_adverse_pct') or 0):+.2f}%</b>",
+        "Bu, kapanmis 5dk mumuyla brut fiyat-dokunma kaydidir; "
+        "ucret/slippage dusulmez ve bot emir vermez.",
+    ])
+    for cid in TELEGRAM_SUBSCRIBERS:
+        _telegram_send_text(text, chat_id=cid)
+
+
+def update_price_target_tracking(now: datetime | None = None) -> dict:
+    """Aktif hedefleri gunceller; hata ana tarama dongusune ASLA yayilmaz."""
+    if not PRICE_TARGET_TRACKING_ENABLED:
+        return {"checked": 0, "hits": 0, "errors": 0}
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    now_ms = int(now.timestamp() * 1000)
+    checked = hits = errors = 0
+    alerts: list[tuple[dict, list[str]]] = []
+    changed = False
+    with _price_target_lock:
+        event_ids = list(PRICE_TARGET_STATE.get("events", {}))
+    for event_id in event_ids:
+        with _price_target_lock:
+            event = PRICE_TARGET_STATE.get("events", {}).get(event_id)
+            if not isinstance(event, dict) or event.get("status") != "active":
+                continue
+            try:
+                expires_ms = int(_target_dt(event["expires_at"]).timestamp() * 1000)
+            except (KeyError, TypeError, ValueError):
+                event["status"] = "invalid"
+                changed = True
+                continue
+            # Yalniz tam kapanmis 5dk mumlar; bildirimden onceki mumun yuksegi
+            # basari sayilmaz. Ufkun sonundaki parcali mum da muhafazakar atilir.
+            closed_end_ms = (now_ms // 300_000) * 300_000
+            horizon_end_ms = (expires_ms // 300_000) * 300_000
+            coverage_end_ms = min(closed_end_ms, horizon_end_ms)
+            start_ms = int(event.get("next_start_ms") or 0)
+        if start_ms < coverage_end_ms:
+            checked += 1
+            try:
+                bars = fetch_price_target_klines(event, start_ms,
+                                                  coverage_end_ms)
+                if not bars:
+                    raise ValueError("kapanmis 5dk mum verisi bos")
+                with _price_target_lock:
+                    current = PRICE_TARGET_STATE["events"].get(event_id)
+                    if not isinstance(current, dict):
+                        continue
+                    new_hits = _apply_price_target_bars(
+                        current, bars, coverage_end_ms)
+                    current["last_error"] = None
+                    if new_hits:
+                        hits += len(new_hits)
+                        alerts.append((dict(current), new_hits))
+                    changed = True
+            except Exception as e:
+                errors += 1
+                with _price_target_lock:
+                    current = PRICE_TARGET_STATE["events"].get(event_id)
+                    if isinstance(current, dict):
+                        current["last_error"] = _redact(
+                            f"{type(e).__name__}: {e}")[:200]
+                        changed = True
+                print(f"uyari: fiyat-hedefi izlenemedi ({event.get('symbol')}): "
+                      f"{_redact(str(e))}", file=sys.stderr, flush=True)
+                continue
+        with _price_target_lock:
+            current = PRICE_TARGET_STATE.get("events", {}).get(event_id)
+            if (isinstance(current, dict) and current.get("status") == "active"
+                    and now_ms >= expires_ms
+                    and int(current.get("next_start_ms") or 0) >= horizon_end_ms):
+                current["status"] = "expired"
+                changed = True
+    with _price_target_lock:
+        if PRICE_TARGET_RETENTION_DAYS > 0:
+            cutoff = now - timedelta(days=PRICE_TARGET_RETENTION_DAYS)
+            events = PRICE_TARGET_STATE.get("events", {})
+            for event_id, event in list(events.items()):
+                if not isinstance(event, dict) or event.get("status") == "active":
+                    continue
+                try:
+                    event_time = _target_dt(
+                        event.get("expires_at") or event.get("started_at"))
+                except (TypeError, ValueError):
+                    event_time = datetime.min.replace(tzinfo=timezone.utc)
+                if event_time < cutoff:
+                    del events[event_id]
+                    changed = True
+        if changed:
+            _save_price_target_state()
+    for event, new_hits in alerts:
+        _send_price_target_alert(event, new_hits)
+    return {"checked": checked, "hits": hits, "errors": errors}
+
+
+def price_target_summary() -> dict:
+    """Strateji/seviye bazinda kullanicinin TP-dokunma basari karnesi."""
+    grouped: dict[str, dict[str, dict[str, int]]] = {}
+    with _price_target_lock:
+        events = list(PRICE_TARGET_STATE.get("events", {}).values())
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        strategy = str(event.get("strategy") or "?")
+        for key, target in (event.get("targets") or {}).items():
+            row = grouped.setdefault(strategy, {}).setdefault(
+                key, {"hit": 0, "missed": 0, "pending": 0})
+            if target.get("hit_at"):
+                row["hit"] += 1
+            elif event.get("status") == "expired":
+                row["missed"] += 1
+            else:
+                row["pending"] += 1
+    out = {}
+    for strategy, levels in sorted(grouped.items()):
+        out[strategy] = {}
+        for key, row in sorted(levels.items(), key=lambda item: float(item[0])):
+            resolved = row["hit"] + row["missed"]
+            out[strategy][key] = {
+                **row, "resolved": resolved,
+                "hit_rate_pct": (round(100 * row["hit"] / resolved, 1)
+                                 if resolved else None),
+                "sample_warning": "small_sample" if resolved < 30 else None,
+            }
+    return out
+
+
+def price_target_for_event(event_id: str) -> dict | None:
+    """Pano icin event_id bazli, salt-okunur fiyat-hedefi gorunumu."""
+    with _price_target_lock:
+        event = PRICE_TARGET_STATE.get("events", {}).get(event_id)
+        return _price_target_public(event) if isinstance(event, dict) else None
+
+
 def _delivery_record(sig: dict, push: bool) -> dict:
     conf = sig.get("confidence", "YUKSEK")
     reasons = []
@@ -1864,6 +2276,11 @@ def notify(sig: dict, push: bool = True) -> dict:
     Anti-spam UST AKISTA yapilir (ScanState.should_fire — kenar-tetikleme +
     strateji-basi cooldown): buraya ulasan her sinyal zaten tekillestirilmistir."""
     record = _delivery_record(sig, push)
+    # Mesajda hedef fiyatlari gorunsun; kalici karneye ise ancak Telegram API'si
+    # en az bir aboneye basariyla teslim ettikten sonra eklenir.
+    target_profile = _register_price_targets(record, persist=False)
+    if target_profile:
+        record["price_target"] = target_profile
     conf = record.get("confidence", "YUKSEK")
     reason = record.get("suppression_reason") or ""
     tag = ("  [SESSIZ: guven esigi alti]"
@@ -1886,7 +2303,8 @@ def notify(sig: dict, push: bool = True) -> dict:
         RECENT_SIGNALS.appendleft(record)
     if record["suppressed"]:
         return record
-    send_telegram_message(record)
+    if send_telegram_message(record):
+        _register_price_targets(record, persist=True)
     return record
 
 
@@ -2182,6 +2600,7 @@ def _run_forever_locked(once: bool = False,
             refresh_observe_universe_if_due()
             refresh_market_regime_if_due()  # salt S3 meta-verisi; hata icerde tutulur
             n = scan_all(state)
+            target_result = update_price_target_tracking()
             completed = datetime.now(timezone.utc).isoformat()
             LAST_SCAN_AT = completed
             LAST_SCAN_SUCCESS_AT = completed
@@ -2189,7 +2608,9 @@ def _run_forever_locked(once: bool = False,
             SCANS_COMPLETED += 1
             CONSECUTIVE_SCAN_FAILURES = 0
             LAST_LOOP_ERROR = None
-            print(f"[{t0}] tarama bitti: {n} sinyal", flush=True)
+            target_note = (f", fiyat-hedefi {target_result['hits']} yeni dokunus"
+                           if target_result.get("hits") else "")
+            print(f"[{t0}] tarama bitti: {n} sinyal{target_note}", flush=True)
             if once:
                 archive_market_state()
             else:
@@ -2451,7 +2872,8 @@ def _realized_performance_unlocked(max_signals: int = None,
     max_signals = max_signals or PERF_MAX_SIGNALS
     log_path = Path(__file__).parent / SIGNAL_LOG
     if not log_path.exists():
-        return {"error": "signals.log yok — henuz sinyal uretilmedi"}
+        return {"error": "signals.log yok — henuz sinyal uretilmedi",
+                "price_targets": price_target_summary()}
     cache = _load_perf_cache()
     now = datetime.now(timezone.utc)
     universe = set(SYMBOLS)
@@ -2547,6 +2969,7 @@ def _realized_performance_unlocked(max_signals: int = None,
            "round_trip_cost_bps": LIVE_ROUND_TRIP_COST_BPS,
            "funding_cost_status": "not_modeled",
            "strategies": {},
+           "price_targets": price_target_summary(),
            "cohorts": []}
     for s, rets in sorted(per_strat.items()):
         med = statistics.median(rets)
@@ -2593,16 +3016,42 @@ def _start_performance_worker(max_signals: int = 40) -> bool:
     return True
 
 
+def _format_price_target_summary(summary: dict) -> list[str]:
+    """Coin fiyatindaki +% hedef dokunmalarini kanonik getiriden ayri yazar."""
+    if not summary:
+        return []
+    lines = ["\n<b>Kisisel fiyat-hedefi karnesi</b> "
+             "(bildirim fiyatindan sonraki kapanmis 5dk mumlar):"]
+    for strategy, levels in sorted(summary.items()):
+        for level, row in sorted(levels.items(), key=lambda item: float(item[0])):
+            rate = (f"%{row['hit_rate_pct']:g}" if row.get("hit_rate_pct")
+                    is not None else "—")
+            warning = " · ⚠ kucuk N" if row.get("sample_warning") else ""
+            lines.append(
+                f"• <b>{strategy} TP{float(level):g}</b>: {row['hit']} isabet / "
+                f"{row['resolved']} sonuclanmis = {rate} · "
+                f"{row['pending']} bekliyor{warning}")
+    lines.append("<i>TP2/TP3, coinin kaldiracsiz brut fiyat degisimidir; "
+                 "ucret/slippage dusulmez ve ROE degildir. "
+                 "Bu karne kullanici cikis aliskanligini olcer, backtest ile ayni "
+                 "next-bar-open/zaman-cikisi performansinin yerine gecmez.</i>")
+    return lines
+
+
 def _format_performance(perf: dict) -> str:
     if "error" in perf:
-        return perf["error"]
+        lines = [perf["error"]]
+        lines += _format_price_target_summary(perf.get("price_targets") or {})
+        return "\n".join(lines)
     excluded = perf.get("excluded_out_of_universe") or 0
     excl_note = (f"\n<i>{excluded} eski kayit guncel evren disinda oldugu icin "
                  "olcume katilmadi (Ek F kontaminasyon donemi).</i>"
                  if excluded else "")
     if perf["n_total"] == 0:
-        return ("Henuz olgunlasmis sinyal yok (sinyaller ufuk suresi dolunca "
-                "olculebilir hale gelir)." + excl_note)
+        lines = ["Henuz olgunlasmis sinyal yok (sinyaller ufuk suresi dolunca "
+                 "olculebilir hale gelir)." + excl_note]
+        lines += _format_price_target_summary(perf.get("price_targets") or {})
+        return "\n".join(lines)
     lines = [f"<b>Canli performans</b> (son {perf['n_total']} olgun sinyal; "
              "giris/cikis tanimi backtest ile ayni):"]
     observe_lines = []
@@ -2642,6 +3091,7 @@ def _format_performance(perf: dict) -> str:
                      "DOGRULANMAMIS coinler; karsilastirilacak backtest YOK — "
                      "karar icin degil, kanali olcmek icin):")
         lines += observe_lines
+    lines += _format_price_target_summary(perf.get("price_targets") or {})
     if perf["fetch_errors"]:
         lines.append(f"({perf['fetch_errors']} sinyal veri hatasindan olculemedi)")
     if excl_note:
@@ -2819,6 +3269,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
     eski), gerceklesenler perf cache'ten."""
     now = datetime.now(timezone.utc)
     cache = _load_perf_cache()
+    target_summary = price_target_summary()
     rows = []
     log_path = Path(__file__).parent / SIGNAL_LOG
     lines = []
@@ -2888,7 +3339,8 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
                     CONF_RANK.get(conf, 2) < CONF_RANK.get(
                         NOTIFY_MIN_CONFIDENCE, 1))
         rows.append({
-            "t": sig["bar_time"], "strategy": strat, "symbol": sig.get("symbol"),
+            "t": sig["bar_time"], "event_id": event_id,
+            "strategy": strat, "symbol": sig.get("symbol"),
             "confidence": conf, "strength": sig.get("strength"),
             "universe": _signal_universe(sig),
             "config_version": sig.get("config_version") or "legacy",
@@ -2930,6 +3382,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "note": sig.get("note", ""),
             "why": _signal_why(sig),
             "detail": _signal_detail_rows(sig),      # (etiket, deger) ciftleri
+            "price_target": price_target_for_event(event_id),
             "ref": {k: ref.get(k) for k in
                     ("median_price", "q10_price", "q90_price", "sigma_h_pct",
                       "hist_median_pct", "hist_q10_pct", "hist_q90_pct",
@@ -2961,6 +3414,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "live_med": summary["net_median_pct"],
             "live_wr": summary["net_winrate_pct"],
             "live_cohorts": cohorts,
+            "price_targets": target_summary.get(key, {}),
         })
     return {
         "now": now.isoformat(timespec="seconds"),
@@ -2973,6 +3427,8 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "started": STARTED_AT,
             "round_trip_cost_bps": LIVE_ROUND_TRIP_COST_BPS,
             "funding_cost_status": "not_modeled",
+            "price_target_tracking_enabled": PRICE_TARGET_TRACKING_ENABLED,
+            "price_target_levels_pct": list(PRICE_TARGET_LEVELS_PCT),
             "market_regime": market_regime_snapshot(),
             # bildirim kanali sagligi: sinyal uretilse de gonderim
             # basarisiz olabilir; uzaktan gorunur olmali (2026-07-26)
@@ -2981,6 +3437,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "notify_health": NOTIFY_HEALTH,
         },
         "strategies": strategies,
+        "price_targets": target_summary,
         "docs": STRATEGY_DOCS,
         "signals": rows,
     }
@@ -3042,7 +3499,7 @@ tr.sig{cursor:pointer}tr.sig:hover td{background:#16203a}
 </div>
 <div class="tablewrap"><table><thead><tr>
 <th>Zaman (UTC)</th><th>Strateji</th><th>Güven</th><th>Sembol</th><th>Giriş ref</th>
-<th>Son çıkış</th><th>Durum</th><th>Net K/Z %</th><th>Net K/Z $</th><th>Not</th>
+<th>Son çıkış</th><th>Durum</th><th>TP2 / TP3</th><th>Net K/Z %</th><th>Net K/Z $</th><th>Not</th>
 </tr></thead><tbody id="rows"></tbody></table></div>
 <div class="foot" id="foot"></div>
 <script>
@@ -3054,6 +3511,10 @@ const fp=x=>{if(x==null)return "—";x=Number(x);
  return x.toFixed(10).replace(/0+$/,"").replace(/\\.$/,"")||"0"};
 const fpc=x=>x==null?'<span class="tag">ölçülüyor</span>':
  `<span class="${x>=0?'up':'dn'}">${x>=0?'+':''}${x.toFixed(2)}%</span>`;
+function tpCell(r){const p=r.price_target;if(!p)return '<span class="tag">izlenmiyor</span>';
+ return (p.targets||[]).map(t=>{const mark=t.status==='HIT'?'✓':t.status==='MISSED'?'✕':'…';
+  const cls=t.status==='HIT'?'up':t.status==='MISSED'?'dn':'tag';
+  return `<span class="${cls}" title="hedef fiyat ${fp(t.price)}">TP${t.level_pct}${mark}</span>`}).join(' ');}
 let D=null,openDoc=null,openRow=null;
 function notifyChip(s){
  const h=s.notify_health||{},tg=h.telegram||{};
@@ -3093,11 +3554,19 @@ function drawer(r){const rf=r.ref||{};
   `Round-trip maliyet: <b>${r.round_trip_cost_bps}bp</b>`,
   r.funding_cost_status==="not_modeled"?"Funding maliyeti: <b>modellenmedi</b>":""].filter(Boolean).join(" · ");
  const det=(r.detail||[]).map(d=>`${esc(d[0])}: <b>${esc(d[1])}</b>`).join(" · ");
+ const pt=r.price_target;
+ const ptRows=pt?`<div class="kv" style="margin:8px 0">
+  <span>Fiyat-hedefi referansı</span><b>${fp(pt.entry_ref)} (bildirim fiyatı)</b>
+  ${(pt.targets||[]).map(t=>`<span>TP${t.level_pct} · ${fp(t.price)}</span><b>${esc(t.status)}${t.hit_at?' · '+esc(t.hit_at.slice(0,16)):''}</b>`).join('')}
+  <span>En iyi / en ters hareket</span><b>${pt.max_favorable_pct==null?'—':pt.max_favorable_pct.toFixed(2)+'%'} / ${pt.max_adverse_pct==null?'—':pt.max_adverse_pct.toFixed(2)+'%'}</b>
+  <span>İzleme aralığı</span><b>${esc((pt.started_at||'').slice(0,16))} → ${esc((pt.expires_at||'').slice(0,16))}</b>
+ </div>`:'';
  return `<div class="why">🔍 <b>Neden geldi:</b> ${esc(r.why)}</div>
   <div class="kv" style="margin-bottom:8px"><span>Ölçüm kohortu</span><b>${meta}</b></div>
   ${det?`<div class="kv" style="margin-bottom:8px"><span>Ölçümler</span><b>${det}</b></div>`:""}
+  ${ptRows}
   ${ref}
-  <div style="font-size:11px;color:var(--mut);margin-top:8px">Fiyat senaryoları 24 aylık dağılımdan; emir seviyesi değil. Fiyat-bazlı stop/hedef backtest'te zaman çıkışını yenemedi.</div>`;}
+  <div style="font-size:11px;color:var(--mut);margin-top:8px">TP2/TP3 coinin brüt fiyat değişimidir; ücret/slippage düşülmez ve kaldıraçlı ROE değildir. Bot emir vermez. Fiyat senaryoları 24 aylık dağılımdan; emir seviyesi değildir.</div>`;}
 function draw(){if(!D)return;const s=D.status;
  document.getElementById("chips").innerHTML=
   `<span class="chip">⏱ tarama <b>${s.interval_min}dk</b></span>`+
@@ -3106,8 +3575,9 @@ function draw(){if(!D)return;const s=D.status;
   `<span class="chip">hata <b>${s.errors}</b></span>`+
   `<span class="chip">push eşiği <b>${s.min_conf}+</b></span>`+
   `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`+
-  `<span class="chip">net maliyet <b>${s.round_trip_cost_bps}bp</b></span>`+
-  `<span class="chip">S3 rejim <b>${esc((s.market_regime||{}).label||"UNKNOWN")}</b></span>`+
+   `<span class="chip">net maliyet <b>${s.round_trip_cost_bps}bp</b></span>`+
+   `<span class="chip">fiyat hedefi <b>${s.price_target_tracking_enabled?'TP '+s.price_target_levels_pct.join('/'):'kapalı'}</b></span>`+
+   `<span class="chip">S3 rejim <b>${esc((s.market_regime||{}).label||"UNKNOWN")}</b></span>`+
   notifyChip(s);
  document.getElementById("cards").innerHTML=D.strategies.map(x=>{
    const live=(x.live_cohorts||[]).length?(x.live_cohorts||[]).map(c=>{
@@ -3119,12 +3589,15 @@ function draw(){if(!D)return;const s=D.status;
      '<div class="cohort">henüz olgun kohort yok</div>';
    const bt=(x.bt_med==null)?"—":`${x.bt_med>=0?'+':''}${x.bt_med}% / %${x.bt_wr} (N=${x.bt_n})`;
    const tails=(x.bt_q10==null||x.bt_q90==null)?"raporlanmadı":`${x.bt_q10}% / +${x.bt_q90}%`;
+   const tp=Object.entries(x.price_targets||{}).map(([level,t])=>
+    `TP${level}: ${t.hit_rate_pct==null?'—':'%'+t.hit_rate_pct} (${t.hit}/${t.resolved}, ${t.pending} bekliyor)`).join(' · ');
    return `<div class="card ${x.pushed?'':'off'}" onclick="toggleDoc('${x.name}')"><h3>${x.name}
     <span class="badge ${B[R[x.confidence]]}">${x.confidence}</span></h3>
     <div class="row"><span>Tarihsel test (ham${x.bt_h?' · '+x.bt_h+'h':''})</span><b>${bt}</b></div>
-    <div class="row"><span>Tarihsel kötü %10 / iyi %10</span><b>${tails}</b></div>
-    ${live}
-    <div class="row"><span>Push</span><b>${x.pushed?"açık":"SESSİZ"}</b></div>
+     <div class="row"><span>Tarihsel kötü %10 / iyi %10</span><b>${tails}</b></div>
+     ${live}
+     <div class="row"><span>Canlı fiyat-hedefi</span><b>${tp||'henüz kayıt yok'}</b></div>
+     <div class="row"><span>Push</span><b>${x.pushed?"açık":"SESSİZ"}</b></div>
    <div class="hint">▸ nasıl çalışır (tıkla)</div></div>`}).join("");
  drawDoc();
  const fs=document.getElementById("fStrat").value,ft=document.getElementById("fStat").value,
@@ -3139,14 +3612,14 @@ function draw(){if(!D)return;const s=D.status;
   const main=`<tr class="sig" data-i="${i}"><td>${r.t.slice(0,16).replace("T"," ")}</td>
    <td><b>${r.strategy}</b>${r.silenced?' <span class="tag">SESSİZ</span>':''}</td>
    <td><span class="badge ${B[R[r.confidence]]}">${r.confidence}</span></td>
-   <td>${r.symbol}</td><td>${fp(r.entry)}</td><td>${r.exit_by}</td><td>${st}</td>
+   <td>${r.symbol}</td><td>${fp(r.entry)}</td><td>${r.exit_by}</td><td>${st}</td><td>${tpCell(r)}</td>
    <td>${fpc(r.pnl_pct)}</td><td>${usd}</td>
    <td style="white-space:normal;min-width:170px;color:var(--mut)">▸ ${esc(r.note)}</td></tr>`;
-  const dr=`<tr class="drawer" data-d="${i}" ${openRow===r.t+r.symbol?"":"hidden"}><td colspan="10">${drawer(r)}</td></tr>`;
-  return main+dr}).join("")
-  ||'<tr><td colspan="10" style="color:var(--mut)">kayıt yok</td></tr>';
+   const dr=`<tr class="drawer" data-d="${i}" ${openRow===r.t+r.symbol?"":"hidden"}><td colspan="11">${drawer(r)}</td></tr>`;
+   return main+dr}).join("")
+   ||'<tr><td colspan="11" style="color:var(--mut)">kayıt yok</td></tr>';
  document.getElementById("foot").innerHTML=D.foot||FOOT;}
-const FOOT='K/Z tanımı: <b>AKTİF</b> satırlarda sinyal anındaki aynı piyasa fiyatı geçici giriş referansıdır; gerçek gözlem zamanı tazelik sınırını aşarsa veya giriş/performans piyasası uyuşmazsa K/Z gösterilmez. <b>OLGUN</b> satırlarda gerçekleşen sonuç giriş = sonraki bar açılışı, çıkış = ufuk kapanışıyla hesaplanır. Gösterilen K/Z, açıkça yazılan round-trip maliyet varsayımı düşülmüş NET değerdir; S2 funding maliyeti modellenmemiştir. S2 sonucu USD-M perpetual, diğerleri spot mumlarından ölçülür. "SESSİZ" = teslim politikası nedeniyle loglandı ama push edilmedi. S3 BULL/BEAR etiketi salt gözlemdir, sinyali filtrelemez. Bu bir izleme panosudur; yatırım tavsiyesi değildir.';
+const FOOT='TP2/TP3: yalnız Telegram\'a gerçekten gönderilmiş sinyallerde, bildirim fiyatından sonra coinin kaldıraçsız brüt fiyatının +%2/+%3 hedefe dokunmasını gösterir; ücret/slippage düşülmez, ROE değildir ve emir kapatmaz. K/Z tanımı: <b>AKTİF</b> satırlarda sinyal anındaki aynı piyasa fiyatı geçici giriş referansıdır; gerçek gözlem zamanı tazelik sınırını aşarsa veya giriş/performans piyasası uyuşmazsa K/Z gösterilmez. <b>OLGUN</b> satırlarda gerçekleşen sonuç giriş = sonraki bar açılışı, çıkış = ufuk kapanışıyla hesaplanır. Gösterilen K/Z, açıkça yazılan round-trip maliyet varsayımı düşülmüş NET değerdir; S2 funding maliyeti modellenmemiştir. S2 sonucu USD-M perpetual, diğerleri spot mumlarından ölçülür. "SESSİZ" = teslim politikası nedeniyle loglandı ama push edilmedi. S3 BULL/BEAR etiketi salt gözlemdir, sinyali filtrelemez. Bu bir izleme panosudur; yatırım tavsiyesi değildir.';
 document.getElementById("rows").addEventListener("click",e=>{
  const tr=e.target.closest("tr.sig");if(!tr)return;
  const rows=D.signals.filter(r=>{const fs=document.getElementById("fStrat").value,
