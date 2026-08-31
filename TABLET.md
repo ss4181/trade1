@@ -388,7 +388,7 @@ Varsayılan branch adlarını değiştirirsen `GITHUB_PAGES_BRANCH` ile
 
 ## Türev arşivi (otomatik — gelecek araştırma verisi)
 
-Bot iki bağımsız arşiv tutar:
+Bot üç bağımsız arşiv ailesi tutar:
 
 1. Her saat evrendeki sembollerin **OI + bazis + fiyat + genel hesap
    long/short + taker buy/sell + funding görüntüsünü**
@@ -398,6 +398,10 @@ Bot iki bağımsız arşiv tutar:
    likidasyon snapshot'larını ve bağlantı/kesinti anlarını
    `liquidation_archive_YYYY-MM.jsonl` dosyasına yazar. Bu, Binance'in sembol
    başına 1000 ms'deki son olayı veren snapshot akışıdır; eksiksiz tape değildir.
+3. `shadow_market_YYYY-MM.jsonl` ve `shadow_events_YYYY-MM.jsonl`, G1'in tüm
+   aktif USD-M evrenindeki ilk-10 yükselen incelemelerini ve DL1'in resmî
+   tam-token delist + Binance/Bybit/OKX snapshot'larını tutar. Bunlar işlem
+   değildir; tarihsel kapıları geçmemiş ileri araştırma olaylarıdır.
 
 Yeni sürümü çektikten sonra bağımlılığı ve botu yenile:
 
@@ -413,13 +417,15 @@ rm -f .stop-signal-bot
 nohup ./termux/boot-signal-bot.sh >/dev/null 2>&1 &
 ```
 
-Başlangıç logunda `USD-M likidasyon arsivi basladi` görünmelidir. Başka bir
+Başlangıç logunda `USD-M likidasyon arsivi basladi` ve `golge deneyler acik`
+görünmelidir. Başka bir
 terminalden dosya kapsamını istediğin an kontrol edebilirsin:
 
 ```bash
 cd ~/trade1
 python signal_bot.py --archive-status
-ls -lh market_archive_*.jsonl liquidation_archive_*.jsonl 2>/dev/null
+python signal_bot.py --shadow-status
+ls -lh market_archive_*.jsonl liquidation_archive_*.jsonl shadow_*.jsonl 2>/dev/null
 ```
 
 Henüz likidasyon olayı gelmediyse dosyada yalnız `connected` durum satırı
@@ -430,6 +436,9 @@ ilk/son olay zamanını gösterir. Web sunucusu kullanılıyorsa `/health` için
 Dosyalar `.gitignore` kapsamındadır; GitHub'a ve public panoya yüklenmez. Ayda
 bir harici diske/özel buluta yedeklemek gerekir. Kapatmak istersen `.env` içine
 `ARCHIVE_MARKET_DATA=false` veya `ARCHIVE_FORCE_ORDERS=false` ekle. Dosyaları
+G1/DL1'i tamamen kapatmak için `SHADOW_EXPERIMENTS_ENABLED=false`, yalnız
+Telegram mesajlarını susturup veri toplamayı sürdürmek için
+`SHADOW_PUSH_ENABLED=false` ekle. Dosyaları
 silme: anlamlı değerlendirme için en az 3–6 ay ve yeterli bağımsız olay günü
 gerekecek.
 

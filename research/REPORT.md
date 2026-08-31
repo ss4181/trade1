@@ -735,6 +735,82 @@ force-order akışının sembol başına 1000 ms'de yalnız son snapshot'ı verd
 CoinGlass-benzeri ileri likidasyon bölgesi sağlamadığı sonuçlarda açıkça
 korunacaktır.
 
+## Ek R — G1 günün yükseleni + yeni short birikimi (2026-08-31): RED / gölge
+
+**Ön kayıt:** `PREREG_GAINER_SHORT_CROWD.md`. Sabit 89 sembolün 24 aylık
+USD-M 1h fiyat panelinde aynı saat içindeki 24s getirisi `%5+` ve ilk 10'da
+olan 11.510 sembol-günü belirlendi. UTC 00:00 OI değişimi için önceki gün
+bağlamıyla 17.761 sembol-gün ve resmî daily metrics arşivinden 4.814.075 adet
+5m OI/global hesap L/S satırı kullanıldı; 89/89 sembol, eksik gün ve ağ hatası
+yok. Güncel saat rolling hacim medyanına sokulmadı.
+
+Sabit koşul: ilk-10 + `%5/24s`, 1s quote volume önceki 24 tamamlanmış saatin
+medyanının `≥2x`i, OI 1s `≥%2`, global hesap L/S `<1`, 24s cooldown. Sonraki
+1s açılış giriş, 4s kapanış çıkış, 12bp maliyet. Long/short alanı hesap
+sayısıdır; notional değildir.
+
+| Train kümesi | N | 4s net ort. | Medyan | İsabet | p(gün) | İlk-10 taban edge | q10 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| çekirdek-30 | 84 | +%0.046 | −%0.065 | %47.6 | 0.4563 | +%0.074 | −%4.28 |
+| geniş-59 | 317 | **−%0.173** | **−%0.415** | %45.4 | 0.6974 | +%0.066 | −%5.94 |
+| tüm-89 | 401 | **−%0.127** | **−%0.300** | %45.9 | 0.6676 | +%0.055 | −%5.71 |
+
+12s/24s ortalama sağ kuyruk nedeniyle pozitif görünse de medyan ve isabet
+negatiftir; bunlar ön-kayıtlı birincil ufuk değildir ve seçim için
+kullanılmadı. İki bağımsız train parçası kapıyı geçmediği için test dönemi
+açılmadı. **Karar: RED.** Kullanıcının açık talebiyle yalnız `G1/GOZLEM`
+kanalında, tüm aktif Binance USD-M perpetual evreni sıralanarak ileri olay
+toplanır; bu statü kabul anlamına gelmez. Scriptler:
+`download_gainer_metrics.py`, `eval_gainer_short_crowd.py`; çıktı:
+`results/gainer_short_crowd_console.txt`.
+
+## Ek S — DL1 tam-token delist olayı (2026-08-31): PRE RED / POST veri topluyor
+
+**Ön kayıt:** `PREREG_DELIST_EVENT.md`. Resmî Binance Delisting kataloğunda
+son beş yıldaki başlığı tam-token kalıbına uyan 36 makale/146 token incelendi.
+Pair/margin/futures/Alpha kaldırmaları dışlandı. Kesin işlem durdurma zamanı
+makale gövdesindeki UTC metninden alındı; fiyat yalnız resmî spot 1h arşiviydi.
+
+DL1-PRE giriş duyurudan sonraki ilk 1s açılışı, çıkış delistten önceki son 1s
+kapanış ve maliyet 12bp:
+
+| Ölçülebilir N | Token | Net ort. | Medyan | İsabet | q10 | q90 | p(gün) |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 107 | 107 | **−%45.44** | **−%53.58** | **%8.4** | −%85.24 | −%7.04 | 1.0000 |
+
+Dönem içi maksimum olumlu hareket medyanı `+%18.58` olsa da bu ex-post MFE,
+önceden bilinen çıkış kuralı değildir; aynı penceredeki MAE medyanı `−%60.24`.
+Dolayısıyla “deliste kadar yükselir/tut” hipotezi açıkça **RED**.
+
+DL1-POST geçmişte test edilmedi: bugün Bybit/OKX'te görünen kontratı geçmişe
+taşımak survivorship/data leakage olurdu. Bot bundan sonra duyuru anındaki
+Binance spot ve Bybit/OKX perpetual bulunabilirlik/last/mark/bid/ask/OI/funding
+snapshot'larını delistten 72s sonrasına kadar saklar. Minimum 30 olgun ve 20
+token olmadan karar yoktur. Çıktı: `results/delist_event_console.txt`.
+
+## Ek T — Canlı örneklem yeterliliği (2026-08-31)
+
+GitHub Pages veri dalındaki son görünür durum 2.466 taramadır. Kanonik zaman
+çıkışı ve 12bp varsayımıyla olgun örnekler:
+
+| Strateji | Olgun N | Net medyan | İsabet | N≥30? | Kısa karar |
+|---|---:|---:|---:|---|---|
+| S1+S4 | 15 | −%0.12 | %40.0 | Hayır | Yetersiz |
+| S1 | 16 | −%0.27 | %43.8 | Hayır | Yetersiz |
+| S2 | 21 | −%2.87 | %38.1 | Hayır | Yetersiz ve şu an zayıf |
+| S3 | 63 | +%0.29 | %54.0 | Evet | İlk ara değerlendirmeye yeterli |
+| S5 | 3 | −%0.77 | %33.3 | Hayır | Çok yetersiz |
+| S6 | 1 | −%6.75 | %0.0 | Hayır | Çok yetersiz |
+| G1 / DL1 | 0 / 0 | — | — | Hayır | Yeni ileri dönem başlıyor |
+
+S3'ün güncel karşılaştırılabilir `core30` kohortu da N=52 ile küçük örnek
+uyarısını aşmıştır; yine de tek piyasa rejimi nihai güvenilirlik kanıtı değildir.
+S1/S1+S4/S2 ve özellikle S5/S6 için N<30 nedeniyle eşik değişikliği yapmak
+erken olur. S2'nin işareti kötü olsa da minimum kapı dolmadan yalnız düşük
+güven/sessiz-kayıt politikası korunur. Tablet market/force-order arşivleri
+Git'e bilerek gönderilmediğinden bu checkout onların gün sayısını kanıtlayamaz;
+cihazda `--archive-status` ve yeni `--shadow-status` kullanılmalıdır.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip

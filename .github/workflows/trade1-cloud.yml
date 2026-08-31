@@ -32,6 +32,9 @@ jobs:
       DASHBOARD_ENABLED: "false"
       DAILY_SUMMARY_HOUR_UTC: "-1"
       ARCHIVE_MARKET_DATA: "false"
+      # Tablet tek G1/DL1 arşiv lideridir. Aksi halde iki bağımsız state aynı
+      # gölge olayı iki kez bildirir ve GitHub runner verisi kalıcı olmaz.
+      SHADOW_EXPERIMENTS_ENABLED: "false"
       PROJECT_HUB_INGEST_URL: ${{ secrets.PROJECT_HUB_INGEST_URL }}
       PROJECT_HUB_INGEST_TOKEN: ${{ secrets.PROJECT_HUB_INGEST_TOKEN }}
       OAI_SITES_BYPASS_TOKEN: ${{ secrets.OAI_SITES_BYPASS_TOKEN }}

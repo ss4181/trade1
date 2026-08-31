@@ -1,0 +1,6 @@
+DL1-PRE: 36 tam-token makale · 146 token
+olgun N=107 token=107 pending=3 unavailable=36
+unavailable: no_usdt_archive=25, deadline_parse=11
+net ort=-45.443% med=-53.577% WR=8.4% q10=-85.24% q90=-7.04% p(day)=1.0000 MFE-med=+18.58% MAE-med=-60.24%
+KARAR: RED — DL1-PRE ön-kayıt kapısı geçilmedi.
+DL1-POST: TEST EDİLMEDİ — geçmiş point-in-time harici kontrat bulunabilirliği yok; prospektif arşiv gerekir.

@@ -1,0 +1,10 @@
+G1 gainer + yeni short birikimi — ON-KAYITLI
+ret24>=5% top10 volume>=2.0x OI1h>=2% LS<1.0 primary=4h
+hazır: 89/89
+TRAIN core30 4h           N=  84 net=+0.046% med=-0.065% WR=47.6% q10=-4.28% q90=+3.96% p(day)=0.4563 base=-0.028% edge=+0.074% top5=82.1%
+TRAIN extended59 4h       N= 317 net=-0.173% med=-0.415% WR=45.4% q10=-5.94% q90=+5.02% p(day)=0.6974 base=-0.239% edge=+0.066% top5=40.7%
+TRAIN all89 4h            N= 401 net=-0.127% med=-0.300% WR=45.9% q10=-5.71% q90=+4.75% p(day)=0.6676 base=-0.182% edge=+0.055% top5=33.7%
+TRAIN all89 1h diag       N= 401 net=-0.065% med=-0.237% WR=45.6% q10=-3.40% q90=+3.23% p(day)=0.6517 base=-0.128% edge=+0.063% top5=33.7%
+TRAIN all89 12h diag      N= 400 net=+0.929% med=-0.518% WR=45.2% q10=-7.14% q90=+10.76% p(day)=0.0245 base=-0.125% edge=+1.054% top5=33.8%
+TRAIN all89 24h diag      N= 399 net=+1.467% med=-0.738% WR=46.1% q10=-9.13% q90=+11.41% p(day)=0.0308 base=-0.137% edge=+1.604% top5=33.8%
+KARAR: RED — train/bağımsız-evren kapısı geçilmedi; TESTE BAKILMADI.

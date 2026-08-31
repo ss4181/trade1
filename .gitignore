@@ -9,6 +9,7 @@ signals.log
 .bot_state.json
 .perf_cache.json
 .price_target_state.json
+.experiment_state.json
 .subscribers.json
 .signal_bot.lock
 .stop-signal-bot
@@ -16,6 +17,8 @@ signals.log
 .watchdog_state.json
 market_archive_*.jsonl
 liquidation_archive_*.jsonl
+shadow_market_*.jsonl
+shadow_events_*.jsonl
 tmp/
 
 # python

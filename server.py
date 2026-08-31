@@ -232,6 +232,11 @@ def health(response: Response) -> dict:
         "archive_worker_active": getattr(bot, "ARCHIVE_WORKER_ACTIVE", False),
         "archive_worker_last_error": getattr(
             bot, "ARCHIVE_WORKER_LAST_ERROR", None),
+        "shadow_experiments_enabled": getattr(
+            bot, "SHADOW_EXPERIMENTS_ENABLED", False),
+        "shadow_worker_active": getattr(bot, "SHADOW_WORKER_ACTIVE", False),
+        "shadow_worker_last_error": getattr(
+            bot, "SHADOW_WORKER_LAST_ERROR", None),
         "force_order_archive": bot.force_order_archive_status(),
         "performance_worker_active": getattr(
             bot, "PERFORMANCE_WORKER_ACTIVE", False),

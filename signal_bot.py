@@ -60,6 +60,11 @@ from derivatives_archive import (
     ForceOrderArchiveWorker,
     summarize_archive as summarize_derivatives_archive,
 )
+from shadow_experiments import (
+    poll_dl1 as poll_shadow_delists,
+    scan_g1 as scan_shadow_gainers,
+    summarize_archive as summarize_shadow_archive,
+)
 
 # --------------------------------------------------------------------------
 # konfigurasyon (.env ile ezilebilir; gerekceler .env.example ve README'de)
@@ -180,6 +185,18 @@ OBSERVE_MAX_PUSH_PER_SCAN = _env("OBSERVE_MAX_PUSH_PER_SCAN", 3)
 OBSERVE_STRATEGY_NAMES = {"S1+S4": "S5", "S1": "S6"}
 OBSERVE_STRATEGIES = set(OBSERVE_STRATEGY_NAMES.values())
 OBSERVE_BASE_OF = {v: k for k, v in OBSERVE_STRATEGY_NAMES.items()}
+
+# --- ON-KAYITLI GOLGE DENEYLER (G1/DL1) -----------------------------------
+# G1 tarihsel train kapisini, DL1-PRE ise deliste kadar bekleme kapisini
+# GECEMEDI. Kullanici talebiyle tum aktif USD-M evreninde/duyurulan tokenlarda
+# olay bildirimi ve ileri veri toplama aciktir; mevcut S1..S6 kararlarini etkilemez.
+SHADOW_EXPERIMENTS_ENABLED = _env(
+    "SHADOW_EXPERIMENTS_ENABLED", True, cast=_flag)
+SHADOW_PUSH_ENABLED = _env("SHADOW_PUSH_ENABLED", True, cast=_flag)
+SHADOW_MAX_PUSH_PER_RUN = _env("SHADOW_MAX_PUSH_PER_RUN", 20, cast=int)
+SHADOW_DELIST_POLL_MINUTES = _env(
+    "SHADOW_DELIST_POLL_MINUTES", 30, cast=int)
+SHADOW_STRATEGIES = {"G1", "DL1"}
 
 # 5dk tarama: sinyaller 1h bar KAPANISINDA dogar — daha sik tarama sinyal
 # setini DEGISTIRMEZ (kenar-tetikleme ayni kosulu tekrar bildirmez); kazanci
@@ -615,6 +632,11 @@ ARCHIVE_DIR = Path(_env("ARCHIVE_DIR", str(Path(__file__).parent))).expanduser()
 _archive_worker_lock = threading.Lock()
 ARCHIVE_WORKER_ACTIVE = False
 ARCHIVE_WORKER_LAST_ERROR: str | None = None
+SHADOW_STATE_FILE = Path(__file__).parent / _env(
+    "SHADOW_STATE_FILE", ".experiment_state.json")
+_shadow_worker_lock = threading.Lock()
+SHADOW_WORKER_ACTIVE = False
+SHADOW_WORKER_LAST_ERROR: str | None = None
 
 # Gerceklesen USD-M force-order snapshot'lari Binance tarafinda geriye donuk
 # oynatilamaz. Bu nedenle surekli modda ayri WebSocket thread'i tum piyasayi
@@ -820,6 +842,66 @@ def _start_archive_worker() -> bool:
     return True
 
 
+def run_shadow_experiments() -> int:
+    """G1/DL1'i ana taramadan izole çalıştır; hata çekirdeği bozmasın."""
+    global SHADOW_WORKER_LAST_ERROR
+    if not SHADOW_EXPERIMENTS_ENABLED:
+        return 0
+    signals: list[dict] = []
+    errors = []
+    try:
+        signals.extend(scan_shadow_gainers(
+            _futures_get, SHADOW_STATE_FILE, ARCHIVE_DIR))
+    except Exception as e:
+        errors.append(f"G1 {type(e).__name__}: {_redact(str(e))}")
+    try:
+        signals.extend(poll_shadow_delists(
+            requests.get, _spot_get, SHADOW_STATE_FILE, ARCHIVE_DIR,
+            poll_minutes=SHADOW_DELIST_POLL_MINUTES))
+    except Exception as e:
+        errors.append(f"DL1 {type(e).__name__}: {_redact(str(e))}")
+    signals.sort(key=lambda sig: (sig.get("strategy", ""),
+                                  sig.get("symbol", "")))
+    for index, sig in enumerate(signals):
+        sig["push_policy_enabled"] = SHADOW_PUSH_ENABLED
+        notify(sig, push=(SHADOW_PUSH_ENABLED and
+                          index < SHADOW_MAX_PUSH_PER_RUN))
+    if errors:
+        SHADOW_WORKER_LAST_ERROR = " | ".join(errors)[:500]
+        print(f"uyari: golge deney: {SHADOW_WORKER_LAST_ERROR}",
+              file=sys.stderr, flush=True)
+    else:
+        SHADOW_WORKER_LAST_ERROR = None
+    if signals:
+        print(f"golge deney: {len(signals)} yeni olay (G1/DL1)", flush=True)
+    return len(signals)
+
+
+def _start_shadow_worker() -> bool:
+    """Ağır tüm-perp/delist gözlemini ayrı thread'de çalıştır."""
+    global SHADOW_WORKER_ACTIVE
+    if not SHADOW_EXPERIMENTS_ENABLED:
+        return False
+    if not _shadow_worker_lock.acquire(blocking=False):
+        return False
+    SHADOW_WORKER_ACTIVE = True
+
+    def work() -> None:
+        global SHADOW_WORKER_ACTIVE, SHADOW_WORKER_LAST_ERROR
+        try:
+            run_shadow_experiments()
+        except Exception as e:
+            SHADOW_WORKER_LAST_ERROR = f"{type(e).__name__}: {_redact(str(e))}"
+            print(f"uyari: golge deney iscisinde hata: {SHADOW_WORKER_LAST_ERROR}",
+                  file=sys.stderr, flush=True)
+        finally:
+            SHADOW_WORKER_ACTIVE = False
+            _shadow_worker_lock.release()
+
+    threading.Thread(target=work, name="shadow-experiments", daemon=True).start()
+    return True
+
+
 # Servis saglik durumu (server.py /health endpoint'i okur).
 STARTED_AT = datetime.now(timezone.utc).isoformat()
 LAST_SCAN_AT: str | None = None
@@ -946,6 +1028,8 @@ STRATEGY_CONF = {
     # push'u ayrica OBSERVE_PUSH kontrol eder (bkz. _delivery_record).
     "S5": ("GOZLEM", "dinamik evren S1+S4 — DOGRULANMAMIS coin, backtest yok"),
     "S6": ("GOZLEM", "dinamik evren S1 — DOGRULANMAMIS coin, backtest yok"),
+    "G1": ("GOZLEM", "gainer+OI+short kalabaligi; tarihsel train kapisi RED"),
+    "DL1": ("GOZLEM", "delist olay arsivi; PRE bekletme RED, POST henuz testsiz"),
 }
 NOTIFY_MIN_CONFIDENCE = _env("NOTIFY_MIN_CONFIDENCE", "ORTA").strip().upper()
 
@@ -1607,7 +1691,31 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
     if sig.get("funding_interval_hours"):
         rows.append(("Funding araligi",
                      f"{sig['funding_interval_hours']:g} saat "
-                     f"(yaklasik {sig.get('funding_window_hours', '?')} saatlik pencere)"))
+                      f"(yaklasik {sig.get('funding_window_hours', '?')} saatlik pencere)"))
+    if "rank_24h" in sig:
+        rows.append(("24s yukselen sirasi", f"#{sig['rank_24h']}"))
+    if "return_24h_pct" in sig:
+        rows.append(("Kapanmis mum 24s getiri", f"{sig['return_24h_pct']:+.3f}%"))
+    if "volume_ratio" in sig:
+        rows.append(("1s hacim / onceki 24s medyan", f"{sig['volume_ratio']:.3f}x"))
+    if "oi_change_1h_pct" in sig:
+        rows.append(("Open interest 1s", f"{sig['oi_change_1h_pct']:+.3f}%"))
+    if "global_long_short_ratio" in sig:
+        rows.append(("Global hesap long/short", str(sig["global_long_short_ratio"])))
+    if sig.get("global_short_account_pct") is not None:
+        rows.append(("Short hesap payi", f"%{sig['global_short_account_pct']:.2f}"))
+    if sig.get("announcement_at"):
+        rows.append(("Resmi duyuru", str(sig["announcement_at"])))
+    if sig.get("delist_at"):
+        rows.append(("Binance spot durdurma", str(sig["delist_at"])))
+    if "bybit_perp_available" in sig:
+        rows.append(("Bybit linear perp", "VAR" if sig["bybit_perp_available"]
+                     else "YOK"))
+    if "okx_perp_available" in sig:
+        rows.append(("OKX USDT swap", "VAR" if sig["okx_perp_available"]
+                     else "YOK"))
+    if sig.get("article_url"):
+        rows.append(("Resmi makale", str(sig["article_url"])))
     return rows
 
 
@@ -1622,7 +1730,21 @@ OBSERVE_WARNING = (
 
 
 def _observe_lines(sig: dict) -> list[str]:
-    return [OBSERVE_WARNING] if sig.get("observe") else []
+    if not sig.get("observe"):
+        return []
+    if sig.get("strategy") == "G1":
+        return [
+            "G1 DOGRULANMADI: tarihsel train'de N=401, 4s net medyan -%0,30 "
+            "ve isabet %45,9. Bu bildirim tum aktif USD-M evreninde ileri "
+            "olcum/inceleme icindir; otomatik islem gerekcesi degildir."
+        ]
+    if sig.get("strategy") == "DL1":
+        return [
+            "DL1 BIR OLAY ALARMIDIR: duyurudan deliste kadar bekletme tarihsel "
+            "olarak cok zararliydi (N=107, medyan -%53,6). Diger borsada short "
+            "hipotezi henuz backtest edilmedi; VAR/YOK yalniz anlik bulunabilirliktir."
+        ]
+    return [OBSERVE_WARNING]
 
 
 def _ref_lines(sig: dict) -> list[str]:
@@ -2250,7 +2372,8 @@ def _delivery_record(sig: dict, push: bool) -> dict:
         # Gozlem sinyalinin push'unu CONF_RANK degil OBSERVE_PUSH belirler:
         # "GOZLEM" kademesi bilerek tum esiklerin altindadir, yoksa
         # NOTIFY_MIN_CONFIDENCE bu kanali her zaman susturur.
-        if not OBSERVE_PUSH:
+        observe_push = sig.get("push_policy_enabled", OBSERVE_PUSH)
+        if not observe_push:
             reasons.append("observe_channel_silent")
     elif CONF_RANK.get(conf, 2) < CONF_RANK.get(NOTIFY_MIN_CONFIDENCE, 1):
         reasons.append("confidence_below_threshold")
@@ -2575,7 +2698,11 @@ def _run_forever_locked(once: bool = False,
     print(f"signal_bot basladi: {len(SYMBOLS)} sembol "
           f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'}), "
           f"{SCAN_INTERVAL_MINUTES}dk aralik "
-          f"(telegram={'acik' if ENABLE_TELEGRAM else 'kapali'})", flush=True)
+           f"(telegram={'acik' if ENABLE_TELEGRAM else 'kapali'})", flush=True)
+    if SHADOW_EXPERIMENTS_ENABLED:
+        print("golge deneyler acik: G1 tum aktif USD-M + DL1 resmi tam-token "
+              f"delist (push={'acik' if SHADOW_PUSH_ENABLED else 'sessiz'})",
+              flush=True)
     if not ENABLE_TELEGRAM:
         if not _ENV_FOUND:
             print(f"NOT: Telegram KAPALI cunku .env bulunamadi.\n"
@@ -2616,6 +2743,10 @@ def _run_forever_locked(once: bool = False,
             else:
                 _start_archive_worker()
             if once:
+                run_shadow_experiments()
+            else:
+                _start_shadow_worker()
+            if once:
                 publish_to_github()
             else:
                 _start_publish_worker()
@@ -2643,7 +2774,8 @@ def _run_forever_locked(once: bool = False,
 
 def _priority(sig: dict) -> int:
     return {"S1+S4": 0, "S1": 1, "S3": 2, "S2": 3,
-            "S5": 8, "S6": 9}.get(sig["strategy"], 9)
+            "S5": 8, "S6": 9, "G1": 10, "DL1": 11}.get(
+                sig["strategy"], 12)
 
 
 def collect_active_setups() -> tuple[list[dict], int]:
@@ -2886,6 +3018,8 @@ def _realized_performance_unlocked(max_signals: int = None,
         except ValueError:
             continue
         if sig.get("strategy", "").startswith("TEST"):
+            continue
+        if sig.get("performance_excluded"):
             continue
         # EVREN FILTRESI (2026-07-26): yalnizca YAPILANDIRILMIS evrendeki
         # semboller olculur. Ek F'de dinamik evren doneminde uretilen cop-coin
@@ -3204,6 +3338,39 @@ STRATEGY_DOCS = {
         "risk": "En yuksek belirsizlikteki gozlem kanali. N>=30 ve farkli "
                 "rejimler gorulmeden guvenilirlik cikarimi yapilamaz.",
     },
+    "G1": {
+        "title": "G1 — Gunluk Yukselen + Hacim/OI + Short Kalabaligi",
+        "how": "Tum aktif Binance USD-M perpetual sozlesmeleri 24 saatlik "
+               "getiriye gore siralanir. Ilk 10'da, kapanmis saatlik hacmi "
+               "onceki 24 saatin medyaninin en az 2 kati, OI artisi en az %2 "
+               "ve global hesap long/short orani 1'in altindaysa golge LONG "
+               "olayi uretilir.",
+        "entry": "Olcum girisi sonraki 1s mum acilisi; canli bildirim fiyatı "
+                 "son kapanmis USD-M 1s mum kapanisidir.",
+        "exit": "Dondurulmus sonuc ufku 4 saattir; +%2/+%3 dokunma ayrica "
+                "kisisel hedef karnesinde izlenir. Bot emir vermez.",
+        "stats": "Tarihsel train RED: N=401, 4s net ortalama -%0,13, medyan "
+                 "-%0,30, isabet %45,9. Bu nedenle guven puani degil GOZLEM.",
+        "risk": "Yukselen coin kovalamak ters donus, spread ve tasfiye riski "
+                "tasir. Long/short verisi hesap sayisidir, para buyuklugu degil.",
+    },
+    "DL1": {
+        "title": "DL1 — Resmi Binance Tam-Token Delist Olay Arsivi",
+        "how": "Yalniz Binance Delisting katalogundaki tam-token spot delist "
+               "duyurularini kabul eder; pair/margin/futures kaldirmalarini "
+               "dislar. Binance spot ile Bybit/OKX perpetual bulunabilirligini "
+               "zaman damgali arşivler.",
+        "entry": "Bu bir giris sinyali degil olay alarmidir. Duyuru, tespit ve "
+                 "delist saatleri ayri kaydedilir.",
+        "exit": "PRE olcumu duyuru sonrasi ilk 1s acilistan delist oncesi son "
+                "kapanisa; POST olcumu dis borsada 4/24/72s short getirisine "
+                "bakacak. POST icin veri yeni birikiyor.",
+        "stats": "DL1-PRE RED: N=107, net medyan -%53,58, isabet %8,4. Donem "
+                 "ici MFE medyani +%18,58 olsa da deliste kadar tutmak cok zararli.",
+        "risk": "Delist varliklarda likidite kaybi, spread, kontratin erken "
+                "kapanmasi ve short edememe riski cok yuksektir; VAR etiketi "
+                "yalniz anlik bulunabilirliktir.",
+    },
 }
 
 
@@ -3239,7 +3406,22 @@ def _signal_why(sig: dict) -> str:
         p.append(f"Son {FUNDING_PERSISTENCE} funding orani ({vals}) "
                  f"{FUNDING_SQUEEZE_THRESHOLD_PCT}% esiginin altinda{window}: "
                  "short'lar "
-                 "long'lara oduyor -> kalabalik short, sikisma adayi.")
+                  "long'lara oduyor -> kalabalik short, sikisma adayi.")
+    elif strat == "G1":
+        p.append(f"24s sirasi #{sig.get('rank_24h')}, getiri "
+                 f"{sig.get('return_24h_pct')}%; 1s hacim "
+                 f"{sig.get('volume_ratio')}x ve OI "
+                 f"{sig.get('oi_change_1h_pct')}% artti.")
+        p.append(f"Global hesap long/short={sig.get('global_long_short_ratio')} "
+                 "(<1 = short hesap sayisi fazla). Tum kosullar kapanmis 1s "
+                 "verisinde birlikte ilk kez saglandi.")
+    elif strat == "DL1":
+        p.append("Resmi Binance tam-token delist duyurusu bulundu; spot pair "
+                 "kaldirma veya margin duyurusu degildir.")
+        p.append(f"Duyuru {sig.get('announcement_at')}; spot islemler "
+                 f"{sig.get('delist_at')} aninda duracak. Bybit perp="
+                 f"{sig.get('bybit_perp_available')}, OKX swap="
+                 f"{sig.get('okx_perp_available')} anlik snapshot olarak kaydedildi.")
     conf = sig.get("confidence")
     evid = sig.get("confidence_note")
     if not conf:
@@ -3298,7 +3480,9 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         ref = sig.get("ref") or {}
         provisional_entry = ref.get("entry_ref") or sig.get("price")
         deadline = bar_t + timedelta(hours=1 + h)
-        matured = h > 0 and now >= bar_t + timedelta(hours=h + 2)
+        performance_excluded = bool(sig.get("performance_excluded"))
+        matured = (not performance_excluded and h > 0
+                   and now >= bar_t + timedelta(hours=h + 2))
         conf = sig.get("confidence") or signal_confidence(strat)[0]
         cached_perf = cache.get(_perf_key(sig)) if matured else None
         if isinstance(cached_perf, dict):
@@ -3351,7 +3535,8 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "entry_market": entry_market,
             "performance_market": performance_market,
             "exit_by": deadline.strftime("%Y-%m-%d %H:%M"),
-            "status": "OLGUN" if matured else "AKTIF",
+            "status": ("OLAY" if performance_excluded else
+                       "OLGUN" if matured else "AKTIF"),
             "remaining_h": (None if matured
                             else max(0, round((deadline - now).total_seconds()
                                               / 3600, 1))),
@@ -3360,6 +3545,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
                                   if price_age_s is not None else None),
             "price_stale": price_stale,
             "pnl_unavailable_reason": (
+                "event_only_no_trade_outcome" if performance_excluded else
                 "entry_and_performance_market_mismatch"
                 if not matured and not same_market else
                 "market_price_stale_or_missing"
@@ -3371,8 +3557,10 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "funding_cost_status": ("not_modeled"
                                     if performance_market == "um_perp"
                                     else "not_applicable"),
-            "pnl_kind": ("gerceklesen_next_open_net_cost_assumption" if matured
-                         else "tahmini_sinyal_kapanisi_net_cost_assumption"),
+            "pnl_kind": ("event_only_no_trade_outcome" if performance_excluded
+                          else "gerceklesen_next_open_net_cost_assumption"
+                          if matured else
+                          "tahmini_sinyal_kapanisi_net_cost_assumption"),
             "market_regime": sig.get("market_regime"),
             "market_regime_source": sig.get("market_regime_source"),
             "market_regime_as_of": sig.get("market_regime_as_of"),
@@ -3390,7 +3578,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         })
     rows.reverse()
     strategies = []
-    for key in ("S1+S4", "S1", "S3", "S2", "S5", "S6"):
+    for key in ("S1+S4", "S1", "S3", "S2", "S5", "S6", "G1", "DL1"):
         bt = STRATEGY_TEST_STATS.get(key, {})
         conf, evid = signal_confidence(key)
         lr = live_rets.get(key, [])
@@ -3403,7 +3591,8 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         ]
         strategies.append({
             "name": key, "confidence": conf, "evidence": evid,
-            "pushed": (OBSERVE_PUSH if key in OBSERVE_STRATEGIES else
+            "pushed": (SHADOW_PUSH_ENABLED if key in SHADOW_STRATEGIES else
+                       OBSERVE_PUSH if key in OBSERVE_STRATEGIES else
                        CONF_RANK.get(conf, 2) >= CONF_RANK.get(
                            NOTIFY_MIN_CONFIDENCE, 1)),
             "bt_h": bt.get("h"), "bt_med": bt.get("med"), "bt_wr": bt.get("wr"),
@@ -3430,6 +3619,10 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "price_target_tracking_enabled": PRICE_TARGET_TRACKING_ENABLED,
             "price_target_levels_pct": list(PRICE_TARGET_LEVELS_PCT),
             "market_regime": market_regime_snapshot(),
+            "shadow_experiments_enabled": SHADOW_EXPERIMENTS_ENABLED,
+            "shadow_push_enabled": SHADOW_PUSH_ENABLED,
+            "shadow_worker_active": SHADOW_WORKER_ACTIVE,
+            "shadow_worker_last_error": SHADOW_WORKER_LAST_ERROR,
             # bildirim kanali sagligi: sinyal uretilse de gonderim
             # basarisiz olabilir; uzaktan gorunur olmali (2026-07-26)
             "telegram_enabled": ENABLE_TELEGRAM,
@@ -4193,11 +4386,16 @@ def main() -> None:
                          "(anahtarlarin dogru kuruldugunu 10 sn'de dogrular)")
     ap.add_argument("--archive-status", action="store_true",
                     help="likidasyon arsivi dosyalarinin kapsama ozetini yaz")
+    ap.add_argument("--shadow-status", action="store_true",
+                    help="G1/DL1 golge olay/snapshot arsivinin kapsama ozetini yaz")
     args = ap.parse_args()
     if args.test_notify:
         run_test_notify()
     elif args.archive_status:
         print(json.dumps(summarize_derivatives_archive(ARCHIVE_DIR),
+                         ensure_ascii=False, indent=2))
+    elif args.shadow_status:
+        print(json.dumps(summarize_shadow_archive(ARCHIVE_DIR),
                          ensure_ascii=False, indent=2))
     elif args.check:
         run_check()

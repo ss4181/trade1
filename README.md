@@ -81,6 +81,30 @@ Varsayılan `OBSERVE_PUSH=true` olduğundan, istek üzerine S5/S6 Telegram
 bildirimleri açıktır. `GOZLEM` etiketi bir başarı/güven seviyesi değil;
 backtest bulunmadığını özellikle anlatır.
 
+## Yeni gölge araştırmalar — G1 / DL1
+
+Bu iki kanal mevcut stratejilere karışmaz; `GOZLEM` etiketiyle bildirim ve
+ileri veri üretir:
+
+| Ad | Evren ve olay | Dondurulmuş ölçüm | Mevcut kanıt |
+|---|---|---|---|
+| **G1** | Tüm aktif Binance USD-M perpetual sözleşmelerinde ilk-10 24s yükselen + 1s hacim ≥2x + OI ≥%2 + global hesap L/S <1 | sonraki 1s açılış → 4s kapanış, 12bp | **RED:** train N=401, net medyan −%0,30, WR %45,9 |
+| **DL1** | Resmî Binance tam-token spot delist duyurusu; Binance spot + Bybit/OKX perp snapshot | PRE: duyuru→delist; POST: dış borsada 4/24/72s short, veri birikince | **PRE RED:** N=107, medyan −%53,58, WR %8,4. POST henüz test edilemez |
+
+G1 her 5 dakikada bir çalışan döngü içinde yalnız yeni kapanmış saat için bir
+kez değerlendirilir; sıralama evreni likidite filtresiz **tüm aktif USDT-marjinli
+perpetual** sözleşmelerdir. DL1 pair/margin/futures kaldırma duyurularını kabul
+etmez. Dış borsa “VAR” alanı short önerisi değil, o andaki point-in-time
+bulunabilirlik kaydıdır.
+
+`shadow_market_YYYY-MM.jsonl` tüm G1 ilk-10 incelemelerini ve aktif DL1
+snapshot'larını; `shadow_events_YYYY-MM.jsonl` yalnız tetiklenen olayları tutar.
+Dosyalar Git'e/Pages'e gitmez. Durum: `python signal_bot.py --shadow-status`.
+Kapatma: `SHADOW_EXPERIMENTS_ENABLED=false`; yalnız bildirimi susturma:
+`SHADOW_PUSH_ENABLED=false`. Dondurulmuş kurallar:
+[`PREREG_GAINER_SHORT_CROWD.md`](research/PREREG_GAINER_SHORT_CROWD.md) ve
+[`PREREG_DELIST_EVENT.md`](research/PREREG_DELIST_EVENT.md).
+
 Yeni bağımsız strateji adayı olarak sabit kurallı long-only VWAP mean-reversion
 (`S7`) sınandı. Çekirdek-30 train'de N=251, net ortalama −%0.219, isabet %51.8
 ve gün-kümeli p=0.8803 çıktığı için önceden kayıtlı kapıda elendi; test dilimine
@@ -174,15 +198,19 @@ seti biriktirir:
   WebSocket akışındaki gerçekleşmiş likidasyon snapshot'ları ve bağlantı/kesinti
   kayıtları. Binance sembol başına her 1000 ms'de yalnız son olayı yayımladığı
   için bu veri eksiksiz işlem bandı olarak yorumlanmaz.
+- `shadow_market_YYYY-MM.jsonl` / `shadow_events_YYYY-MM.jsonl`: G1 ilk-10
+  piyasa fotoğrafları ile DL1 delist/dış-borsa snapshot ve olayları.
 
 Arşiv sinyal üretmez, güven puanını değiştirmez ve emir açmaz. Kapsamı görmek:
 
 ```bash
 python signal_bot.py --archive-status
+python signal_bot.py --shadow-status
 ```
 
 Dosyalar Git'e veya GitHub Pages'a gönderilmez. Varsayılan iki kanal da açıktır;
 `ARCHIVE_MARKET_DATA=false` ve/veya `ARCHIVE_FORCE_ORDERS=false` ile kapatılabilir.
+Gölge kanal ayrıca `SHADOW_EXPERIMENTS_ENABLED=false` ile kapatılabilir.
 Araştırma kararı en az 3–6 aylık veri ve önceden dondurulmuş train/test protokolü
 oluşmadan canlı stratejiye dönüştürülmez. Kurallar veri gelmeden önce
 [`research/PREREG_FORWARD_SQUEEZE_ARCHIVE.md`](research/PREREG_FORWARD_SQUEEZE_ARCHIVE.md)
