@@ -65,6 +65,11 @@ from shadow_experiments import (
     scan_g1 as scan_shadow_gainers,
     summarize_archive as summarize_shadow_archive,
 )
+from research_monitor import (
+    build_research_readiness,
+    format_research_readiness,
+    weekly_slot as research_weekly_slot,
+)
 
 # --------------------------------------------------------------------------
 # konfigurasyon (.env ile ezilebilir; gerekceler .env.example ve README'de)
@@ -197,6 +202,18 @@ SHADOW_MAX_PUSH_PER_RUN = _env("SHADOW_MAX_PUSH_PER_RUN", 20, cast=int)
 SHADOW_DELIST_POLL_MINUTES = _env(
     "SHADOW_DELIST_POLL_MINUTES", 30, cast=int)
 SHADOW_STRATEGIES = {"G1", "DL1"}
+
+# Haftalık döngü yalnız arşiv kalitesini/örnek hazırlığını raporlar. Strateji
+# eşiklerini otomatik optimize ETMEZ: 90 gün keşif sonunda kural ayrıca ön
+# kaydedilir, RESEARCH_OOS_START_UTC o anda yazılır ve 90 gün dokunulmaz OOS
+# verisi beklenir.
+RESEARCH_WEEKLY_SUMMARY_ENABLED = _env(
+    "RESEARCH_WEEKLY_SUMMARY_ENABLED", True, cast=_flag)
+RESEARCH_WEEKLY_WEEKDAY = _env("RESEARCH_WEEKLY_WEEKDAY", 0, cast=int)
+RESEARCH_WEEKLY_HOUR_UTC = _env("RESEARCH_WEEKLY_HOUR_UTC", 6, cast=int)
+RESEARCH_DISCOVERY_DAYS = _env("RESEARCH_DISCOVERY_DAYS", 90, cast=int)
+RESEARCH_OOS_DAYS = _env("RESEARCH_OOS_DAYS", 90, cast=int)
+RESEARCH_OOS_START_UTC = _env("RESEARCH_OOS_START_UTC", "").strip()
 
 # 5dk tarama: sinyaller 1h bar KAPANISINDA dogar — daha sik tarama sinyal
 # setini DEGISTIRMEZ (kenar-tetikleme ayni kosulu tekrar bildirmez); kazanci
@@ -629,6 +646,8 @@ _market_regime_lock = threading.Lock()
 _last_market_regime_refresh = 0.0
 _last_archive_hour: str | None = None
 ARCHIVE_DIR = Path(_env("ARCHIVE_DIR", str(Path(__file__).parent))).expanduser()
+RESEARCH_MONITOR_STATE_FILE = Path(__file__).parent / _env(
+    "RESEARCH_MONITOR_STATE_FILE", ".research_monitor_state.json")
 _archive_worker_lock = threading.Lock()
 ARCHIVE_WORKER_ACTIVE = False
 ARCHIVE_WORKER_LAST_ERROR: str | None = None
@@ -1944,6 +1963,7 @@ def _telegram_send_text(text: str, chat_id: str | None = None,
 MENU_BUTTONS = {
     "🔎 Kontrol": "/check",
     "📊 Performans": "/performans",
+    "🧪 Araştırma": "/arastirma",
     "ℹ️ Durum": "/status",
     "❓ Yardim": "/help",
     "👥 Aboneler": "/aboneler",
@@ -1952,7 +1972,8 @@ MENU_BUTTONS = {
 
 def _menu_keyboard(owner: bool = False) -> dict:
     """Kalici menu klavyesi. Sahibe ekstra 'Aboneler' dugmesi gosterilir."""
-    rows = [["🔎 Kontrol", "📊 Performans"], ["ℹ️ Durum", "❓ Yardim"]]
+    rows = [["🔎 Kontrol", "📊 Performans"],
+            ["🧪 Araştırma", "ℹ️ Durum"], ["❓ Yardim"]]
     if owner:
         rows.append(["👥 Aboneler"])
     return {"keyboard": rows, "resize_keyboard": True,
@@ -2544,6 +2565,62 @@ def scan_all(state: ScanState) -> int:
 # sigortasi). Kapatmak: DAILY_SUMMARY_HOUR_UTC=-1
 DAILY_SUMMARY_HOUR_UTC = _env("DAILY_SUMMARY_HOUR_UTC", 6)   # 06 UTC = 09 TR
 _last_summary_day: str | None = None
+_last_research_summary_week: str | None = None
+
+
+def research_readiness_report() -> dict:
+    """Yerel ileri arşivin OI araştırmasına hazır oluşunu ağsız ölç."""
+    return build_research_readiness(
+        ARCHIVE_DIR, discovery_days=RESEARCH_DISCOVERY_DAYS,
+        oos_days=RESEARCH_OOS_DAYS,
+        oos_start_utc=RESEARCH_OOS_START_UTC or None)
+
+
+def _saved_research_week() -> str | None:
+    try:
+        data = json.loads(RESEARCH_MONITOR_STATE_FILE.read_text(
+            encoding="utf-8"))
+        return str(data.get("last_week") or "") or None
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _save_research_week(slot: str) -> None:
+    try:
+        tmp = RESEARCH_MONITOR_STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"last_week": slot}, separators=(",", ":")),
+                       encoding="utf-8")
+        tmp.replace(RESEARCH_MONITOR_STATE_FILE)
+    except OSError as exc:
+        print(f"uyari: haftalik arastirma durumu kaydedilemedi: {exc}",
+              file=sys.stderr, flush=True)
+
+
+def _maybe_weekly_research_summary() -> None:
+    """Haftanın zamanından sonraki ilk turda sahibine tek hazırlık raporu."""
+    global _last_research_summary_week
+    if not RESEARCH_WEEKLY_SUMMARY_ENABLED or not ENABLE_TELEGRAM:
+        return
+    slot = research_weekly_slot(
+        datetime.now(timezone.utc), RESEARCH_WEEKLY_WEEKDAY,
+        RESEARCH_WEEKLY_HOUR_UTC)
+    if not slot:
+        return
+    if _last_research_summary_week is None:
+        _last_research_summary_week = _saved_research_week()
+    if _last_research_summary_week == slot:
+        return
+    # Aynı süreçte Telegram hatası her 5 dakikada bir tekrar denenmesin.
+    _last_research_summary_week = slot
+    try:
+        report = research_readiness_report()
+        if _telegram_send_text(format_research_readiness(report),
+                               chat_id=TELEGRAM_CHAT_ID):
+            _save_research_week(slot)
+    except Exception as exc:
+        print(f"uyari: haftalik arastirma raporu olusturulamadi: "
+              f"{type(exc).__name__}: {_redact(str(exc))}",
+              file=sys.stderr, flush=True)
 
 
 def _maybe_daily_summary() -> None:
@@ -2753,6 +2830,7 @@ def _run_forever_locked(once: bool = False,
             if SCANS_COMPLETED % 12 == 0:
                 _start_performance_worker(max_signals=40)
             _maybe_daily_summary()
+            _maybe_weekly_research_summary()
         except Exception as e:  # tek dongu hatasi 7/24 servisi dusurmemeli
             LAST_SCAN_FAILURE_AT = datetime.now(timezone.utc).isoformat()
             CONSECUTIVE_SCAN_FAILURES += 1
@@ -4069,6 +4147,7 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
             "Asagidaki <b>dugmeleri</b> kullanabilirsin (ya da komut yazabilirsin):\n"
             "/check — su an aktif kurulumlar\n"
             "/performans — canli sonuclar vs backtest\n"
+            "/arastirma — OI/funding/likidasyon veri hazirligi\n"
             "/status — bot durumu\n"
             "/myid — kendi chat ID'in\n"
             "/katil — botu kullanmak icin izin iste\n"
@@ -4174,6 +4253,21 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
                                 chat_id=chat_id)
         finally:
             _check_lock.release()
+    elif cmd in ("arastirma", "research", "oi"):
+        if not _check_lock.acquire(blocking=False):
+            _telegram_send_text("Baska bir islem suruyor, birazdan tekrar dene.",
+                                chat_id=chat_id)
+            return
+        try:
+            _telegram_send_text(
+                format_research_readiness(research_readiness_report()),
+                chat_id=chat_id)
+        except Exception as e:
+            _telegram_send_text(
+                f"Arastirma arsivi okunamadi: {_html.escape(str(e))}",
+                chat_id=chat_id)
+        finally:
+            _check_lock.release()
     elif cmd == "check":
         if not _check_lock.acquire(blocking=False):
             _telegram_send_text("Zaten bir tarama suruyor, birkac saniye sonra "
@@ -4250,7 +4344,7 @@ def telegram_command_loop() -> None:
     offset: int | None = None
     conflict_streak = 0
     print("telegram komut dinleyici basladi "
-          "(/start /check /performans /status /myid)", flush=True)
+          "(/start /check /performans /arastirma /status /myid)", flush=True)
     while True:
         try:
             params = {"timeout": 30}
@@ -4388,6 +4482,8 @@ def main() -> None:
                     help="likidasyon arsivi dosyalarinin kapsama ozetini yaz")
     ap.add_argument("--shadow-status", action="store_true",
                     help="G1/DL1 golge olay/snapshot arsivinin kapsama ozetini yaz")
+    ap.add_argument("--research-status", action="store_true",
+                    help="OI/funding/likidasyon arastirma hazirligini yaz")
     args = ap.parse_args()
     if args.test_notify:
         run_test_notify()
@@ -4396,6 +4492,9 @@ def main() -> None:
                          ensure_ascii=False, indent=2))
     elif args.shadow_status:
         print(json.dumps(summarize_shadow_archive(ARCHIVE_DIR),
+                         ensure_ascii=False, indent=2))
+    elif args.research_status:
+        print(json.dumps(research_readiness_report(),
                          ensure_ascii=False, indent=2))
     elif args.check:
         run_check()

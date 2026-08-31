@@ -206,7 +206,20 @@ Arşiv sinyal üretmez, güven puanını değiştirmez ve emir açmaz. Kapsamı 
 ```bash
 python signal_bot.py --archive-status
 python signal_bot.py --shadow-status
+python signal_bot.py --research-status
 ```
+
+Bot her pazartesi 06:00 UTC'den (Türkiye 09:00) sonraki ilk turda sahibine
+Telegram'dan haftalık araştırma hazırlık raporu gönderir. Aynı rapor istenen
+anda `/arastirma` komutuyla alınabilir. Rapor satır/süre, saat kapsaması, OI,
+funding, long/short ve basis doluluğu ile likidasyon günlerini gösterir.
+
+Bu döngü modeli her hafta yeniden eğitmez. İlk 90 gün keşif/veri-kalitesi
+dönemidir. Kalite kapısı geçilince OI+funding+long/short+likidasyon adayı ayrıca
+ön-kaydedilip kural dondurulur ve o an `RESEARCH_OOS_START_UTC` yazılır. Sonraki
+90 gün dokunulmamış OOS testidir; ancak bu ikinci dönem tamamlanınca kabul/ret
+kararı verilir. Böylece haftalık yeniden ayarlamanın yaratacağı overfitting ve
+"sonuca ikinci bakış" önlenir.
 
 Dosyalar Git'e veya GitHub Pages'a gönderilmez. Varsayılan iki kanal da açıktır;
 `ARCHIVE_MARKET_DATA=false` ve/veya `ARCHIVE_FORCE_ORDERS=false` ile kapatılabilir.

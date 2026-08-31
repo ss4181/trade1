@@ -811,6 +811,31 @@ güven/sessiz-kayıt politikası korunur. Tablet market/force-order arşivleri
 Git'e bilerek gönderilmediğinden bu checkout onların gün sayısını kanıtlayamaz;
 cihazda `--archive-status` ve yeni `--shadow-status` kullanılmalıdır.
 
+## Ek U — OI araştırması için otomatik değerlendirme döngüsü (2026-08-31)
+
+OI verisinin biriktirilip unutulmaması için `research_monitor.py` ile sabit bir
+takvim bağlandı. Bot her pazartesi 06:00 UTC sonrası ilk turda ve Telegram
+`/arastirma` komutunda şu alanları ölçer: saatlik market satır/kapsama süresi,
+OI/funding/global-LS/basis/taker doluluğu, force-order olay ve gözlenen gün
+sayısı, G1/DL1 ileri olayları. Aynı çıktı terminalde `--research-status` ile
+alınır. Ölçüm eşik veya strateji kararına otomatik yazmaz.
+
+Araştırma protokolü iki ardışık ve ayrık dönemdir:
+
+1. **İlk 90 gün — keşif/freeze:** En az %80 saat kapsaması, %90 OI, %80 funding
+   ve global-LS doluluğu, son 48 saatte taze kayıt ve en az 30 force-order
+   gözlem günü aranır. Kapı geçerse OI+funding+long/short+likidasyon hipotezi
+   analiz edilir ve tek kural ön-kaydedilir.
+2. **Sonraki 90 gün — dokunulmamış OOS:** Freeze anı
+   `RESEARCH_OOS_START_UTC` olarak kaydedilir. Bu dönemde parametre veya seçim
+   değiştirilmez. Dönem bitince minimum olay sayısı, maliyetli net getiriler,
+   medyan/kuyruklar ve bağımsız olay günleriyle kabul/ret yapılır.
+
+Dolayısıyla ilk gerçek strateji-iyileştirme görüşmesi 90 günlük kalite kapısı
+geçildiğinde, güvenilirlik kararı ise en erken 180 günlük döngü sonunda yapılır.
+Haftalık yeniden optimizasyon bilinçli olarak yasaktır; yalnız veri sağlığı
+raporlanır.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip

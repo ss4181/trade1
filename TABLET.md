@@ -425,8 +425,20 @@ terminalden dosya kapsamını istediğin an kontrol edebilirsin:
 cd ~/trade1
 python signal_bot.py --archive-status
 python signal_bot.py --shadow-status
+python signal_bot.py --research-status
 ls -lh market_archive_*.jsonl liquidation_archive_*.jsonl shadow_*.jsonl 2>/dev/null
 ```
+
+Telegram'da `/arastirma` yazınca OI/funding/long-short/basis alanlarının
+doluluğunu, saat kapsamasını, likidasyon günlerini ve ilk değerlendirmeye kalan
+süreyi görürsün. Bot aynı raporu varsayılan olarak her pazartesi 09:00 Türkiye
+saatinden sonraki ilk taramada otomatik gönderir. Bu haftalık döngü yalnız veri
+sağlığını günceller; strateji eşiklerini otomatik değiştirmez.
+
+Protokol: ilk 90 gün keşif ve veri-kalitesi, ardından aday kuralın ön-kaydı;
+`RESEARCH_OOS_START_UTC` bu dondurma anında yazılır ve sonraki 90 gün yalnız
+dokunulmamış OOS veri toplanır. 180 günlük döngü tamamlanmadan OI stratejisi
+canlı/güvenilir etiketi alamaz.
 
 Henüz likidasyon olayı gelmediyse dosyada yalnız `connected` durum satırı
 bulunması normaldir. `--archive-status`, kaç olay ve durum kaydı bulunduğunu,
