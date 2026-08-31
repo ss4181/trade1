@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 
 SCHEMA_VERSION = "binance-force-order-v1"
-DEFAULT_STREAM_URL = "wss://fstream.binance.com/ws/!forceOrder@arr"
+DEFAULT_STREAM_URL = "wss://fstream.binance.com/market/ws/!forceOrder@arr"
 ARCHIVE_PREFIX = "liquidation_archive"
 MAX_MESSAGE_BYTES = 1_000_000
 MAX_ERROR_CHARS = 300
@@ -35,6 +35,10 @@ DEFAULT_HEARTBEAT_SECONDS = 300.0
 
 class ArchivePayloadError(ValueError):
     """Raised when a WebSocket payload is not a valid force-order event."""
+
+
+class ArchiveIgnoredEvent(ValueError):
+    """Valid merged-stream event outside the USD-M archive scope."""
 
 
 def _utc_iso_from_ms(value: int) -> str:
@@ -99,6 +103,12 @@ def normalize_force_order(payload: str | bytes | dict[str, Any],
     event = decoded.get("data", decoded)
     if not isinstance(event, dict) or event.get("e") != "forceOrder":
         raise ArchivePayloadError("message is not a forceOrder event")
+    # 2026 CM/UM migration merged the all-market stream. Binance documents
+    # st=1 as USD-M and st=2 as COIN-M. Legacy payloads have no st and remain
+    # valid; explicit COIN-M events are silently excluded from this archive.
+    symbol_type = event.get("st")
+    if str(symbol_type) == "2":
+        raise ArchiveIgnoredEvent("COIN-M event outside USD-M scope")
     order = event.get("o")
     if not isinstance(order, dict):
         raise ArchivePayloadError("forceOrder payload has no order object")
@@ -137,6 +147,9 @@ def normalize_force_order(payload: str | bytes | dict[str, Any],
         "record_type": "force_order",
         "event_id": event_id,
         "source": "binance_usdm_force_order_snapshot",
+        "market_segment": "USD_M",
+        "binance_symbol_type": symbol_type,
+        "pair_symbol": str(event.get("ps") or symbol),
         "capture_semantics": "latest_per_symbol_per_1000ms_snapshot",
         "symbol": symbol,
         "liquidation_side": (
@@ -285,6 +298,7 @@ class ForceOrderArchiveWorker:
             "last_event_at": None,
             "events_written": 0,
             "duplicates_skipped": 0,
+            "non_usdm_ignored": 0,
             "parse_errors": 0,
             "reconnects": 0,
             "last_error": None,
@@ -317,6 +331,9 @@ class ForceOrderArchiveWorker:
         try:
             record = normalize_force_order(message, received_at_ms=now_ms)
             written = self.writer.append(record)
+        except ArchiveIgnoredEvent:
+            self._increment("non_usdm_ignored")
+            return
         except (ArchivePayloadError, OSError, ValueError) as exc:
             self._increment("parse_errors")
             self._set(last_error=f"{type(exc).__name__}: {_safe_error(exc)}")

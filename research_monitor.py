@@ -153,6 +153,8 @@ def build_research_readiness(
 
     liquidation_events = liquidation_status_rows = 0
     liquidation_days: set[str] = set()
+    liquidation_event_days: set[str] = set()
+    liquidation_status_days: set[str] = set()
     liq_first = liq_last = None
     for row in _jsonl(root.glob("liquidation_archive_*.jsonl")):
         if row is None:
@@ -163,8 +165,12 @@ def build_research_readiness(
                             or row.get("event_time_utc"))
         if record_type == "force_order":
             liquidation_events += 1
+            if stamp:
+                liquidation_event_days.add(stamp.date().isoformat())
         elif record_type == "stream_status":
             liquidation_status_rows += 1
+            if stamp:
+                liquidation_status_days.add(stamp.date().isoformat())
         else:
             continue
         if stamp and (research_first is None or stamp >= research_first):
@@ -198,7 +204,7 @@ def build_research_readiness(
         "long_short_completeness_80pct": (
             completeness["global_ls_ratio"] or 0) >= 80,
         "recent_archive_48h": stale_hours is not None and stale_hours <= 48,
-        "liquidation_observed_30_days": len(liquidation_days) >= 30,
+        "liquidation_event_days_30": len(liquidation_event_days) >= 30,
     }
     quality_ready = all(quality_checks.values())
 
@@ -270,7 +276,11 @@ def build_research_readiness(
             "events": liquidation_events,
             "status_rows": liquidation_status_rows,
             "observed_days": len(liquidation_days),
+            "event_days": len(liquidation_event_days),
+            "status_days": len(liquidation_status_days),
             "first_utc": _iso(liq_first), "last_utc": _iso(liq_last),
+            "stream_suspect": (
+                liquidation_events == 0 and liquidation_status_rows >= 12),
         },
         "shadow": {
             "g1_events": g1_events, "dl1_events": dl1_events,
@@ -303,6 +313,11 @@ def format_research_readiness(report: dict) -> str:
     def shown(value, suffix=""):
         return "—" if value is None else f"{value}{suffix}"
 
+    stream_warning = (
+        "⚠️ Baglanti kaydi var ama olay yok: WebSocket akisi supheli.\n"
+        if liq.get("stream_suspect") else "")
+    review_suffix = (f" ({report['days_to_review']} gun)"
+                     if report["days_to_review"] is not None else "")
     return (
         "🧪 <b>Haftalik arastirma hazirlik raporu</b>\n"
         f"Asama: <b>{phase_names.get(report['phase'], report['phase'])}</b>\n"
@@ -314,13 +329,13 @@ def format_research_readiness(report: dict) -> str:
         f"%{shown(fields['funding_rate_snapshot'])} · long/short "
         f"%{shown(fields['global_ls_ratio'])} · basis "
         f"%{shown(fields['basis'])}\n"
-        f"Likidasyon arsivi: {liq['events']} olay · "
-        f"{liq['observed_days']} gozlenen gun\n"
+        f"Likidasyon arsivi: {liq['events']} olay · {liq['event_days']} olay "
+        f"gunu · {liq['status_days']} baglanti gunu\n"
+        f"{stream_warning}"
         f"Golge olaylar: G1={shadow['g1_events']} · DL1={shadow['dl1_events']} · "
         f"bagimsiz gun={shadow['independent_event_days']}\n"
         f"Sonraki kontrol: {report['next_review_utc'] or 'veri baslayinca'}"
-        + (f" ({report['days_to_review']} gun)" if report["days_to_review"]
-           is not None else "") + "\n"
+        f"{review_suffix}\n"
         f"Karar: {report['next_action']}\n"
         "<i>Bu rapor veri hazirligini olcer; otomatik esik degistirmez ve "
         "yatirim sinyali degildir.</i>"

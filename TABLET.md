@@ -398,6 +398,8 @@ Bot üç bağımsız arşiv ailesi tutar:
    likidasyon snapshot'larını ve bağlantı/kesinti anlarını
    `liquidation_archive_YYYY-MM.jsonl` dosyasına yazar. Bu, Binance'in sembol
    başına 1000 ms'deki son olayı veren snapshot akışıdır; eksiksiz tape değildir.
+   Güncel Binance yolu `/market/ws/!forceOrder@arr` olmalıdır. 23 Nisan 2026'da
+   kapanan eski `/ws/!forceOrder@arr` yolu heartbeat üretse bile olay vermez.
 3. `shadow_market_YYYY-MM.jsonl` ve `shadow_events_YYYY-MM.jsonl`, G1'in tüm
    aktif USD-M evrenindeki ilk-10 yükselen incelemelerini ve DL1'in resmî
    tam-token delist + Binance/Bybit/OKX snapshot'larını tutar. Bunlar işlem
@@ -439,6 +441,16 @@ Protokol: ilk 90 gün keşif ve veri-kalitesi, ardından aday kuralın ön-kayd�
 `RESEARCH_OOS_START_UTC` bu dondurma anında yazılır ve sonraki 90 gün yalnız
 dokunulmamış OOS veri toplanır. 180 günlük döngü tamamlanmadan OI stratejisi
 canlı/güvenilir etiketi alamaz.
+
+Eldeki veriyi keşif amaçlı hemen ölçmek için:
+
+```bash
+python research/explore_forward_oi.py --dir .
+python signal_bot.py --archive-status
+```
+
+İlk komut stratejiyi değiştirmez; sabit filtre merdiveninin 4 saatlik sonuçlarını
+gösterir. İkinci komutta `events` değeri yeni sürümden sonra artmalıdır.
 
 Henüz likidasyon olayı gelmediyse dosyada yalnız `connected` durum satırı
 bulunması normaldir. `--archive-status`, kaç olay ve durum kaydı bulunduğunu,

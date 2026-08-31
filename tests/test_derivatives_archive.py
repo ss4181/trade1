@@ -9,7 +9,9 @@ import unittest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from derivatives_archive import (
+    ArchiveIgnoredEvent,
     ArchivePayloadError,
+    DEFAULT_STREAM_URL,
     ForceOrderArchiveWorker,
     MonthlyJsonlArchive,
     normalize_force_order,
@@ -59,6 +61,20 @@ class NormalizeTests(unittest.TestCase):
         with self.assertRaises(ArchivePayloadError):
             normalize_force_order(broken)
 
+    def test_new_market_path_and_merged_stream_usdm_filter(self) -> None:
+        self.assertEqual(
+            DEFAULT_STREAM_URL,
+            "wss://fstream.binance.com/market/ws/!forceOrder@arr")
+        usdm = payload()
+        usdm.update({"st": 1, "ps": "BTCUSDT"})
+        record = normalize_force_order(usdm)
+        self.assertEqual(record["market_segment"], "USD_M")
+        self.assertEqual(record["binance_symbol_type"], 1)
+        coinm = payload()
+        coinm["st"] = 2
+        with self.assertRaises(ArchiveIgnoredEvent):
+            normalize_force_order(coinm)
+
 
 class WriterTests(unittest.TestCase):
     def test_duplicate_is_suppressed_across_restart(self) -> None:
@@ -98,10 +114,14 @@ class WorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             worker = ForceOrderArchiveWorker(directory)
             worker._on_message(None, json.dumps(payload()))
+            coinm = payload()
+            coinm["st"] = 2
+            worker._on_message(None, json.dumps(coinm))
             worker._on_message(None, "not-json")
             status = worker.snapshot()
             self.assertEqual(status["events_written"], 1)
             self.assertEqual(status["parse_errors"], 1)
+            self.assertEqual(status["non_usdm_ignored"], 1)
             self.assertIn("ArchivePayloadError", status["last_error"])
             self.assertEqual(summarize_archive(directory)["events"], 1)
 

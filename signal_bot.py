@@ -664,6 +664,11 @@ SHADOW_WORKER_LAST_ERROR: str | None = None
 ARCHIVE_FORCE_ORDERS = _env("ARCHIVE_FORCE_ORDERS", True, cast=_flag)
 FORCE_ORDER_STREAM_URL = _env(
     "FORCE_ORDER_STREAM_URL", DEFAULT_FORCE_ORDER_STREAM_URL)
+if FORCE_ORDER_STREAM_URL.rstrip("/") == \
+        "wss://fstream.binance.com/ws/!forceOrder@arr":
+    # Binance legacy yolu 2026-04-23'te kapattı. Eski .env override'i sessiz
+    # heartbeat üretip sıfır olay bırakmasın; bilinen eski değeri güvenle taşı.
+    FORCE_ORDER_STREAM_URL = DEFAULT_FORCE_ORDER_STREAM_URL
 _force_order_archive_worker: ForceOrderArchiveWorker | None = None
 _force_order_archive_lock = threading.Lock()
 

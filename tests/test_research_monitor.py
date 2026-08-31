@@ -59,6 +59,7 @@ class ResearchMonitorTests(unittest.TestCase):
         self.assertTrue(report["quality_ready"])
         self.assertEqual(report["market"]["hour_coverage_pct"], 100.0)
         self.assertEqual(report["liquidations"]["observed_days"], 30)
+        self.assertEqual(report["liquidations"]["event_days"], 30)
         self.assertEqual(report["shadow"]["g1_events"], 1)
 
     def test_missing_required_field_blocks_freeze(self):
@@ -110,6 +111,21 @@ class ResearchMonitorTests(unittest.TestCase):
                 root, now=datetime(2026, 7, 1, 1, tzinfo=timezone.utc))
         self.assertEqual(report["market"]["rows"], 1)
         self.assertEqual(report["market"]["symbols"], 1)
+
+    def test_heartbeats_without_events_do_not_pass_liquidation_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _start, now = self._archive(root)
+            path = root / "liquidation_archive_2026-01.jsonl"
+            rows = [json.loads(line) for line in path.read_text(
+                encoding="utf-8").splitlines()]
+            path.write_text("\n".join(json.dumps(row) for row in rows
+                                      if row["record_type"] == "stream_status")
+                            + "\n", encoding="utf-8")
+            report = monitor.build_research_readiness(root, now=now)
+        self.assertFalse(report["quality_ready"])
+        self.assertEqual(report["liquidations"]["event_days"], 0)
+        self.assertTrue(report["liquidations"]["stream_suspect"])
 
 
 if __name__ == "__main__":

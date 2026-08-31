@@ -836,6 +836,20 @@ geçildiğinde, güvenilirlik kararı ise en erken 180 günlük döngü sonunda 
 Haftalık yeniden optimizasyon bilinçli olarak yasaktır; yalnız veri sağlığı
 raporlanır.
 
+Tablet denetiminde 24,9 günlük tam-alanlı market verisi (45.123 satır, 135
+sembol, saat kapsaması %84,3) bulundu; bu keşif için kullanılabilir fakat OOS
+değildir. `research/explore_forward_oi.py` top-10 yükselen → 5m taker-hacim
+anomalisi → OI artışı → short hesap çoğunluğu → funding yükselişi filtrelerini
+sabit sırayla ayrıştırır; giriş sonraki saatlik snapshot, çıkış +4 saat ve maliyet
+12bp'dir. Sonuç yalnız hipotez/bottleneck tanısıdır.
+
+Aynı denetimde 23 gün ve 8.109 stream-status satırına karşın sıfır force-order
+olayı görüldü. Kök neden Binance'in eski WebSocket `/ws/` yolunu 23 Nisan
+2026'da kapatmasıdır. Arşiv `/market/ws/!forceOrder@arr` yoluna taşındı; birleşik
+UM/CM payload'larında yalnız `st=1` USD-M kaydedilir. Kalite kapısı artık
+heartbeat gününü değil en az 30 gerçek force-order olay gününü ister ve bağlantı
+varken olay yoksa açık arıza uyarısı üretir. Kayıp dönem geriye doldurulamaz.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip

@@ -198,6 +198,9 @@ seti biriktirir:
   WebSocket akışındaki gerçekleşmiş likidasyon snapshot'ları ve bağlantı/kesinti
   kayıtları. Binance sembol başına her 1000 ms'de yalnız son olayı yayımladığı
   için bu veri eksiksiz işlem bandı olarak yorumlanmaz.
+  Binance'in 23 Nisan 2026'da kapattığı eski `/ws/` yolu kullanılmaz; güncel
+  `/market/ws/` yolu ve birleşik UM/CM akışında yalnız `st=1` USD-M olayları
+  kabul edilir. Heartbeat olup gerçek olay yoksa `/arastirma` arıza uyarısı verir.
 - `shadow_market_YYYY-MM.jsonl` / `shadow_events_YYYY-MM.jsonl`: G1 ilk-10
   piyasa fotoğrafları ile DL1 delist/dış-borsa snapshot ve olayları.
 
@@ -220,6 +223,16 @@ dönemidir. Kalite kapısı geçilince OI+funding+long/short+likidasyon adayı a
 90 gün dokunulmamış OOS testidir; ancak bu ikinci dönem tamamlanınca kabul/ret
 kararı verilir. Böylece haftalık yeniden ayarlamanın yaratacağı overfitting ve
 "sonuca ikinci bakış" önlenir.
+
+Mevcut keşif verisini eşik değiştirmeden hemen incelemek için:
+
+```bash
+python research/explore_forward_oi.py --dir .
+```
+
+Çıktı aynı sabit merdivende top-10 yükselen, 5m taker-hacim anomalisi, OI artışı,
+short hesap çoğunluğu ve funding değişiminin 4 saatlik net sonuca kademeli
+katkısını gösterir. Bu tablo OOS değildir; yalnız bottleneck/hipotez keşfidir.
 
 Dosyalar Git'e veya GitHub Pages'a gönderilmez. Varsayılan iki kanal da açıktır;
 `ARCHIVE_MARKET_DATA=false` ve/veya `ARCHIVE_FORCE_ORDERS=false` ile kapatılabilir.
