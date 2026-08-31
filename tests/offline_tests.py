@@ -104,7 +104,7 @@ def test_coin_price_target_tracking(tmpdir):
         bot.PRICE_TARGET_STATE_FILE = Path(tmpdir) / "price-targets.json"
         bot.PRICE_TARGET_STATE = bot._empty_price_target_state()
         bot.PRICE_TARGET_TRACKING_ENABLED = True
-        bot.PRICE_TARGET_LEVELS_PCT = (2.0, 3.0)
+        bot.PRICE_TARGET_LEVELS_PCT = (2.0, 3.0, 5.0, 10.0)
         record = {
             "event_id": "a" * 32, "strategy": "S1", "symbol": "BTCUSDT",
             "direction": "LONG", "price": 100.0, "horizon_hours": 24,
@@ -113,7 +113,10 @@ def test_coin_price_target_tracking(tmpdir):
         }
         profile = bot._register_price_targets(record)
         assert profile and profile["basis"] == "signal_notification_price"
-        assert [t["price"] for t in profile["targets"]] == [102.0, 103.0]
+        assert [t["level_pct"] for t in profile["targets"]] == [2, 3, 5, 10]
+        assert all(abs(got - want) < 1e-9 for got, want in zip(
+            [t["price"] for t in profile["targets"]],
+            [102.0, 103.0, 105.0, 110.0]))
         # 12:01 bildirimi: 12:00-12:05 mumu sayilmaz; ilk tam mum 12:05'tir.
         event = bot.PRICE_TARGET_STATE["events"][record["event_id"]]
         assert event["next_start_ms"] == 1785585900000
@@ -137,16 +140,30 @@ def test_coin_price_target_tracking(tmpdir):
         assert event["targets"]["3"]["hit_at"] is None
         assert event["max_favorable_pct"] == 2.2
         assert event["max_adverse_pct"] == -1.3
+        assert event["targets"]["2"]["max_adverse_before_hit_pct"] == -1.3
+        assert event["targets"]["2"]["minutes_to_hit_upper"] == 5.0
         assert bot._apply_price_target_bars(event, [], start + 300_000) == []
 
         second_hits = bot._apply_price_target_bars(event, [{
             "open_time": start + 300_000, "high": 103.1, "low": 99.5,
             "close_time": start + 599_999,
         }], start + 600_000)
-        assert second_hits == ["3"] and event["status"] == "completed"
+        assert second_hits == ["3"] and event["status"] == "active"
+        third_hits = bot._apply_price_target_bars(event, [{
+            "open_time": start + 600_000, "high": 110.1, "low": 99.0,
+            "close_time": start + 899_999,
+        }], start + 900_000)
+        assert third_hits == ["5", "10"]
+        # Aktif olaylarda erken kazanan / geç kalan sansürü oranı şişirmemeli.
+        pending_summary = bot.price_target_summary()
+        assert pending_summary["S1"]["2"]["resolved"] == 0
+        assert pending_summary["S1"]["2"]["pending_hit"] == 1
+        event["status"] = "expired"
         summary = bot.price_target_summary()
         assert summary["S1"]["2"]["hit_rate_pct"] == 100.0
         assert summary["S1"]["3"]["resolved"] == 1
+        assert summary["S1"]["5"]["median_adverse_before_hit_pct"] == -1.3
+        assert bot.price_path_summary()["S1"]["median_mfe_pct"] == 10.1
         assert bot.price_target_for_event(record["event_id"])["targets"][1][
             "status"] == "HIT"
 
@@ -177,7 +194,7 @@ def test_coin_price_target_tracking(tmpdir):
         assert result["errors"] == 1
         assert "offline hata" in bot.PRICE_TARGET_STATE["events"][
             failing["event_id"]]["last_error"]
-        ok("coin fiyati TP2/TP3 (dedupe + 5dk zamanlama + hata izolasyonu)")
+        ok("coin fiyati TP2/3/5/10 (sansur + MFE/MAE + hata izolasyonu)")
     finally:
         bot.PRICE_TARGET_STATE_FILE = old_file
         bot.PRICE_TARGET_STATE = old_state
@@ -457,15 +474,14 @@ def test_dashboard_data(tmpdir):
     aktif_row = rows["BBBUSDT"]
     assert "Log-hacim z-skoru" in aktif_row["why"]      # S3 aciklamasi
     assert "RSI(14)" in rows["AAAUSDT"]["why"]           # S1 aciklamasi
-    # sablon + iki fetch modu
+    # şablon + iki fetch modu + filtrelenebilir kalite yüzeyi
     assert "{{DATA_URL}}" in bot.DASHBOARD_HTML_TEMPLATE
     assert '"/api/dashboard"' in bot.dashboard_html()
     assert '"./data.json"' in bot.dashboard_html("./data.json")
-    # Python string ayrıştırması JS içindeki \' kaçışını tüketiyordu ve
-    # Telegram'a sözcüğü Pages panosunun tamamını SyntaxError ile durduruyordu.
     page = bot.dashboard_html()
-    assert "const FOOT=`TP2/TP3:" in page and "Telegram'a" in page
-    assert "const FOOT='TP2/TP3:" not in page
+    assert "Benim başarı kriterim" in page and 'id="fSearch"' in page
+    assert 'id="fTarget"' in page and "TP2/3/5/10" in page
+    assert "Aktif olaylar hedef oranının paydasına girmez" in page
     bot.LAST_SPOT_AT["BBBUSDT"] = (
         bot.time.time() - (bot.PRICE_STALE_AFTER_MINUTES * 60 + 1))
     stale = {r["symbol"]: r for r in bot.build_dashboard_data()["signals"]}

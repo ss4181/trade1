@@ -204,11 +204,14 @@ gider).
 
 - Sinyaller kendiliğinden Telegram'a gelir; tablete dokunman gerekmez.
 - Push edilen bir sinyalden sonra coin fiyatı bildirim fiyatına göre +%2 veya
-  +%3 hedefe ulaşırsa bot ayrıca bir kez hedef bildirimi yollar. Bu yüzde
+  +%3 hedefe ulaşırsa bot ayrıca bir kez hedef bildirimi yollar. +%5 ve +%10
+  hedefleri bildirim üretmeden pano analitiği için izlenir. Bu yüzde
   **brüt coin fiyat değişimidir; ücret/slippage düşülmez, kaldıraçlı ROE
   değildir** ve bot emri kapatmaz.
   Hedef geçmişi web panosunda da görünür. Kayıt `.price_target_state.json`
-  dosyasında tutulur; dosyayı elle silme.
+  dosyasında tutulur; dosyayı elle silme. Güncellemeden sonraki ilk çalışmada
+  eski kayıtlar API yükünü sınırlamak için gruplar halinde sessizce tamamlanır;
+  geçmiş hedefler için gecikmiş Telegram mesajı gelmez.
 - Anlık kontrol için en kolayı Telegram'dan **/check** yazmaktır; çalışan
   Boot servisini durdurmaya gerek yok.
 - Tablet yeniden başlarsa: ya aşağıdaki **Otomatik başlatma**yı kur (önerilir)
@@ -309,9 +312,13 @@ Bot çalışırken tablet, ev ağında bir izleme sayfası sunar:
 
 Panoda: geçmiş + güncel tüm sinyaller (sessize alınanlar dahil, etiketli),
 giriş referansı ve son çıkış zamanı, **AKTİF** sinyallerde güncel fiyata göre
-anlık kâr/zarar, **OLGUN** sinyallerde gerçekleşen sonuç, pozisyon tutarı
-girişiyle $ karşılığı, strateji kartlarında backtest-vs-canlı karneler ve bot
-durum çipleri. 60 sn'de bir kendini yeniler.
+anlık kâr/zarar, **OLGUN** sinyallerde gerçekleşen sonuç, TP2/TP3/TP5/TP10
+dokunma oranları, hedef öncesi ters hareket ve MFE/MAE bulunur. Kişisel başarı
+kriteri varsayılan olarak sinyal ufku içinde coin fiyatının +%2'ye dokunmasıdır;
+aktif olaylar başarı oranının paydasına alınmaz. Alt tablo metin, strateji,
+durum, güven, bildirim, hedef sonucu ve dönemle filtrelenip farklı ölçülere göre
+sıralanabilir. Pozisyon tutarı girişi kaldıraçsız yaklaşık $ karşılığını gösterir.
+Sayfa 60 sn'de bir kendini yeniler.
 
 > Güvenlik: sayfa yalnızca ev ağında görünür (şifre yok). Modeminde port
 > yönlendirme yapıp internete AÇMA. GitHub Pages yolu da şifreli değildir ve

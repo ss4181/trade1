@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Kripto sinyal stratejileri, hedef dokunmaları ve fiyat yolu kalite panosu">
+  <title>Signal Bot · Kalite Panosu</title>
+  <style>
+    :root{--bg:#07111f;--panel:#0d1a2d;--panel2:#101f35;--line:#203653;
+      --text:#eef5ff;--muted:#91a7c5;--blue:#56a8ff;--green:#35d083;
+      --red:#ff7272;--amber:#f5b84b;--violet:#a88bff;--shadow:0 14px 34px #02081770}
+    *{box-sizing:border-box}html{color-scheme:dark}body{margin:0;background:
+      radial-gradient(circle at 15% -10%,#173762 0,transparent 32%),var(--bg);
+      color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+    main{width:min(1480px,100%);margin:auto;padding:22px}.top{display:flex;gap:18px;
+      justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+    h1{font-size:24px;line-height:1.15;margin:0}.sub{color:var(--muted);margin-top:7px;max-width:850px}
+    h2{font-size:16px;margin:0}.sectionHead{display:flex;justify-content:space-between;
+      gap:10px;align-items:end;margin:22px 0 9px}.sectionHead p{color:var(--muted);margin:0;font-size:12px}
+    .chips{display:flex;flex-wrap:wrap;gap:7px}.chip,.tag{display:inline-flex;align-items:center;
+      gap:4px;border:1px solid var(--line);background:#0b1728;border-radius:999px;
+      padding:4px 9px;color:var(--muted);font-size:11px}.chip b,.tag b{color:var(--text)}
+    .notice{background:#10213a;border:1px solid #294b75;border-left:4px solid var(--blue);
+      border-radius:10px;padding:10px 12px;color:#cbdaf0;font-size:12px;margin-bottom:10px}
+    .notice b{color:var(--text)}.panel{background:linear-gradient(180deg,var(--panel2),var(--panel));
+      border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+    .tableWrap{overflow:auto}.tableWrap.panel{max-height:720px}table{border-collapse:collapse;
+      width:100%;min-width:1060px;font-size:12px}th,td{padding:9px 10px;text-align:left;
+      border-bottom:1px solid #1a2c46;vertical-align:top;white-space:nowrap}
+    th{position:sticky;top:0;z-index:2;background:#0d1b2f;color:#9fb2cf;font-size:11px;
+      letter-spacing:.02em}tbody tr:last-child td{border-bottom:0}tr.signal{cursor:pointer}
+    tr.signal:hover td{background:#142640}.summaryTable td:first-child{font-size:13px}
+    .metric{font-weight:750}.micro{display:block;color:var(--muted);font-size:10px;margin-top:2px;
+      white-space:normal;min-width:125px}.good{color:var(--green)}.bad{color:var(--red)}
+    .warn{color:var(--amber)}.neutral{color:var(--muted)}.badge{display:inline-block;
+      border-radius:7px;padding:2px 7px;font-size:10px;font-weight:800;color:white}
+    .b3{background:#245fd2}.b2{background:#087d91}.b1{background:#9d6508}.b0{background:#8b2932}.bo{background:#596274}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(265px,1fr));gap:10px}
+    button.card{appearance:none;text-align:left;color:inherit;width:100%;padding:13px;cursor:pointer}
+    button.card:hover,button.card:focus-visible{border-color:var(--blue);outline:none;transform:translateY(-1px)}
+    .cardTitle{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:15px;font-weight:800}
+    .cardRows{display:grid;gap:5px;margin-top:9px}.cardRow{display:flex;justify-content:space-between;
+      gap:10px;color:var(--muted);font-size:11px}.cardRow b{color:var(--text);text-align:right}.off{opacity:.58}
+    .doc{padding:15px;border-color:var(--blue);margin:10px 0}.docTop{display:flex;justify-content:space-between;
+      gap:8px}.doc p{color:#c9d7ec;margin:7px 0;font-size:12px}.doc p b{color:var(--blue)}
+    .close,.reset{border:1px solid var(--line);background:#101e33;color:var(--muted);
+      border-radius:8px;padding:6px 9px;cursor:pointer}.filters{display:grid;
+      grid-template-columns:minmax(180px,2fr) repeat(6,minmax(115px,1fr)) 100px auto;
+      gap:8px;padding:11px;margin-bottom:10px}.field label{display:block;color:var(--muted);
+      font-size:10px;margin:0 0 3px 2px}.field input,.field select{width:100%;border:1px solid var(--line);
+      background:#091628;color:var(--text);border-radius:8px;padding:7px 8px;min-height:35px}
+    .count{align-self:end;min-height:35px;justify-content:center}.targetList{display:flex;gap:5px;flex-wrap:wrap}
+    .target{border:1px solid var(--line);border-radius:6px;padding:2px 5px;font-size:10px}
+    .target.hit{border-color:#236d4a;color:var(--green)}.target.missed{border-color:#76393d;color:var(--red)}
+    .drawer td{background:#091526;white-space:normal;padding:13px}.why{color:#cedbf0;margin-bottom:9px}
+    .detailGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px}
+    .detailBox{border:1px solid var(--line);border-radius:9px;padding:9px;background:#0c192c}
+    .detailBox h4{margin:0 0 6px;color:var(--blue);font-size:11px}.kv{display:grid;
+      grid-template-columns:minmax(100px,auto) 1fr;gap:4px 10px;color:var(--muted);font-size:11px}
+    .kv b{color:var(--text);word-break:break-word}.foot{color:#7185a3;font-size:11px;
+      line-height:1.6;margin:13px 2px 28px}.empty{text-align:center;color:var(--muted);padding:24px!important}
+    @media(max-width:1050px){.filters{grid-template-columns:repeat(4,1fr)}.filters .search{grid-column:span 2}}
+    @media(max-width:650px){main{padding:12px}.top{display:block}.chips{margin-top:10px}
+      .filters{grid-template-columns:1fr 1fr}.filters .search{grid-column:1/-1}.sectionHead{display:block}
+      .sectionHead p{margin-top:3px}.cards{grid-template-columns:1fr}}
+  </style>
+</head>
+<body><main>
+  <div class="top"><div><h1>📡 Signal Bot · Kalite Panosu</h1>
+    <div class="sub">Bildirimlerin sonuçlarını, hedefe giden fiyat yolunu ve strateji kanıtını tek yerde izler. Kart veya satır ayrıntılarını açmak için dokun.</div></div>
+    <div class="chips" id="health">yükleniyor…</div></div>
+
+  <div class="sectionHead"><div><h2>Benim başarı kriterim</h2>
+    <p>Bildirim fiyatından stratejinin kendi ufku içinde hedefe dokunma</p></div></div>
+  <div class="notice" id="criterionNote"></div>
+  <div class="tableWrap panel"><table class="summaryTable"><thead><tr>
+    <th>Strateji</th><th>Kişisel sonuç</th><th>TP2</th><th>TP3</th><th>TP5</th><th>TP10</th>
+    <th>Ufuk MFE</th><th>Ufuk MAE</th><th>Örnek</th>
+  </tr></thead><tbody id="summaryRows"></tbody></table></div>
+
+  <div class="sectionHead"><div><h2>Stratejiler</h2><p>Tarihsel kanıt, canlı sonuç ve bildirim durumu</p></div></div>
+  <div class="cards" id="cards"></div><div id="docWrap"></div>
+
+  <div class="sectionHead"><div><h2>Sinyal geçmişi</h2><p>Filtrele, sırala ve satıra dokunarak koşulları aç</p></div></div>
+  <div class="filters panel">
+    <div class="field search"><label>Sembol veya not ara</label><input id="fSearch" placeholder="BTC, squeeze, hacim…"></div>
+    <div class="field"><label>Strateji</label><select id="fStrat"><option value="">Hepsi</option></select></div>
+    <div class="field"><label>Durum</label><select id="fStat"><option value="">Hepsi</option><option>AKTIF</option><option>OLGUN</option><option>OLAY</option></select></div>
+    <div class="field"><label>Güven</label><select id="fConf"><option value="">Hepsi</option></select></div>
+    <div class="field"><label>Bildirim</label><select id="fNotif"><option value="">Hepsi</option><option value="GONDERILDI">Gönderildi</option><option value="SESSIZ">Sessiz</option></select></div>
+    <div class="field"><label>Hedef sonucu</label><select id="fTarget"><option value="">Hepsi</option><option>SUCCESS</option><option>FAILED</option><option>PENDING</option><option value="TP3">TP3 görüldü</option><option value="TP5">TP5 görüldü</option><option value="TP10">TP10 görüldü</option></select></div>
+    <div class="field"><label>Dönem</label><select id="fDays"><option value="">Tümü</option><option value="1">24 saat</option><option value="7">7 gün</option><option value="30">30 gün</option><option value="90">90 gün</option></select></div>
+    <div class="field"><label>Sırala</label><select id="fSort"><option value="new">En yeni</option><option value="old">En eski</option><option value="mfe">En yüksek MFE</option><option value="mae">En kötü MAE</option><option value="pnl">En yüksek K/Z</option></select></div>
+    <div class="field"><label>Sermaye $ (kaldıraçsız)</label><input id="fNot" type="number" value="50" min="1"></div>
+    <button class="reset" id="reset">Sıfırla</button><span class="chip count" id="cnt"></span>
+  </div>
+  <div class="tableWrap panel"><table><thead><tr>
+    <th>Zaman UTC</th><th>Strateji</th><th>Sembol / yön</th><th>Güven</th><th>Bildirim</th>
+    <th>Giriş ref</th><th>Durum</th><th>Kişisel kriter</th><th>TP2/3/5/10</th>
+    <th>MFE / MAE</th><th>Net K/Z</th><th>50$ eşdeğer</th><th>Not</th>
+  </tr></thead><tbody id="rows"></tbody></table></div>
+  <div class="foot" id="foot"></div>
+</main><script>
+const DATA_URL="{{DATA_URL}}";
+const LEVELS=[2,3,5,10],R={"COK YUKSEK":3,"YUKSEK":2,"ORTA":1,"DUSUK":0,"GOZLEM":-1},B={3:"b3",2:"b2",1:"b1",0:"b0",[-1]:"bo"};
+const esc=s=>(s==null?"":String(s)).replace(/[&<>\"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const num=(x,d=1)=>x==null||!Number.isFinite(Number(x))?"—":Number(x).toFixed(d);
+const price=x=>{if(x==null)return"—";x=Number(x);return x>=1?x.toPrecision(7).replace(/\.?0+$/,""):x.toFixed(10).replace(/0+$/,"").replace(/\.$/,"")};
+const pct=x=>x==null?'<span class="neutral">—</span>':`<span class="${x>=0?'good':'bad'}">${x>=0?'+':''}${Number(x).toFixed(2)}%</span>`;
+const badge=c=>`<span class="badge ${B[R[c]]||'bo'}">${esc(c||'—')}</span>`;
+let D=null,openDoc=null,openRow=null;
+function targetOf(pt,level){return(pt&&pt.targets||[]).find(t=>Number(t.level_pct)===Number(level))}
+function targetBadges(pt){if(!pt)return'<span class="neutral">izlenmiyor</span>';return LEVELS.map(l=>{const t=targetOf(pt,l),s=t?t.status:'PENDING';return `<span class="target ${s==='HIT'?'hit':s==='MISSED'?'missed':''}" title="${t?price(t.price):'—'}">TP${l}${s==='HIT'?'✓':s==='MISSED'?'✕':'…'}</span>`}).join(' ')}
+function rateCell(t){if(!t||t.hit_rate_pct==null)return'<span class="neutral">—</span><small class="micro">olgun örnek yok</small>';const ci=t.hit_rate_ci95_low_pct==null?'—':`${t.hit_rate_ci95_low_pct}–${t.hit_rate_ci95_high_pct}`;return `<span class="metric ${t.hit_rate_pct>=50?'good':'warn'}">%${t.hit_rate_pct}</span><small class="micro">${t.hit}/${t.resolved} · GA %${ci}${t.sample_warning?' · küçük N':''}<br>hedef öncesi med ${t.median_adverse_before_hit_pct==null?'—':t.median_adverse_before_hit_pct+'%'} · en kötü ${t.worst_adverse_before_hit_pct==null?'—':t.worst_adverse_before_hit_pct+'%'}</small>`}
+function drawSummary(){const body=document.getElementById('summaryRows');body.innerHTML=D.strategies.map(s=>{const p=s.price_path||{},u=s.user_success||{};return `<tr><td><b>${esc(s.name)}</b><br>${badge(s.confidence)}</td><td>${rateCell(u)}</td>${LEVELS.map(l=>`<td>${rateCell((s.price_targets||{})[String(l)])}</td>`).join('')}<td>${pct(p.median_mfe_pct)}<small class="micro">q10 ${num(p.q10_mfe_pct,2)}% · q90 ${num(p.q90_mfe_pct,2)}%</small></td><td>${pct(p.median_mae_pct)}<small class="micro">en kötü ${num(p.worst_mae_pct,2)}%</small></td><td><b>N=${p.n_matured||0}</b><small class="micro">${p.n_pending||0} bekliyor${p.sample_warning?' · küçük örnek':''}</small></td></tr>`}).join('')}
+function toggleDoc(name){openDoc=openDoc===name?null:name;drawDoc()}
+function drawDoc(){const w=document.getElementById('docWrap'),d=D.docs&&D.docs[openDoc];if(!d){w.innerHTML='';return}w.innerHTML=`<div class="doc panel"><div class="docTop"><h2>${esc(d.title)}</h2><button class="close" onclick="toggleDoc(null)">Kapat</button></div><p><b>Nasıl çalışır:</b> ${esc(d.how)}</p><p><b>Giriş:</b> ${esc(d.entry)}</p><p><b>Çıkış:</b> ${esc(d.exit)}</p><p><b>Backtest:</b> ${esc(d.stats)}</p><p><b>Risk:</b> ${esc(d.risk)}</p></div>`;w.scrollIntoView({behavior:'smooth',block:'nearest'})}
+function drawCards(){document.getElementById('cards').innerHTML=D.strategies.map(s=>{const u=s.user_success||{},p=s.price_path||{};const bt=s.bt_med==null?'—':`${s.bt_med>=0?'+':''}${s.bt_med}% · isabet %${s.bt_wr} · N=${s.bt_n}`;const live=(s.live_cohorts||[]).map(c=>`${esc(c.universe)}: med ${c.net_median_pct==null?'—':c.net_median_pct+'%'} · isabet ${c.net_winrate_pct==null?'—':'%'+c.net_winrate_pct} · N=${c.n}`).join('<br>')||'olgun kohort yok';return `<button class="card panel ${s.pushed?'':'off'}" onclick="toggleDoc('${esc(s.name)}')"><div class="cardTitle"><span>${esc(s.name)}</span>${badge(s.confidence)}</div><div class="cardRows"><div class="cardRow"><span>Kişisel TP${D.status.user_success_target_pct}</span><b>${u.hit_rate_pct==null?'—':'%'+u.hit_rate_pct+' · N='+u.resolved}${u.sample_warning?' ⚠':''}</b></div><div class="cardRow"><span>Ufuk MFE / MAE medyan</span><b>${num(p.median_mfe_pct,2)}% / ${num(p.median_mae_pct,2)}%</b></div><div class="cardRow"><span>Tarihsel zaman çıkışı</span><b>${bt}</b></div><div class="cardRow"><span>Canlı kohort</span><b>${live}</b></div><div class="cardRow"><span>Push</span><b>${s.pushed?'açık':'sessiz'}</b></div></div></button>`}).join('');drawDoc()}
+function filters(){const q=document.getElementById('fSearch').value.trim().toLowerCase(),st=document.getElementById('fStrat').value,ss=document.getElementById('fStat').value,cf=document.getElementById('fConf').value,nf=document.getElementById('fNotif').value,tf=document.getElementById('fTarget').value,days=Number(document.getElementById('fDays').value||0),sort=document.getElementById('fSort').value,cut=days?Date.now()-days*864e5:0;let rows=D.signals.filter(r=>{const text=`${r.symbol||''} ${r.note||''} ${r.why||''}`.toLowerCase(),pt=r.price_target,t3=targetOf(pt,3),t5=targetOf(pt,5),t10=targetOf(pt,10),targetOK=!tf||(tf==='TP3'&&t3&&t3.status==='HIT')||(tf==='TP5'&&t5&&t5.status==='HIT')||(tf==='TP10'&&t10&&t10.status==='HIT')||(pt&&pt.success_status===tf);return(!q||text.includes(q))&&(!st||r.strategy===st)&&(!ss||r.status===ss)&&(!cf||r.confidence===cf)&&(!nf||r.notification_status===nf)&&targetOK&&(!cut||new Date(r.t).getTime()>=cut)});const value=r=>sort==='mfe'?Number((r.price_target||{}).max_favorable_pct??-1e9):sort==='mae'?Number((r.price_target||{}).max_adverse_pct??1e9):sort==='pnl'?Number(r.pnl_pct??-1e9):new Date(r.t).getTime();rows.sort((a,b)=>sort==='old'?value(a)-value(b):sort==='mae'?value(a)-value(b):value(b)-value(a));return rows}
+function drawer(r){const pt=r.price_target,targets=pt?(pt.targets||[]).map(t=>`<span>TP${t.level_pct} · ${esc(t.status)}</span><b>${price(t.price)}${t.hit_at?' · '+esc(t.hit_at.slice(0,16)):''}<br><span class="neutral">önce ters ${t.max_adverse_before_hit_pct==null?'—':t.max_adverse_before_hit_pct+'%'} · süre ≤${t.minutes_to_hit_upper==null?'—':t.minutes_to_hit_upper+' dk'}</span></b>`).join(''):'';const details=(r.detail||[]).map(x=>`<span>${esc(x[0])}</span><b>${esc(x[1])}</b>`).join('');return `<div class="why">🔍 <b>Neden geldi:</b> ${esc(r.why)}</div><div class="detailGrid"><div class="detailBox"><h4>Sinyal ve piyasa</h4><div class="kv"><span>Evren</span><b>${esc(r.universe)}</b><span>Config</span><b>${esc(r.config_version)}</b><span>Piyasa</span><b>${esc(r.performance_market)}</b><span>Bildirim</span><b>${esc(r.notification_status)}</b><span>Ufuk</span><b>${r.horizon_h} saat</b></div></div><div class="detailBox"><h4>Fiyat yolu</h4><div class="kv"><span>Kişisel kriter</span><b>${pt?esc(pt.success_status):'izlenmiyor'}</b><span>MFE / MAE</span><b>${pt?num(pt.max_favorable_pct,2)+'% / '+num(pt.max_adverse_pct,2)+'%':'—'}</b>${targets}</div></div>${details?`<div class="detailBox"><h4>Tetikleyen ölçümler</h4><div class="kv">${details}</div></div>`:''}</div><div class="micro" style="margin-top:9px">Hedef öncesi ters hareket, hedefe dokunulan 5 dakikalık mumun tüm aralığını içerir; mum içi sıra bilinmediği için muhafazakâr olabilir. Bunlar coin fiyatı yüzdeleridir, kaldıraçlı ROE değildir.</div>`}
+function drawRows(){const rows=filters(),capital=Number(document.getElementById('fNot').value||50);document.getElementById('cnt').textContent=`${rows.length} kayıt`;document.querySelector('th:nth-child(12)').textContent=`${capital}$ eşdeğer`;document.getElementById('rows').innerHTML=rows.map((r,i)=>{const pt=r.price_target,key=r.event_id||r.t+r.symbol,usd=r.pnl_pct==null?'—':`${(r.pnl_pct*capital/100).toFixed(2)}$`,path=pt?`${num(pt.max_favorable_pct,2)}% / ${num(pt.max_adverse_pct,2)}%`:'—',criterion=pt?pt.success_status:'İZLENMİYOR';return `<tr class="signal" data-i="${i}"><td>${esc(r.t.slice(0,16).replace('T',' '))}</td><td><b>${esc(r.strategy)}</b></td><td><b>${esc(r.symbol)}</b><br><span class="neutral">${esc(r.direction||'')}</span></td><td>${badge(r.confidence)}</td><td>${r.notification_status==='GONDERILDI'?'<span class="good">Gönderildi</span>':'<span class="neutral">Sessiz</span>'}</td><td>${price(r.entry)}</td><td>${esc(r.status)}${r.remaining_h!=null?`<br><span class="neutral">${r.remaining_h}h kaldı</span>`:''}</td><td><span class="${criterion==='SUCCESS'?'good':criterion==='FAILED'?'bad':'neutral'}">${esc(criterion)}</span></td><td><div class="targetList">${targetBadges(pt)}</div></td><td>${path}</td><td>${pct(r.pnl_pct)}</td><td class="${r.pnl_pct>=0?'good':'bad'}">${usd}</td><td style="white-space:normal;min-width:190px;color:var(--muted)">▸ ${esc(r.note)}</td></tr><tr class="drawer" ${openRow===key?'':'hidden'}><td colspan="13">${drawer(r)}</td></tr>`}).join('')||'<tr><td class="empty" colspan="13">Bu filtrelerle eşleşen kayıt yok.</td></tr>';return rows}
+function draw(){if(!D)return;const s=D.status,h=(s.notify_health||{}).telegram||{};document.getElementById('health').innerHTML=`<span class="chip">Tarama <b>${s.interval_min} dk</b></span><span class="chip">Son <b>${(s.last_scan||'—').slice(11,16)}</b></span><span class="chip">Evren <b>${s.symbols}</b></span><span class="chip">Telegram <b>${s.telegram_enabled&&!h.last_error?'çalışıyor':'kontrol et'}</b></span><span class="chip">Hedefler <b>${s.price_target_levels_pct.join('/')}</b></span>`;document.getElementById('criterionNote').innerHTML=`<b>Başarılı = TP${s.user_success_target_pct}</b>, yalnız Telegram'a gerçekten gönderilen sinyalde bildirim fiyatından başlayıp stratejinin kendi ${'ufku'} içinde görülürse. Oranlar yalnız ufku tamamlanmış olaylardan hesaplanır; N&lt;30 ise güvenilir oran değil küçük örnek uyarısıdır. +%5/+%10 panoda izlenir, Telegram hedef alarmı ${s.price_target_notify_levels_pct.join('/')} ile sınırlıdır.`;drawSummary();drawCards();drawRows();document.getElementById('foot').innerHTML=`<b>İki ayrı ölçüm:</b> “Kişisel kriter” bildirim fiyatından kapanmış 5dk mumlarla brüt hedef dokunmasıdır. “Net K/Z” ise araştırmayla aynı next-bar-open → zaman ufku kapanışı ve ${s.round_trip_cost_bps} bp maliyet varsayımıdır. Funding nakit akışı S2'de modellenmemiştir. MFE/MAE strateji ufku içindeki en iyi/en ters coin fiyatı hareketidir. Aktif olaylar hedef oranının paydasına girmez. Pano emir açmaz; yatırım tavsiyesi değildir.`}
+function fillOptions(){const add=(id,vals)=>{const e=document.getElementById(id);[...new Set(vals.filter(Boolean))].sort().forEach(v=>e.insertAdjacentHTML('beforeend',`<option value="${esc(v)}">${esc(v)}</option>`))};add('fStrat',D.strategies.map(s=>s.name));add('fConf',D.signals.map(s=>s.confidence))}
+document.getElementById('rows').addEventListener('click',e=>{const tr=e.target.closest('tr.signal');if(!tr)return;const r=filters()[Number(tr.dataset.i)],key=r.event_id||r.t+r.symbol;openRow=openRow===key?null:key;drawRows()});
+['fSearch','fStrat','fStat','fConf','fNotif','fTarget','fDays','fSort','fNot'].forEach(id=>document.getElementById(id).addEventListener('input',drawRows));
+document.getElementById('reset').addEventListener('click',()=>{['fSearch','fStrat','fStat','fConf','fNotif','fTarget','fDays'].forEach(id=>document.getElementById(id).value='');document.getElementById('fSort').value='new';document.getElementById('fNot').value='50';drawRows()});
+async function load(){try{const sep=DATA_URL.includes('?')?'&':'?',r=await fetch(DATA_URL+sep+'t='+Date.now(),{cache:'no-store'});if(!r.ok)throw Error(r.status);const first=!D;D=await r.json();if(first)fillOptions();draw()}catch(e){document.getElementById('health').innerHTML='<span class="chip bad">Veri bağlantısı kurulamadı</span>'}}
+load();setInterval(load,60000);
+  </script></body>
+</html>

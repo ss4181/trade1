@@ -142,14 +142,22 @@ sabit bracket çıkışları doğrulanmış zaman çıkışını istikrarlı bi�
 ([araştırma raporu](research/REPORT.md), Ek B2). Bu nedenle **bunlar tavsiye
 veya otomatik emir değildir**; kaldıraç kayıpları/tasfiye riskini büyütür.
 
-Kullanıcının “coin fiyatı +%2/+%3 görünce çıkıyorum” yaklaşımını ayrıca ölçmek
-için bot, yalnız Telegram'a gerçekten gönderilmiş sinyalleri bildirim fiyatından
-itibaren kapanmış 5 dakikalık mumlarla izler. Hedef görülürse bir kez Telegram
-mesajı yollar; panoda TP2/TP3, hedef fiyatı, ilk dokunma zamanı ve hedef öncesi
-en ters hareket görünür. Bu oran **coinin kaldıraçsız brüt fiyat değişimidir,
-ücret/slippage düşülmez ve ROE değildir**. Bildirimden önce başlamış 5 dakikalık mum sayılmaz; bot pozisyon
-açmaz veya kapatmaz. Ayarlar: `PRICE_TARGET_TRACKING_ENABLED`,
-`PRICE_TARGET_LEVELS_PCT`, `PRICE_TARGET_NOTIFY`.
+Kullanıcının “coin fiyatı +%2 görünce çıkıyorum” yaklaşımını ayrıca ölçmek için
+bot, yalnız Telegram'a gerçekten gönderilmiş sinyalleri bildirim fiyatından
+itibaren kapanmış 5 dakikalık mumlarla izler. Panoda TP2/TP3/TP5/TP10 dokunma
+oranları, Wilson %95 belirsizlik aralığı, ilk dokunma zamanı, hedefe ulaşmadan
+önceki ters hareket ve sinyal ufkundaki MFE/MAE görünür. Telegram hedef mesajı
+varsayılan olarak yalnız +%2 ve +%3 için gider; +%5/+%10 sessiz analitiktir.
+
+“Başarılı” sınıfı, stratejinin ufku tamamlandıktan sonra coin fiyatının +%2'ye
+dokunmuş olmasıdır. Aktif olaylar paydaya alınmaz ve `N<30` küçük örnek olarak
+işaretlenir. Hedefin görüldüğü 5 dakikalık mumdaki en düşük fiyatın hedefe göre
+önce mi sonra mı oluştuğu bilinmediği için “hedef öncesi düşüş” muhafazakâr
+olarak o mumun tüm aralığını içerir. Bu oranlar **coinin kaldıraçsız brüt fiyat
+değişimidir; ücret/slippage düşülmez ve ROE değildir**. Bot pozisyon açmaz veya
+kapatmaz. Eski hedef kayıtları yeni şemaya sessizce tamamlanır; geçmiş hedefler
+gecikmiş Telegram mesajı üretmez. İlgili ayarlar: `PRICE_TARGET_*` ve
+`USER_SUCCESS_TARGET_PCT`.
 
 ## Çalıştırma (yerel)
 
@@ -311,7 +319,9 @@ reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
   Kapatmak: `TELEGRAM_COMMANDS=false`.
 - **Web panosu:** bot çalışırken `http://<cihaz-ip>:8181` (yalnız yerel ağ) —
   sinyal geçmişi, aktiflerde anlık K/Z, olgunlarda gerçekleşen sonuç,
-  TP2/TP3 canlı fiyat-hedefi durumu ve backtest-vs-canlı strateji karneleri.
+  TP2/TP3/TP5/TP10 dokunmaları, hedef öncesi düşüş, MFE/MAE ve kişisel +%2
+  başarı karnesi. Alt tablo; metin, strateji, durum, güven, bildirim, hedef
+  sonucu ve dönemle filtrelenebilir; tarih/MFE/MAE/K-Z ile sıralanabilir.
   **Strateji kartına** tıkla → nasıl
   çalışır; **sinyal satırına** tıkla → neden geldi. Ayrıntı: [TABLET.md](TABLET.md).
 - **Her yerden erişim (GitHub Pages):** `GITHUB_TOKEN`+`GITHUB_REPO`

@@ -228,7 +228,7 @@ SIGNAL_LOG = _env("SIGNAL_LOG", "signals.log")
 # Kullaniciya ozel fiyat-hedefi gozlem katmani. Sinyal kosullarini, guven
 # kademesini veya dogrulanmis zaman-cikisini DEGISTIRMEZ. Yalniz Telegram'a
 # gercekten teslim edilen sinyallerde, bildirim fiyatindan itibaren coinin
-# gercek fiyat hareketinde +%2/+%3 seviyelerine dokunmayi izler.
+# gercek fiyat hareketinde hedef seviyelerine dokunmayi izler.
 PRICE_TARGET_TRACKING_ENABLED = _env(
     "PRICE_TARGET_TRACKING_ENABLED", True, cast=_flag)
 PRICE_TARGET_NOTIFY = _env("PRICE_TARGET_NOTIFY", True, cast=_flag)
@@ -246,9 +246,25 @@ def _parse_price_target_levels(raw: str) -> tuple[float, ...]:
     return tuple(sorted(set(levels)))
 
 
-PRICE_TARGET_LEVELS_PCT = _parse_price_target_levels(
-    _env("PRICE_TARGET_LEVELS_PCT", "2,3"))
+# Kullanici panoda bu dort seviyeyi birlikte istiyor. Eski .env'de yalnız 2,3
+# yazsa bile analiz 5/10'u da toplar; Telegram hedef bildirimi varsayilan olarak
+# 2/3 ile sinirlidir ve boylece mevcut bildirim davranisi degismez.
+PRICE_TARGET_ANALYTICS_LEVELS_PCT = _parse_price_target_levels(
+    _env("PRICE_TARGET_ANALYTICS_LEVELS_PCT", "2,3,5,10"))
+PRICE_TARGET_NOTIFY_LEVELS_PCT = _parse_price_target_levels(
+    _env("PRICE_TARGET_NOTIFY_LEVELS_PCT", "2,3"))
+USER_SUCCESS_TARGET_PCT = _env("USER_SUCCESS_TARGET_PCT", 2.0)
+if (not math.isfinite(USER_SUCCESS_TARGET_PCT)
+        or not 0 < USER_SUCCESS_TARGET_PCT <= 100):
+    USER_SUCCESS_TARGET_PCT = 2.0
+PRICE_TARGET_LEVELS_PCT = tuple(sorted(set(
+    _parse_price_target_levels(_env("PRICE_TARGET_LEVELS_PCT", "2,3"))
+) | set(PRICE_TARGET_ANALYTICS_LEVELS_PCT)
+    | set(PRICE_TARGET_NOTIFY_LEVELS_PCT)
+    | {USER_SUCCESS_TARGET_PCT}))
 PRICE_TARGET_RETENTION_DAYS = _env("PRICE_TARGET_RETENTION_DAYS", 365)
+PRICE_TARGET_MAX_EVENTS_PER_SCAN = max(
+    1, _env("PRICE_TARGET_MAX_EVENTS_PER_SCAN", 20, cast=int))
 
 # --- S1: RSI uyumsuzlugu (long-only) ---
 RSI_PERIOD = _env("RSI_PERIOD", 14)
@@ -2050,7 +2066,7 @@ def _signal_event_id(sig: dict) -> str:
 
 
 PRICE_TARGET_STATE_FILE = Path(__file__).parent / ".price_target_state.json"
-PRICE_TARGET_STATE_SCHEMA_VERSION = 1
+PRICE_TARGET_STATE_SCHEMA_VERSION = 2
 _price_target_lock = threading.RLock()
 
 
@@ -2079,7 +2095,7 @@ def _load_price_target_state() -> dict:
         data = json.loads(PRICE_TARGET_STATE_FILE.read_text(encoding="utf-8"))
         if not isinstance(data, dict) or not isinstance(data.get("events"), dict):
             raise ValueError("gecersiz hedef state semasi")
-        return {"schema_version": PRICE_TARGET_STATE_SCHEMA_VERSION,
+        return {"schema_version": int(data.get("schema_version") or 1),
                 "events": data["events"]}
     except (OSError, ValueError, TypeError) as e:
         print(f"uyari: fiyat-hedefi durumu okunamadi, sifirdan: {e}",
@@ -2113,7 +2129,15 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
             "price": target.get("price"),
             "hit_at": hit_at,
             "status": "HIT" if hit_at else "MISSED" if expired else "PENDING",
+            "max_adverse_before_hit_pct": (
+                target.get("max_adverse_before_hit_pct") if hit_at else None),
+            "minutes_to_hit_upper": (
+                target.get("minutes_to_hit_upper") if hit_at else None),
         })
+    criterion_key = _target_level_key(USER_SUCCESS_TARGET_PCT)
+    criterion = (event.get("targets") or {}).get(criterion_key) or {}
+    success_status = ("SUCCESS" if criterion.get("hit_at") else
+                      "FAILED" if expired else "PENDING")
     return {
         "basis": "signal_notification_price",
         "entry_ref": event.get("entry_ref"),
@@ -2123,6 +2147,10 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
         "targets": targets,
         "max_favorable_pct": event.get("max_favorable_pct"),
         "max_adverse_pct": event.get("max_adverse_pct"),
+        "path_complete": expired,
+        "success_target_pct": USER_SUCCESS_TARGET_PCT,
+        "success_status": success_status,
+        "adverse_before_hit_policy": "same_5m_bar_full_range_conservative",
         "last_error": event.get("last_error"),
         "as_of": now.isoformat(timespec="seconds"),
     }
@@ -2164,6 +2192,8 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
                     # Karsilastirmada yuvarlama yapma; yalniz sunum _fmt_price
                     # ile kisaltilir. Boylece dusuk fiyatli coinlerde esik kaymaz.
                     "price": entry * factor, "hit_at": None,
+                    "max_adverse_before_hit_pct": 0.0,
+                    "minutes_to_hit_upper": None,
                 }
             strategy = str(record.get("strategy") or "?")
             market = record.get("performance_market") or (
@@ -2184,6 +2214,7 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
                 "max_favorable_pct": 0.0,
                 "max_adverse_pct": 0.0,
                 "last_error": None,
+                "replay_silent_before_ms": start_ms,
             }
             if persist:
                 events[event_id] = event
@@ -2215,6 +2246,9 @@ def _apply_price_target_bars(event: dict, bars: list[dict],
     entry = float(event["entry_ref"])
     direction = event["direction"]
     next_start = int(event.get("next_start_ms") or 0)
+    tracking_start = ((int(_target_dt(event["started_at"]).timestamp() * 1000)
+                       + 299_999) // 300_000) * 300_000
+    silent_before = int(event.get("replay_silent_before_ms") or tracking_start)
     newly_hit = []
     for bar in sorted(bars, key=lambda b: int(b["open_time"])):
         open_ms = int(bar["open_time"])
@@ -2240,24 +2274,32 @@ def _apply_price_target_bars(event: dict, bars: list[dict],
         for key, target in event["targets"].items():
             if target.get("hit_at"):
                 continue
+            # OHLC aynı mum içinde hedef ile dip/tepenin sırasını söylemez.
+            # Bu yüzden hedef mumu dahil tam ters ekstremi kullanmak bilinçli,
+            # muhafazakâr bir üst sınırdır; panoda açıkça etiketlenir.
+            target["max_adverse_before_hit_pct"] = round(min(
+                float(target.get("max_adverse_before_hit_pct") or 0.0),
+                adverse), 4)
             touched = (high >= float(target["price"]) if direction == "LONG"
                        else low <= float(target["price"]))
             if touched:
                 target["hit_at"] = datetime.fromtimestamp(
                     open_ms / 1000, tz=timezone.utc).isoformat()
-                newly_hit.append(key)
+                target["minutes_to_hit_upper"] = round(max(
+                    0.0, (open_ms + 300_000 - tracking_start) / 60_000), 1)
+                if open_ms >= silent_before:
+                    newly_hit.append(key)
         next_start = max(next_start, open_ms + 300_000)
     event["next_start_ms"] = next_start
-    if event.get("targets") and all(
-            t.get("hit_at") for t in event["targets"].values()):
-        event["status"] = "completed"
     return newly_hit
 
 
 def _send_price_target_alert(event: dict, hit_keys: list[str]) -> None:
-    if not PRICE_TARGET_NOTIFY or not ENABLE_TELEGRAM or not hit_keys:
+    notify_keys = [key for key in hit_keys
+                   if float(key) in PRICE_TARGET_NOTIFY_LEVELS_PCT]
+    if not PRICE_TARGET_NOTIFY or not ENABLE_TELEGRAM or not notify_keys:
         return
-    levels = sorted((float(k) for k in hit_keys))
+    levels = sorted((float(k) for k in notify_keys))
     sign = "+" if event.get("direction") == "LONG" else "-"
     level_text = " ve ".join(f"{sign}%{x:g}" for x in levels)
     target_rows = []
@@ -2284,10 +2326,10 @@ def _send_price_target_alert(event: dict, hit_keys: list[str]) -> None:
 def update_price_target_tracking(now: datetime | None = None) -> dict:
     """Aktif hedefleri gunceller; hata ana tarama dongusune ASLA yayilmaz."""
     if not PRICE_TARGET_TRACKING_ENABLED:
-        return {"checked": 0, "hits": 0, "errors": 0}
+        return {"checked": 0, "hits": 0, "errors": 0, "backlog": 0}
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     now_ms = int(now.timestamp() * 1000)
-    checked = hits = errors = 0
+    checked = hits = errors = backlog = 0
     alerts: list[tuple[dict, list[str]]] = []
     changed = False
     with _price_target_lock:
@@ -2310,6 +2352,9 @@ def update_price_target_tracking(now: datetime | None = None) -> dict:
             coverage_end_ms = min(closed_end_ms, horizon_end_ms)
             start_ms = int(event.get("next_start_ms") or 0)
         if start_ms < coverage_end_ms:
+            if checked >= PRICE_TARGET_MAX_EVENTS_PER_SCAN:
+                backlog += 1
+                continue
             checked += 1
             try:
                 bars = fetch_price_target_klines(event, start_ms,
@@ -2364,38 +2409,117 @@ def update_price_target_tracking(now: datetime | None = None) -> dict:
             _save_price_target_state()
     for event, new_hits in alerts:
         _send_price_target_alert(event, new_hits)
-    return {"checked": checked, "hits": hits, "errors": errors}
+    return {"checked": checked, "hits": hits, "errors": errors,
+            "backlog": backlog}
 
 
 def price_target_summary() -> dict:
-    """Strateji/seviye bazinda kullanicinin TP-dokunma basari karnesi."""
-    grouped: dict[str, dict[str, dict[str, int]]] = {}
+    """Yalnız ufku tamamlanmış olaylarda hedef-dokunma karnesi.
+
+    Aktif olayda hedef görülmüş olsa bile aynı kohortun henüz hedef görmeyen
+    üyeleri sansürlüdür; oranı yapay yükseltmemek için ikisi de ``pending``
+    kalır. Satır bazında anlık HIT yine görünür.
+    """
+    grouped: dict[str, dict[str, dict]] = {}
     with _price_target_lock:
         events = list(PRICE_TARGET_STATE.get("events", {}).values())
     for event in events:
         if not isinstance(event, dict):
             continue
         strategy = str(event.get("strategy") or "?")
+        status = event.get("status")
+        if status not in ("active", "expired"):
+            continue
+        matured = status == "expired"
         for key, target in (event.get("targets") or {}).items():
             row = grouped.setdefault(strategy, {}).setdefault(
-                key, {"hit": 0, "missed": 0, "pending": 0})
-            if target.get("hit_at"):
-                row["hit"] += 1
-            elif event.get("status") == "expired":
-                row["missed"] += 1
+                key, {"hit": 0, "missed": 0, "pending": 0,
+                      "pending_hit": 0, "adverse": [], "minutes": []})
+            if matured:
+                if target.get("hit_at"):
+                    row["hit"] += 1
+                    adverse = target.get("max_adverse_before_hit_pct")
+                    minutes = target.get("minutes_to_hit_upper")
+                    if adverse is not None:
+                        row["adverse"].append(float(adverse))
+                    if minutes is not None:
+                        row["minutes"].append(float(minutes))
+                else:
+                    row["missed"] += 1
             else:
                 row["pending"] += 1
+                if target.get("hit_at"):
+                    row["pending_hit"] += 1
     out = {}
     for strategy, levels in sorted(grouped.items()):
         out[strategy] = {}
         for key, row in sorted(levels.items(), key=lambda item: float(item[0])):
             resolved = row["hit"] + row["missed"]
+            lo, hi = _wilson_interval(row["hit"], resolved)
+            adverse = row.pop("adverse")
+            minutes = row.pop("minutes")
             out[strategy][key] = {
                 **row, "resolved": resolved,
                 "hit_rate_pct": (round(100 * row["hit"] / resolved, 1)
                                  if resolved else None),
+                "hit_rate_ci95_low_pct": (round(lo, 1)
+                                           if lo is not None else None),
+                "hit_rate_ci95_high_pct": (round(hi, 1)
+                                            if hi is not None else None),
+                "median_adverse_before_hit_pct": (
+                    round(statistics.median(adverse), 2) if adverse else None),
+                "worst_adverse_before_hit_pct": (
+                    round(min(adverse), 2) if adverse else None),
+                "median_minutes_to_hit_upper": (
+                    round(statistics.median(minutes), 1) if minutes else None),
                 "sample_warning": "small_sample" if resolved < 30 else None,
             }
+    return out
+
+
+def price_path_summary() -> dict:
+    """Strateji bazında ufuk içi MFE/MAE; yalnız tamamlanmış fiyat yolları."""
+    grouped: dict[str, dict[str, list[float] | int]] = {}
+    with _price_target_lock:
+        events = list(PRICE_TARGET_STATE.get("events", {}).values())
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        strategy = str(event.get("strategy") or "?")
+        row = grouped.setdefault(strategy, {"mfe": [], "mae": [],
+                                            "pending": 0})
+        if event.get("status") == "active":
+            row["pending"] = int(row["pending"]) + 1
+            continue
+        if event.get("status") != "expired":
+            continue
+        try:
+            mfe = float(event["max_favorable_pct"])
+            mae = float(event["max_adverse_pct"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if math.isfinite(mfe) and math.isfinite(mae):
+            row["mfe"].append(mfe)  # type: ignore[union-attr]
+            row["mae"].append(mae)  # type: ignore[union-attr]
+    out = {}
+    for strategy, row in grouped.items():
+        mfe = list(row["mfe"])
+        mae = list(row["mae"])
+        n = len(mfe)
+        out[strategy] = {
+            "n_matured": n,
+            "n_pending": int(row["pending"]),
+            "median_mfe_pct": (round(statistics.median(mfe), 2)
+                               if mfe else None),
+            "q10_mfe_pct": (round(_percentile(mfe, .10), 2)
+                            if mfe else None),
+            "q90_mfe_pct": (round(_percentile(mfe, .90), 2)
+                            if mfe else None),
+            "median_mae_pct": (round(statistics.median(mae), 2)
+                               if mae else None),
+            "worst_mae_pct": round(min(mae), 2) if mae else None,
+            "sample_warning": "small_sample" if n < 30 else None,
+        }
     return out
 
 
@@ -2404,6 +2528,134 @@ def price_target_for_event(event_id: str) -> dict | None:
     with _price_target_lock:
         event = PRICE_TARGET_STATE.get("events", {}).get(event_id)
         return _price_target_public(event) if isinstance(event, dict) else None
+
+
+def _ensure_price_target_state_schema() -> int:
+    """Eski 2/3 kayıtlarını 2/3/5/10 yol analizine kayıpsız hazırlar.
+
+    Eski kapsama yeniden oynatılır; geçmişte görülmüş hedefler için gecikmiş
+    Telegram alarmı üretilmez. Yeniden hesaplama 5dk API bütçesiyle parça parça
+    tamamlanır ve canlı sinyal mantığına dokunmaz.
+    """
+    changed = 0
+    expected = {_target_level_key(level) for level in PRICE_TARGET_LEVELS_PCT}
+    with _price_target_lock:
+        version = int(PRICE_TARGET_STATE.get("schema_version") or 1)
+        events = PRICE_TARGET_STATE.setdefault("events", {})
+        for event in events.values():
+            if not isinstance(event, dict):
+                continue
+            targets = event.get("targets") or {}
+            needs_replay = (version < PRICE_TARGET_STATE_SCHEMA_VERSION
+                            or set(targets) != expected
+                            or any("max_adverse_before_hit_pct" not in target
+                                   for target in targets.values()
+                                   if isinstance(target, dict)))
+            if not needs_replay:
+                continue
+            try:
+                entry = float(event["entry_ref"])
+                direction = str(event["direction"]).upper()
+                started = _target_dt(event["started_at"])
+                expires = _target_dt(event["expires_at"])
+                if entry <= 0 or direction not in ("LONG", "SHORT"):
+                    raise ValueError("gecersiz fiyat/yon")
+                start_ms = ((int(started.timestamp() * 1000) + 299_999)
+                            // 300_000) * 300_000
+                horizon_end_ms = (int(expires.timestamp() * 1000)
+                                  // 300_000) * 300_000
+            except (KeyError, TypeError, ValueError, OverflowError):
+                event["status"] = "invalid"
+                changed += 1
+                continue
+            old_status = str(event.get("status") or "active")
+            old_next = int(event.get("next_start_ms") or start_ms)
+            # Tamamlanmış eski olayın tüm geçmişi sessiz; aktif olayda yalnız
+            # daha önce işlenmiş bölüm sessizdir, gelecekteki 2/3 alarmı sürer.
+            silent_before = (horizon_end_ms if old_status != "active"
+                             else max(start_ms, old_next))
+            rebuilt = {}
+            for level in PRICE_TARGET_LEVELS_PCT:
+                factor = (1 + level / 100 if direction == "LONG"
+                          else 1 - level / 100)
+                rebuilt[_target_level_key(level)] = {
+                    "price": entry * factor,
+                    "hit_at": None,
+                    "max_adverse_before_hit_pct": 0.0,
+                    "minutes_to_hit_upper": None,
+                }
+            event.update({
+                "targets": rebuilt,
+                "next_start_ms": start_ms,
+                "replay_silent_before_ms": silent_before,
+                "status": "active",
+                "max_favorable_pct": 0.0,
+                "max_adverse_pct": 0.0,
+                "last_error": None,
+            })
+            changed += 1
+        if version != PRICE_TARGET_STATE_SCHEMA_VERSION:
+            PRICE_TARGET_STATE["schema_version"] = \
+                PRICE_TARGET_STATE_SCHEMA_VERSION
+            changed += 1
+        if changed:
+            _save_price_target_state()
+    return changed
+
+
+def _backfill_price_targets_from_signal_log() -> int:
+    """State kaybolsa bile teslim edilmiş geçmiş sinyalleri logdan geri kur."""
+    if not PRICE_TARGET_TRACKING_ENABLED:
+        return 0
+    path = Path(__file__).parent / SIGNAL_LOG
+    if not path.exists():
+        return 0
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(
+        days=max(1, PRICE_TARGET_RETENTION_DAYS))
+    now_closed_ms = (int(now.timestamp() * 1000) // 300_000) * 300_000
+    added = 0
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0
+    for line in lines:
+        try:
+            record = json.loads(line)
+            notified = _target_dt(record.get("notified_at"))
+        except (TypeError, ValueError):
+            continue
+        if (notified < cutoff or record.get("performance_excluded")
+                or str(record.get("strategy") or "").startswith("TEST")):
+            continue
+        delivered = record.get("push_allowed")
+        if delivered is None:
+            delivered = not bool(record.get("suppressed"))
+        if not delivered:
+            continue
+        event_id = _signal_event_id(record)
+        with _price_target_lock:
+            exists = event_id in PRICE_TARGET_STATE.setdefault("events", {})
+        if exists:
+            continue
+        record["event_id"] = event_id
+        record["push_allowed"] = True
+        if _register_price_targets(record, persist=True):
+            # Logdan geri kurulan olayda geçmiş mumlar henüz işlenmemiştir.
+            # Bunların hedeflerini analitiğe kat, fakat kullanıcıya saatler/günler
+            # gecikmiş Telegram alarmı gönderme. Olay hâlâ aktifse bu andan
+            # sonraki gerçek zamanlı hedefler normal şekilde bildirilebilir.
+            with _price_target_lock:
+                event = PRICE_TARGET_STATE["events"].get(event_id)
+                if isinstance(event, dict):
+                    horizon_end_ms = (int(_target_dt(
+                        event["expires_at"]).timestamp() * 1000)
+                                      // 300_000) * 300_000
+                    event["replay_silent_before_ms"] = min(
+                        now_closed_ms, horizon_end_ms)
+                    _save_price_target_state()
+            added += 1
+    return added
 
 
 def _delivery_record(sig: dict, push: bool) -> dict:
@@ -3039,6 +3291,12 @@ def _run_forever_locked(once: bool = False,
     global LAST_SCAN_FAILURE_AT, LAST_LOOP_HEARTBEAT_AT, LAST_LOOP_ERROR
     global SCAN_IN_PROGRESS, CONSECUTIVE_SCAN_FAILURES
     state = state or ScanState.load()       # restart sonrasi kaldigi yerden
+    migrated_targets = _ensure_price_target_state_schema()
+    backfilled_targets = _backfill_price_targets_from_signal_log()
+    if migrated_targets or backfilled_targets:
+        print("fiyat-hedefi analitigi hazirlandi: "
+              f"{migrated_targets} kayit guncellendi, "
+              f"{backfilled_targets} log olayi geri kuruldu", flush=True)
     LAST_LOOP_HEARTBEAT_AT = datetime.now(timezone.utc).isoformat()
     refresh_universe_if_due(force=True)     # otomatik moddaysa evreni kur
     refresh_perp_map_if_due(force=True)     # statik modda da kontrat esle
@@ -3820,6 +4078,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
     now = datetime.now(timezone.utc)
     cache = _load_perf_cache()
     target_summary = price_target_summary()
+    path_summary = price_path_summary()
     rows = []
     log_path = Path(__file__).parent / SIGNAL_LOG
     lines = []
@@ -3893,6 +4152,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         rows.append({
             "t": sig["bar_time"], "event_id": event_id,
             "strategy": strat, "symbol": sig.get("symbol"),
+            "direction": sig.get("direction"),
             "confidence": conf, "strength": sig.get("strength"),
             "universe": _signal_universe(sig),
             "config_version": sig.get("config_version") or "legacy",
@@ -3934,6 +4194,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "market_regime_as_of": sig.get("market_regime_as_of"),
             "silenced": silenced,
             "push_allowed": sig.get("push_allowed", not silenced),
+            "notification_status": ("SESSIZ" if silenced else "GONDERILDI"),
             "suppression_reason": sig.get("suppression_reason"),
             "note": sig.get("note", ""),
             "why": _signal_why(sig),
@@ -3972,6 +4233,9 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "live_wr": summary["net_winrate_pct"],
             "live_cohorts": cohorts,
             "price_targets": target_summary.get(key, {}),
+            "price_path": path_summary.get(key, {}),
+            "user_success": target_summary.get(key, {}).get(
+                _target_level_key(USER_SUCCESS_TARGET_PCT), {}),
         })
     return {
         "now": now.isoformat(timespec="seconds"),
@@ -3986,6 +4250,9 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "funding_cost_status": "not_modeled",
             "price_target_tracking_enabled": PRICE_TARGET_TRACKING_ENABLED,
             "price_target_levels_pct": list(PRICE_TARGET_LEVELS_PCT),
+            "price_target_notify_levels_pct": list(
+                PRICE_TARGET_NOTIFY_LEVELS_PCT),
+            "user_success_target_pct": USER_SUCCESS_TARGET_PCT,
             "market_regime": market_regime_snapshot(),
             "shadow_experiments_enabled": SHADOW_EXPERIMENTS_ENABLED,
             "shadow_push_enabled": SHADOW_PUSH_ENABLED,
@@ -3999,12 +4266,13 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         },
         "strategies": strategies,
         "price_targets": target_summary,
+        "price_paths": path_summary,
         "docs": STRATEGY_DOCS,
         "signals": rows,
     }
 
 
-DASHBOARD_HTML_TEMPLATE = """<!doctype html><html lang="tr"><head>
+_DASHBOARD_HTML_TEMPLATE_LEGACY = """<!doctype html><html lang="tr"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Signal Bot Panosu</title><style>
 :root{--bg:#0b1220;--card:#111a2e;--line:#22304f;--tx:#eaf0fb;--mut:#8aa0c6;
@@ -4193,6 +4461,15 @@ async function load(){try{const sep=DATA_URL.includes("?")?"&":"?";
 ["fStrat","fStat","fNot"].forEach(id=>document.getElementById(id).addEventListener("input",draw));
 load();setInterval(load,60000);
 </script></body></html>"""
+
+# Arayüz ayrı dosyada tutulur; GitHub Pages yayını yine tek index.html üretir.
+# Eski gömülü sürüm, paketleme hatasında yerel panonun tamamen kaybolmaması için
+# salt-okunur fallback'tir.
+try:
+    DASHBOARD_HTML_TEMPLATE = (Path(__file__).parent / "dashboard.html").read_text(
+        encoding="utf-8")
+except OSError:
+    DASHBOARD_HTML_TEMPLATE = _DASHBOARD_HTML_TEMPLATE_LEGACY
 
 
 def dashboard_html(data_url: str = "/api/dashboard") -> str:
