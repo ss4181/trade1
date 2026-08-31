@@ -54,7 +54,7 @@ tr.sig{cursor:pointer}tr.sig:hover td{background:#16203a}
 </div>
 <div class="tablewrap"><table><thead><tr>
 <th>Zaman (UTC)</th><th>Strateji</th><th>Güven</th><th>Sembol</th><th>Giriş ref</th>
-<th>Son çıkış</th><th>Durum</th><th>Net K/Z %</th><th>Net K/Z $</th><th>Not</th>
+<th>Son çıkış</th><th>Durum</th><th>TP2 / TP3</th><th>Net K/Z %</th><th>Net K/Z $</th><th>Not</th>
 </tr></thead><tbody id="rows"></tbody></table></div>
 <div class="foot" id="foot"></div>
 <script>
@@ -66,6 +66,10 @@ const fp=x=>{if(x==null)return "—";x=Number(x);
  return x.toFixed(10).replace(/0+$/,"").replace(/\.$/,"")||"0"};
 const fpc=x=>x==null?'<span class="tag">ölçülüyor</span>':
  `<span class="${x>=0?'up':'dn'}">${x>=0?'+':''}${x.toFixed(2)}%</span>`;
+function tpCell(r){const p=r.price_target;if(!p)return '<span class="tag">izlenmiyor</span>';
+ return (p.targets||[]).map(t=>{const mark=t.status==='HIT'?'✓':t.status==='MISSED'?'✕':'…';
+  const cls=t.status==='HIT'?'up':t.status==='MISSED'?'dn':'tag';
+  return `<span class="${cls}" title="hedef fiyat ${fp(t.price)}">TP${t.level_pct}${mark}</span>`}).join(' ');}
 let D=null,openDoc=null,openRow=null;
 function notifyChip(s){
  const h=s.notify_health||{},tg=h.telegram||{};
@@ -105,11 +109,19 @@ function drawer(r){const rf=r.ref||{};
   `Round-trip maliyet: <b>${r.round_trip_cost_bps}bp</b>`,
   r.funding_cost_status==="not_modeled"?"Funding maliyeti: <b>modellenmedi</b>":""].filter(Boolean).join(" · ");
  const det=(r.detail||[]).map(d=>`${esc(d[0])}: <b>${esc(d[1])}</b>`).join(" · ");
+ const pt=r.price_target;
+ const ptRows=pt?`<div class="kv" style="margin:8px 0">
+  <span>Fiyat-hedefi referansı</span><b>${fp(pt.entry_ref)} (bildirim fiyatı)</b>
+  ${(pt.targets||[]).map(t=>`<span>TP${t.level_pct} · ${fp(t.price)}</span><b>${esc(t.status)}${t.hit_at?' · '+esc(t.hit_at.slice(0,16)):''}</b>`).join('')}
+  <span>En iyi / en ters hareket</span><b>${pt.max_favorable_pct==null?'—':pt.max_favorable_pct.toFixed(2)+'%'} / ${pt.max_adverse_pct==null?'—':pt.max_adverse_pct.toFixed(2)+'%'}</b>
+  <span>İzleme aralığı</span><b>${esc((pt.started_at||'').slice(0,16))} → ${esc((pt.expires_at||'').slice(0,16))}</b>
+ </div>`:'';
  return `<div class="why">🔍 <b>Neden geldi:</b> ${esc(r.why)}</div>
   <div class="kv" style="margin-bottom:8px"><span>Ölçüm kohortu</span><b>${meta}</b></div>
   ${det?`<div class="kv" style="margin-bottom:8px"><span>Ölçümler</span><b>${det}</b></div>`:""}
+  ${ptRows}
   ${ref}
-  <div style="font-size:11px;color:var(--mut);margin-top:8px">Fiyat senaryoları 24 aylık dağılımdan; emir seviyesi değil. Fiyat-bazlı stop/hedef backtest'te zaman çıkışını yenemedi.</div>`;}
+  <div style="font-size:11px;color:var(--mut);margin-top:8px">TP2/TP3 coinin brüt fiyat değişimidir; ücret/slippage düşülmez ve kaldıraçlı ROE değildir. Bot emir vermez. Fiyat senaryoları 24 aylık dağılımdan; emir seviyesi değildir.</div>`;}
 function draw(){if(!D)return;const s=D.status;
  document.getElementById("chips").innerHTML=
   `<span class="chip">⏱ tarama <b>${s.interval_min}dk</b></span>`+
@@ -118,8 +130,9 @@ function draw(){if(!D)return;const s=D.status;
   `<span class="chip">hata <b>${s.errors}</b></span>`+
   `<span class="chip">push eşiği <b>${s.min_conf}+</b></span>`+
   `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`+
-  `<span class="chip">net maliyet <b>${s.round_trip_cost_bps}bp</b></span>`+
-  `<span class="chip">S3 rejim <b>${esc((s.market_regime||{}).label||"UNKNOWN")}</b></span>`+
+   `<span class="chip">net maliyet <b>${s.round_trip_cost_bps}bp</b></span>`+
+   `<span class="chip">fiyat hedefi <b>${s.price_target_tracking_enabled?'TP '+s.price_target_levels_pct.join('/'):'kapalı'}</b></span>`+
+   `<span class="chip">S3 rejim <b>${esc((s.market_regime||{}).label||"UNKNOWN")}</b></span>`+
   notifyChip(s);
  document.getElementById("cards").innerHTML=D.strategies.map(x=>{
    const live=(x.live_cohorts||[]).length?(x.live_cohorts||[]).map(c=>{
@@ -131,12 +144,15 @@ function draw(){if(!D)return;const s=D.status;
      '<div class="cohort">henüz olgun kohort yok</div>';
    const bt=(x.bt_med==null)?"—":`${x.bt_med>=0?'+':''}${x.bt_med}% / %${x.bt_wr} (N=${x.bt_n})`;
    const tails=(x.bt_q10==null||x.bt_q90==null)?"raporlanmadı":`${x.bt_q10}% / +${x.bt_q90}%`;
+   const tp=Object.entries(x.price_targets||{}).map(([level,t])=>
+    `TP${level}: ${t.hit_rate_pct==null?'—':'%'+t.hit_rate_pct} (${t.hit}/${t.resolved}, ${t.pending} bekliyor)`).join(' · ');
    return `<div class="card ${x.pushed?'':'off'}" onclick="toggleDoc('${x.name}')"><h3>${x.name}
     <span class="badge ${B[R[x.confidence]]}">${x.confidence}</span></h3>
     <div class="row"><span>Tarihsel test (ham${x.bt_h?' · '+x.bt_h+'h':''})</span><b>${bt}</b></div>
-    <div class="row"><span>Tarihsel kötü %10 / iyi %10</span><b>${tails}</b></div>
-    ${live}
-    <div class="row"><span>Push</span><b>${x.pushed?"açık":"SESSİZ"}</b></div>
+     <div class="row"><span>Tarihsel kötü %10 / iyi %10</span><b>${tails}</b></div>
+     ${live}
+     <div class="row"><span>Canlı fiyat-hedefi</span><b>${tp||'henüz kayıt yok'}</b></div>
+     <div class="row"><span>Push</span><b>${x.pushed?"açık":"SESSİZ"}</b></div>
    <div class="hint">▸ nasıl çalışır (tıkla)</div></div>`}).join("");
  drawDoc();
  const fs=document.getElementById("fStrat").value,ft=document.getElementById("fStat").value,
@@ -151,14 +167,14 @@ function draw(){if(!D)return;const s=D.status;
   const main=`<tr class="sig" data-i="${i}"><td>${r.t.slice(0,16).replace("T"," ")}</td>
    <td><b>${r.strategy}</b>${r.silenced?' <span class="tag">SESSİZ</span>':''}</td>
    <td><span class="badge ${B[R[r.confidence]]}">${r.confidence}</span></td>
-   <td>${r.symbol}</td><td>${fp(r.entry)}</td><td>${r.exit_by}</td><td>${st}</td>
+   <td>${r.symbol}</td><td>${fp(r.entry)}</td><td>${r.exit_by}</td><td>${st}</td><td>${tpCell(r)}</td>
    <td>${fpc(r.pnl_pct)}</td><td>${usd}</td>
    <td style="white-space:normal;min-width:170px;color:var(--mut)">▸ ${esc(r.note)}</td></tr>`;
-  const dr=`<tr class="drawer" data-d="${i}" ${openRow===r.t+r.symbol?"":"hidden"}><td colspan="10">${drawer(r)}</td></tr>`;
-  return main+dr}).join("")
-  ||'<tr><td colspan="10" style="color:var(--mut)">kayıt yok</td></tr>';
+   const dr=`<tr class="drawer" data-d="${i}" ${openRow===r.t+r.symbol?"":"hidden"}><td colspan="11">${drawer(r)}</td></tr>`;
+   return main+dr}).join("")
+   ||'<tr><td colspan="11" style="color:var(--mut)">kayıt yok</td></tr>';
  document.getElementById("foot").innerHTML=D.foot||FOOT;}
-const FOOT='K/Z tanımı: <b>AKTİF</b> satırlarda sinyal anındaki aynı piyasa fiyatı geçici giriş referansıdır; gerçek gözlem zamanı tazelik sınırını aşarsa veya giriş/performans piyasası uyuşmazsa K/Z gösterilmez. <b>OLGUN</b> satırlarda gerçekleşen sonuç giriş = sonraki bar açılışı, çıkış = ufuk kapanışıyla hesaplanır. Gösterilen K/Z, açıkça yazılan round-trip maliyet varsayımı düşülmüş NET değerdir; S2 funding maliyeti modellenmemiştir. S2 sonucu USD-M perpetual, diğerleri spot mumlarından ölçülür. "SESSİZ" = teslim politikası nedeniyle loglandı ama push edilmedi. S3 BULL/BEAR etiketi salt gözlemdir, sinyali filtrelemez. Bu bir izleme panosudur; yatırım tavsiyesi değildir.';
+const FOOT='TP2/TP3: yalnız Telegram'a gerçekten gönderilmiş sinyallerde, bildirim fiyatından sonra coinin kaldıraçsız brüt fiyatının +%2/+%3 hedefe dokunmasını gösterir; ücret/slippage düşülmez, ROE değildir ve emir kapatmaz. K/Z tanımı: <b>AKTİF</b> satırlarda sinyal anındaki aynı piyasa fiyatı geçici giriş referansıdır; gerçek gözlem zamanı tazelik sınırını aşarsa veya giriş/performans piyasası uyuşmazsa K/Z gösterilmez. <b>OLGUN</b> satırlarda gerçekleşen sonuç giriş = sonraki bar açılışı, çıkış = ufuk kapanışıyla hesaplanır. Gösterilen K/Z, açıkça yazılan round-trip maliyet varsayımı düşülmüş NET değerdir; S2 funding maliyeti modellenmemiştir. S2 sonucu USD-M perpetual, diğerleri spot mumlarından ölçülür. "SESSİZ" = teslim politikası nedeniyle loglandı ama push edilmedi. S3 BULL/BEAR etiketi salt gözlemdir, sinyali filtrelemez. Bu bir izleme panosudur; yatırım tavsiyesi değildir.';
 document.getElementById("rows").addEventListener("click",e=>{
  const tr=e.target.closest("tr.sig");if(!tr)return;
  const rows=D.signals.filter(r=>{const fs=document.getElementById("fStrat").value,
