@@ -126,6 +126,8 @@ class ResearchMonitorTests(unittest.TestCase):
         self.assertFalse(report["quality_ready"])
         self.assertEqual(report["liquidations"]["event_days"], 0)
         self.assertTrue(report["liquidations"]["stream_suspect"])
+        self.assertEqual(report["phase"], "WAITING_FOR_LIQUIDATION_EVENTS")
+        self.assertIsNone(report["next_review_utc"])
 
 
 if __name__ == "__main__":

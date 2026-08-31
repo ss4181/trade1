@@ -849,6 +849,9 @@ olayı görüldü. Kök neden Binance'in eski WebSocket `/ws/` yolunu 23 Nisan
 UM/CM payload'larında yalnız `st=1` USD-M kaydedilir. Kalite kapısı artık
 heartbeat gününü değil en az 30 gerçek force-order olay gününü ister ve bağlantı
 varken olay yoksa açık arıza uyarısı üretir. Kayıp dönem geriye doldurulamaz.
+Birleşik keşif saati, tam market alanlarının başlangıcı ile onarılmış akıştaki ilk
+gerçek force-order olayının daha geç olanından itibaren 90 gün sayılır; dolayısıyla
+önceki `2026-11-04` tahmini artık birleşik strateji için geçerli değildir.
 
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 

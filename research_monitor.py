@@ -156,6 +156,7 @@ def build_research_readiness(
     liquidation_event_days: set[str] = set()
     liquidation_status_days: set[str] = set()
     liq_first = liq_last = None
+    liq_event_first = liq_event_last = None
     for row in _jsonl(root.glob("liquidation_archive_*.jsonl")):
         if row is None:
             malformed += 1
@@ -167,6 +168,10 @@ def build_research_readiness(
             liquidation_events += 1
             if stamp:
                 liquidation_event_days.add(stamp.date().isoformat())
+                liq_event_first = (stamp if liq_event_first is None else
+                                   min(liq_event_first, stamp))
+                liq_event_last = (stamp if liq_event_last is None else
+                                  max(liq_event_last, stamp))
         elif record_type == "stream_status":
             liquidation_status_rows += 1
             if stamp:
@@ -207,6 +212,8 @@ def build_research_readiness(
         "liquidation_event_days_30": len(liquidation_event_days) >= 30,
     }
     quality_ready = all(quality_checks.values())
+    combined_start = (max(research_first, liq_event_first)
+                      if research_first and liq_event_first else None)
 
     if first is None:
         phase = "NO_DATA"
@@ -217,8 +224,13 @@ def build_research_readiness(
         next_review = None
         action = ("OI satırı var fakat funding/long-short/taker alanları birlikte "
                   "başlamadı; 90 günlük sayaç henüz başlatılmadı.")
+    elif liq_event_first is None and oos_start is None:
+        phase = "WAITING_FOR_LIQUIDATION_EVENTS"
+        next_review = None
+        action = ("Tam OI alanları hazır fakat gerçek liquidation olayı yok; "
+                  "onarılmış akışın ilk olayı gelince 90 günlük sayaç başlar.")
     elif oos_start is None:
-        next_review = research_first + timedelta(days=discovery_days)
+        next_review = combined_start + timedelta(days=discovery_days)
         if now < next_review:
             phase = "DISCOVERY_COLLECTING"
             action = ("Veriyi toplamaya devam et; parametre değiştirme. "
@@ -256,6 +268,7 @@ def build_research_readiness(
         "oos_days_required": oos_days,
         "oos_start_utc": _iso(oos_start),
         "next_review_utc": _iso(next_review),
+        "combined_research_start_utc": _iso(combined_start),
         "days_to_review": days_to_review,
         "quality_ready": quality_ready,
         "quality_checks": quality_checks,
@@ -279,6 +292,8 @@ def build_research_readiness(
             "event_days": len(liquidation_event_days),
             "status_days": len(liquidation_status_days),
             "first_utc": _iso(liq_first), "last_utc": _iso(liq_last),
+            "first_event_utc": _iso(liq_event_first),
+            "last_event_utc": _iso(liq_event_last),
             "stream_suspect": (
                 liquidation_events == 0 and liquidation_status_rows >= 12),
         },
@@ -302,6 +317,7 @@ def format_research_readiness(report: dict) -> str:
     phase_names = {
         "NO_DATA": "VERI YOK",
         "WAITING_FOR_COMPLETE_FIELDS": "TAM ALANLI ARSIV HENUZ BASLAMADI",
+        "WAITING_FOR_LIQUIDATION_EVENTS": "LIKIDASYON OLAYI BEKLENIYOR",
         "DISCOVERY_COLLECTING": "90 GUNLUK KESIF TOPLANIYOR",
         "INTERIM_REVIEW_DUE": "ARA INCELEME HAZIR",
         "DATA_QUALITY_BLOCKED": "VERI KALITESI YETERSIZ",

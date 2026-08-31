@@ -441,6 +441,8 @@ Protokol: ilk 90 gün keşif ve veri-kalitesi, ardından aday kuralın ön-kayd�
 `RESEARCH_OOS_START_UTC` bu dondurma anında yazılır ve sonraki 90 gün yalnız
 dokunulmamış OOS veri toplanır. 180 günlük döngü tamamlanmadan OI stratejisi
 canlı/güvenilir etiketi alamaz.
+Birleşik ilk 90 gün, tam OI alanları ile ilk gerçek likidasyon olayının daha geç
+olanından başlar; eski heartbeat günleri araştırma yaşı sayılmaz.
 
 Eldeki veriyi keşif amaçlı hemen ölçmek için:
 
@@ -452,8 +454,9 @@ python signal_bot.py --archive-status
 İlk komut stratejiyi değiştirmez; sabit filtre merdiveninin 4 saatlik sonuçlarını
 gösterir. İkinci komutta `events` değeri yeni sürümden sonra artmalıdır.
 
-Henüz likidasyon olayı gelmediyse dosyada yalnız `connected` durum satırı
-bulunması normaldir. `--archive-status`, kaç olay ve durum kaydı bulunduğunu,
+Yeniden başlatmanın hemen ardından yalnız `connected` satırı bulunabilir; fakat
+uzun süre bağlantı kaydı varken sıfır olay `/arastirma` tarafından arıza olarak
+işaretlenir. `--archive-status`, kaç olay ve durum kaydı bulunduğunu,
 ilk/son olay zamanını gösterir. Web sunucusu kullanılıyorsa `/health` içindeki
 `force_order_archive.connected` alanı canlı bağlantıyı doğrular.
 

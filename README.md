@@ -224,6 +224,10 @@ dönemidir. Kalite kapısı geçilince OI+funding+long/short+likidasyon adayı a
 kararı verilir. Böylece haftalık yeniden ayarlamanın yaratacağı overfitting ve
 "sonuca ikinci bakış" önlenir.
 
+Birleşik 90 günlük sayaç, tam OI alanları ile onarılmış WebSocket'ten gelen ilk
+gerçek likidasyon olayının daha geç olanında başlar. Heartbeat satırları başlangıç
+sayılmaz; eski bozuk akışın süresi araştırma yaşına eklenmez.
+
 Mevcut keşif verisini eşik değiştirmeden hemen incelemek için:
 
 ```bash
