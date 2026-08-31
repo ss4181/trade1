@@ -255,6 +255,22 @@ python research/eval_forward_oi_barriers.py --dir .
 hedef, −%1,5 stop ve 4/12/24 saat ufuklarını gösterir; `--full` −%1/−%2 stop
 hassasiyetlerini de basar. Bu da OOS değildir ve canlı sinyal üretmez.
 
+Bot aynı tam hedef/stop testini varsayılan olarak **her 30 günde bir** ayrı bir
+alt süreçte yeniden çalıştırır. İlk rapor, yeni sürümle ilk başarılı sürekli
+taramadan 30 gün sonra; sonraki raporlar 30'ar gün arayla Telegram sahibine
+gelir. Mesaj P0–P5/Q1 için örnek/gün sayısını, 4 saatte +%2 ve +%3 hedefin
+−%1,5 stoptan önce görülme oranını, net ortalama/medyanı ve günlük bootstrap
+`p(nonpoz)` değerini içerir; Claude'a doğrudan yapıştırılabilecek kadar kısa
+tutulur. Test tüm birikimli arşivi kullanır, yalnız son ayı değil. Ağ veya
+Telegram hatasında canlı tarama durmaz ve rapor 24 saat sonra yeniden denenir.
+
+Bu aylık döngü yalnız ölçüm ve bildirimdir: strateji, eşik, güven etiketi,
+sembol evreni ve push davranışını otomatik değiştirmez. `ARCHIVE_MARKET_DATA`
+ve Telegram açık olmalıdır. Kapatmak için `.env` içine
+`FORWARD_OI_30D_REPORT_ENABLED=false` yazılabilir; süre gerekiyorsa
+`FORWARD_OI_REPORT_INTERVAL_DAYS=30` ile ayarlanır. Sayaç ve 5dk önbelleği
+`.gitignore` kapsamındadır; hiçbir token veya `.env` değeri rapora girmez.
+
 Dosyalar Git'e veya GitHub Pages'a gönderilmez. Varsayılan iki kanal da açıktır;
 `ARCHIVE_MARKET_DATA=false` ve/veya `ARCHIVE_FORCE_ORDERS=false` ile kapatılabilir.
 Gölge kanal ayrıca `SHADOW_EXPERIMENTS_ENABLED=false` ile kapatılabilir.

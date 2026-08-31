@@ -330,8 +330,15 @@ def summarize_outcomes(rows: list[dict], n_total: int) -> dict:
     rate = lambda count: round(count / n * 100, 1) if n else None
     target_minutes = [row["minutes_to_exit"] for row in targets]
     maes = [row["mae_pct"] for row in available]
+    independent_days = len({
+        datetime.fromtimestamp(
+            row["entry_time_ms"] / 1000, tz=timezone.utc
+        ).date().isoformat()
+        for row in available
+    })
     return {
         "n_total": n_total, "n": n, "n_unavailable": n_total - n,
+        "independent_days": independent_days,
         "target_first_pct_lower": rate(len(targets)),
         "target_first_pct_upper": rate(len(targets) + len(ambiguous)),
         "stop_first_pct": rate(len(stops)),
@@ -370,6 +377,7 @@ def analyze(root: Path, cache_dir: Path, allow_download: bool = True,
     ]
     events_by_rule = {rule: independent_events(features, rule)
                       for rule in rule_names}
+    feature_hours = sorted({int(row["hour"]) for row in features})
     jobs = required_jobs(events_by_rule)
     daily, download = load_jobs(
         VisionKlineStore(cache_dir, allow_download), jobs, workers, quiet)
@@ -404,8 +412,20 @@ def analyze(root: Path, cache_dir: Path, allow_download: bool = True,
         "schema_version": "forward-oi-barrier-discovery-v1",
         "mode": "EXPLORATORY_NOT_OOS_NO_LIVE_SIGNAL",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "data": {**ingest, "symbols": len(panel),
-                 "feature_rows": len(features), "download": download},
+        "data": {
+            **ingest,
+            "symbols": len(panel),
+            "feature_rows": len(features),
+            "feature_first_utc": (
+                datetime.fromtimestamp(feature_hours[0] * 3600,
+                                       tz=timezone.utc).isoformat()
+                if feature_hours else None),
+            "feature_last_utc": (
+                datetime.fromtimestamp(feature_hours[-1] * 3600,
+                                       tz=timezone.utc).isoformat()
+                if feature_hours else None),
+            "download": download,
+        },
         "method": {
             "event_rules": rule_names,
             "entry": "next exact UTC hour 5m USD-M contract kline open",

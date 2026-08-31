@@ -648,6 +648,21 @@ _last_archive_hour: str | None = None
 ARCHIVE_DIR = Path(_env("ARCHIVE_DIR", str(Path(__file__).parent))).expanduser()
 RESEARCH_MONITOR_STATE_FILE = Path(__file__).parent / _env(
     "RESEARCH_MONITOR_STATE_FILE", ".research_monitor_state.json")
+# Birikimli Forward-OI hedef/stop matrisi ayda bir ayrı bir süreçte yenilenir.
+# Bu yalnız araştırma raporudur: canlı sinyal, eşik, güven veya push kapısını
+# değiştirmez. İlk çalışma etkinleştirmeden INTERVAL_DAYS sonra yapılır.
+FORWARD_OI_30D_REPORT_ENABLED = _env(
+    "FORWARD_OI_30D_REPORT_ENABLED", True, cast=_flag)
+FORWARD_OI_REPORT_INTERVAL_DAYS = max(
+    1, _env("FORWARD_OI_REPORT_INTERVAL_DAYS", 30, cast=int))
+FORWARD_OI_REPORT_WORKERS = max(
+    1, min(12, _env("FORWARD_OI_REPORT_WORKERS", 4, cast=int)))
+FORWARD_OI_REPORT_STATE_FILE = Path(__file__).parent / _env(
+    "FORWARD_OI_REPORT_STATE_FILE", ".forward_oi_report_state.json")
+FORWARD_OI_5M_CACHE_DIR = Path(_env(
+    "FORWARD_OI_5M_CACHE_DIR",
+    str(Path(__file__).parent / "research" / "data" / "forward_oi_5m"),
+)).expanduser()
 _archive_worker_lock = threading.Lock()
 ARCHIVE_WORKER_ACTIVE = False
 ARCHIVE_WORKER_LAST_ERROR: str | None = None
@@ -2571,6 +2586,10 @@ def scan_all(state: ScanState) -> int:
 DAILY_SUMMARY_HOUR_UTC = _env("DAILY_SUMMARY_HOUR_UTC", 6)   # 06 UTC = 09 TR
 _last_summary_day: str | None = None
 _last_research_summary_week: str | None = None
+_forward_oi_report_worker_lock = threading.Lock()
+_forward_oi_report_state_lock = threading.Lock()
+FORWARD_OI_REPORT_WORKER_ACTIVE = False
+FORWARD_OI_REPORT_WORKER_LAST_ERROR: str | None = None
 
 
 def research_readiness_report() -> dict:
@@ -2626,6 +2645,270 @@ def _maybe_weekly_research_summary() -> None:
         print(f"uyari: haftalik arastirma raporu olusturulamadi: "
               f"{type(exc).__name__}: {_redact(str(exc))}",
               file=sys.stderr, flush=True)
+
+
+def _parse_forward_oi_report_time(value) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _read_forward_oi_report_state_unlocked() -> dict:
+    try:
+        data = json.loads(FORWARD_OI_REPORT_STATE_FILE.read_text(
+            encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, TypeError, ValueError):
+        return {}
+
+
+def _write_forward_oi_report_state_unlocked(state: dict) -> bool:
+    try:
+        FORWARD_OI_REPORT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = FORWARD_OI_REPORT_STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False,
+                                  separators=(",", ":")), encoding="utf-8")
+        tmp.replace(FORWARD_OI_REPORT_STATE_FILE)
+        return True
+    except OSError as exc:
+        print(f"uyari: 30 gunluk OI rapor durumu kaydedilemedi: "
+              f"{_redact(str(exc))}", file=sys.stderr, flush=True)
+        return False
+
+
+def _forward_oi_report_due(state: dict, now: datetime) -> bool:
+    due = _parse_forward_oi_report_time(state.get("next_due_at_utc"))
+    if due is None:
+        return True
+    if state.get("last_status") == "running":
+        started = _parse_forward_oi_report_time(
+            state.get("last_started_at_utc"))
+        # Süreç analiz sırasında kapanırsa kalıcı "running" kaydı raporu
+        # sonsuza kadar kilitlemesin. Yaşayan worker ayrıca süreç-içi lock tutar.
+        if started is not None and now - started < timedelta(hours=6):
+            return False
+        return True
+    return now >= due
+
+
+def _initialize_forward_oi_report_schedule(now: datetime) -> bool:
+    """İlk aktivasyonda hemen test koşmaz; ilk raporu N gün sonrasına kurar."""
+    with _forward_oi_report_state_lock:
+        state = _read_forward_oi_report_state_unlocked()
+        if state.get("activated_at_utc"):
+            return False
+        due = now + timedelta(days=FORWARD_OI_REPORT_INTERVAL_DAYS)
+        state = {
+            "schema_version": "forward-oi-periodic-report-v1",
+            "activated_at_utc": now.isoformat(timespec="seconds"),
+            "next_due_at_utc": due.isoformat(timespec="seconds"),
+            "last_status": "scheduled",
+        }
+        if _write_forward_oi_report_state_unlocked(state):
+            print("30 gunluk Forward OI raporu planlandi: "
+                  f"ilk calisma {due.isoformat(timespec='minutes')}",
+                  flush=True)
+        return True
+
+
+def _metric_text(value, digits: int = 1, signed: bool = False) -> str:
+    if value is None:
+        return "—"
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return "—"
+    if not math.isfinite(number):
+        return "—"
+    return f"{number:+.{digits}f}" if signed else f"{number:.{digits}f}"
+
+
+def format_forward_oi_30d_report(report: dict) -> str:
+    """Tam matrisi Telegram'ın 4096 sınırına uygun, yapıştırılabilir özetle."""
+    data = report.get("data") or {}
+    download = data.get("download") or {}
+    rules = report.get("rules") or {}
+    generated = _parse_forward_oi_report_time(report.get("generated_at_utc"))
+    generated_text = (generated.strftime("%Y-%m-%d %H:%M UTC")
+                      if generated else "bilinmiyor")
+    first = _parse_forward_oi_report_time(data.get("feature_first_utc"))
+    last = _parse_forward_oi_report_time(data.get("feature_last_utc"))
+    period = (f"{first:%Y-%m-%d} → {last:%Y-%m-%d}"
+              if first and last else "arşivdeki tüm olgun dönem")
+
+    labels = (
+        "P0_top10_gainer5", "P1_plus_volume2x", "P2_plus_any_oi_up",
+        "P3_plus_oi_2pct", "P4_plus_short_majority",
+        "P5_plus_funding_rise", "Q1_squeeze_proxy_oi_down",
+    )
+    table = ["Kural N/gün | +2% H/S net med p | +3% H/S net med p"]
+    for full_name in labels:
+        code = full_name.split("_", 1)[0]
+        result = rules.get(full_name) or {}
+        tp2 = result.get("tp2_sl1.5_4h") or {}
+        tp3 = result.get("tp3_sl1.5_4h") or {}
+        n = int(tp2.get("n") or 0)
+        days = int(tp2.get("independent_days") or 0)
+
+        def compact(row: dict) -> str:
+            return (f"{_metric_text(row.get('target_first_pct_lower'))}/"
+                    f"{_metric_text(row.get('stop_first_pct'))} "
+                    f"{_metric_text(row.get('mean_net_pct'), 3, True)} "
+                    f"{_metric_text(row.get('median_net_pct'), 2, True)} "
+                    f"{_metric_text(row.get('bootstrap_p_mean_nonpositive'), 3)}")
+
+        small = " KÜÇÜK" if tp2.get("sample_warning") else ""
+        table.append(
+            f"{code:<2} {n:>3}/{days:<2} | {compact(tp2)} | {compact(tp3)}{small}")
+
+    accepted = int(data.get("accepted") or 0)
+    symbols = int(data.get("symbols") or 0)
+    feature_rows = int(data.get("feature_rows") or 0)
+    message = (
+        "🧪 <b>30 günlük Forward OI test tekrarı</b>\n"
+        "Birikimli keşif arşivi; canlı strateji/eşik değişmez.\n"
+        f"Üretim: {generated_text} · dönem: {period}\n"
+        f"Veri: {accepted:,} satır · {symbols} sembol · "
+        f"{feature_rows:,} olgun özellik\n"
+        f"5dk günleri: {int(download.get('requested') or 0)} gereken · "
+        f"{int(download.get('cached') or 0)} önbellek · "
+        f"{int(download.get('downloaded') or 0)} yeni · "
+        f"{int(download.get('missing') or 0)} eksik · "
+        f"{int(download.get('errors') or 0)} hata\n\n"
+        f"<pre>{_html.escape(chr(10).join(table))}</pre>\n"
+        "H/S: 4 saatte hedefin/stopun önce görülme yüzdesi. "
+        "net/med: 12 bp maliyet sonrası ortalama/medyan getiri. "
+        "p: günlük bootstrap'ta ortalamanın pozitif olmama oranı.\n"
+        "P0 top-10 yükselen; P1 +hacim; P2 +OI; P3 +OI≥%2; "
+        "P4 +short çoğunluğu; P5 +funding artışı; Q1 OI düşüşlü squeeze.\n\n"
+        "⚠️ Bu bir keşif raporudur; OOS güven oranı veya işlem çağrısı değildir. "
+        "90 günlük keşif ve ardından dondurulmuş OOS tamamlanmadan kural açılmaz.\n"
+        "📌 Değerlendirme için bu mesajı Claude'a aynen ilet.")
+    if len(message) > 4000:
+        raise ValueError("30 gunluk Telegram raporu 4000 karakteri asti")
+    return message
+
+
+def _generate_forward_oi_30d_report() -> dict:
+    """Ağır 5m analizi alt süreçte çalıştır; tarama/GIL heartbeat'ini ayır."""
+    script = Path(__file__).parent / "research" / "eval_forward_oi_barriers.py"
+    command = [
+        sys.executable, str(script), "--dir", str(ARCHIVE_DIR),
+        "--cache-dir", str(FORWARD_OI_5M_CACHE_DIR),
+        "--workers", str(FORWARD_OI_REPORT_WORKERS), "--json",
+    ]
+    result = subprocess.run(
+        command, cwd=str(Path(__file__).parent), capture_output=True,
+        text=True, encoding="utf-8", errors="replace", timeout=4 * 60 * 60,
+        check=False)
+    if result.returncode != 0:
+        detail = _redact((result.stderr or result.stdout or "bilinmeyen hata"))
+        raise RuntimeError(
+            f"Forward OI alt sureci kod {result.returncode}: {detail[-500:]}")
+    try:
+        report = json.loads(result.stdout)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Forward OI alt sureci gecerli JSON dondurmedi") from exc
+    if not isinstance(report, dict) or not isinstance(report.get("rules"), dict):
+        raise RuntimeError("Forward OI rapor semasi gecersiz")
+    return report
+
+
+def _finish_forward_oi_30d_report(success: bool, error: str | None = None) -> None:
+    now = datetime.now(timezone.utc)
+    with _forward_oi_report_state_lock:
+        state = _read_forward_oi_report_state_unlocked()
+        state["last_completed_at_utc"] = now.isoformat(timespec="seconds")
+        if success:
+            state["last_status"] = "sent"
+            state["last_sent_at_utc"] = now.isoformat(timespec="seconds")
+            state.pop("last_error", None)
+        else:
+            state["last_status"] = "error"
+            state["last_error"] = _redact(error or "bilinmeyen hata")[:300]
+            # Geçici ağ/Telegram hatası yüzünden bir sonraki ayı bekleme.
+            state["next_due_at_utc"] = (
+                now + timedelta(hours=24)).isoformat(timespec="seconds")
+        _write_forward_oi_report_state_unlocked(state)
+
+
+def _start_forward_oi_30d_report_worker(now: datetime | None = None) -> bool:
+    """Zamanı gelen bir raporu süreçler ve yeniden başlatmalar arasında sahiplenir."""
+    global FORWARD_OI_REPORT_WORKER_ACTIVE, FORWARD_OI_REPORT_WORKER_LAST_ERROR
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if not _forward_oi_report_worker_lock.acquire(blocking=False):
+        return False
+    with _forward_oi_report_state_lock:
+        state = _read_forward_oi_report_state_unlocked()
+        if not state.get("activated_at_utc") or not _forward_oi_report_due(state, now):
+            _forward_oi_report_worker_lock.release()
+            return False
+        state["last_status"] = "running"
+        state["last_started_at_utc"] = now.isoformat(timespec="seconds")
+        state["next_due_at_utc"] = (
+            now + timedelta(days=FORWARD_OI_REPORT_INTERVAL_DAYS)
+        ).isoformat(timespec="seconds")
+        if not _write_forward_oi_report_state_unlocked(state):
+            _forward_oi_report_worker_lock.release()
+            return False
+    FORWARD_OI_REPORT_WORKER_ACTIVE = True
+
+    def work() -> None:
+        global FORWARD_OI_REPORT_WORKER_ACTIVE, FORWARD_OI_REPORT_WORKER_LAST_ERROR
+        try:
+            report = _generate_forward_oi_30d_report()
+            message = format_forward_oi_30d_report(report)
+            if not _telegram_send_text(message, chat_id=TELEGRAM_CHAT_ID):
+                raise RuntimeError("Telegram teslimi basarisiz")
+            FORWARD_OI_REPORT_WORKER_LAST_ERROR = None
+            _finish_forward_oi_30d_report(True)
+            print("30 gunluk Forward OI raporu Telegram'a gonderildi",
+                  flush=True)
+        except Exception as exc:
+            safe = f"{type(exc).__name__}: {_redact(str(exc))}"
+            FORWARD_OI_REPORT_WORKER_LAST_ERROR = safe[:300]
+            _finish_forward_oi_30d_report(False, safe)
+            print(f"uyari: 30 gunluk Forward OI raporu basarisiz: {safe}",
+                  file=sys.stderr, flush=True)
+            _telegram_send_text(
+                "⚠️ <b>30 günlük Forward OI testi tamamlanamadı.</b>\n"
+                "Canlı tarama etkilenmedi; bot 24 saat sonra otomatik yeniden "
+                "deneyecek.", chat_id=TELEGRAM_CHAT_ID)
+        finally:
+            FORWARD_OI_REPORT_WORKER_ACTIVE = False
+            _forward_oi_report_worker_lock.release()
+
+    try:
+        threading.Thread(target=work, name="forward-oi-30d-report",
+                         daemon=True).start()
+    except Exception as exc:
+        safe = f"{type(exc).__name__}: {_redact(str(exc))}"
+        FORWARD_OI_REPORT_WORKER_LAST_ERROR = safe[:300]
+        FORWARD_OI_REPORT_WORKER_ACTIVE = False
+        _forward_oi_report_worker_lock.release()
+        _finish_forward_oi_30d_report(False, safe)
+        print(f"uyari: 30 gunluk OI rapor iscisi baslatilamadi: {safe}",
+              file=sys.stderr, flush=True)
+        return False
+    return True
+
+
+def _maybe_forward_oi_30d_report(now: datetime | None = None) -> bool:
+    """Her turda ucuz zaman kontrolü; ağır iş yalnız 30 günlük kapıda başlar."""
+    if (not FORWARD_OI_30D_REPORT_ENABLED or not ENABLE_TELEGRAM
+            or not ARCHIVE_MARKET_DATA):
+        return False
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if _initialize_forward_oi_report_schedule(now):
+        return False
+    with _forward_oi_report_state_lock:
+        state = _read_forward_oi_report_state_unlocked()
+        due = _forward_oi_report_due(state, now)
+    return _start_forward_oi_30d_report_worker(now) if due else False
 
 
 def _maybe_daily_summary() -> None:
@@ -2836,6 +3119,8 @@ def _run_forever_locked(once: bool = False,
                 _start_performance_worker(max_signals=40)
             _maybe_daily_summary()
             _maybe_weekly_research_summary()
+            if not once:
+                _maybe_forward_oi_30d_report()
         except Exception as e:  # tek dongu hatasi 7/24 servisi dusurmemeli
             LAST_SCAN_FAILURE_AT = datetime.now(timezone.utc).isoformat()
             CONSECUTIVE_SCAN_FAILURES += 1

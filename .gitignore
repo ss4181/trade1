@@ -11,6 +11,7 @@ signals.log
 .price_target_state.json
 .experiment_state.json
 .research_monitor_state.json
+.forward_oi_report_state.json
 .subscribers.json
 .signal_bot.lock
 .stop-signal-bot

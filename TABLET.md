@@ -461,6 +461,24 @@ olaylarında +%2/+%3 hedef ile −%1,5 stop sırasını resmî USD-M mumlarıyla
 İlk çalıştırma birkaç dakika sürebilir ve yalnız gereken günlük ZIP'leri
 `research/data/forward_oi_5m/` altında saklar. Bu dosyalar Git'e gönderilmez.
 
+Bu 5m testini elle tekrar etmene gerek yoktur. Bot yeni sürümle ilk başarılı
+sürekli taramada `.forward_oi_report_state.json` sayacını oluşturur; **30 gün
+sonra** tam testi ayrı bir süreçte çalıştırıp Telegram sahibine kısa P0–P5/Q1
+tablosu yollar. Sonraki tekrarlar yine 30 gün aralıklıdır. Mesajı Claude'a aynen
+iletmen yeterlidir. Rapor birikimli arşivi ölçer, canlı stratejileri değiştirmez;
+test sürerken normal 5 dakikalık tarama devam eder. Geçici ağ/Telegram hatasında
+24 saat sonra tekrar denenir.
+
+Varsayılan ayarlar yeterlidir; `.env` eklemen gerekmez. İstersen kapatmak için:
+
+```bash
+FORWARD_OI_30D_REPORT_ENABLED=false
+```
+
+Süre ve önbellek ayarlarının tamamı `.env.example` içindedir. Durum ve 5dk
+önbellek dosyaları GitHub'a gönderilmez; Telegram mesajı token veya `.env`
+değeri içermez.
+
 Yeniden başlatmanın hemen ardından yalnız `connected` satırı bulunabilir; fakat
 uzun süre bağlantı kaydı varken sıfır olay `/arastirma` tarafından arıza olarak
 işaretlenir. `--archive-status`, kaç olay ve durum kaydı bulunduğunu,

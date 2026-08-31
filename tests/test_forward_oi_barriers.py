@@ -82,6 +82,7 @@ class ForwardOIBarrierTests(unittest.TestCase):
         summary = summarize_outcomes(rows, 3)
         self.assertEqual(summary["n"], 2)
         self.assertEqual(summary["n_unavailable"], 1)
+        self.assertEqual(summary["independent_days"], 2)
         self.assertEqual(summary["target_first_pct_lower"], 50.0)
         self.assertEqual(summary["target_first_pct_upper"], 100.0)
         self.assertEqual(summary["ambiguous_count"], 1)
