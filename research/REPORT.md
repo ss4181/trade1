@@ -841,7 +841,10 @@ sembol, saat kapsaması %84,3) bulundu; bu keşif için kullanılabilir fakat OO
 değildir. `research/explore_forward_oi.py` top-10 yükselen → 5m taker-hacim
 anomalisi → OI artışı → short hesap çoğunluğu → funding yükselişi filtrelerini
 sabit sırayla ayrıştırır; giriş sonraki saatlik snapshot, çıkış +4 saat ve maliyet
-12bp'dir. Sonuç yalnız hipotez/bottleneck tanısıdır.
+12bp'dir. Kullanıcının +%2/+%3 gördüğünde çıkma davranışı için 4/12/24 saatlik
+hedef-dokunma oranları da aynı olaylarda ölçülür. Kaynak saatlik snapshot olup
+mum içi `high` içermediğinden bunlar muhafazakâr alt sınırlardır. Sonuç yalnız
+hipotez/bottleneck tanısıdır.
 
 Aynı denetimde 23 gün ve 8.109 stream-status satırına karşın sıfır force-order
 olayı görüldü. Kök neden Binance'in eski WebSocket `/ws/` yolunu 23 Nisan

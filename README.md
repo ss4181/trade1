@@ -236,7 +236,10 @@ python research/explore_forward_oi.py --dir .
 
 Çıktı aynı sabit merdivende top-10 yükselen, 5m taker-hacim anomalisi, OI artışı,
 short hesap çoğunluğu ve funding değişiminin 4 saatlik net sonuca kademeli
-katkısını gösterir. Bu tablo OOS değildir; yalnız bottleneck/hipotez keşfidir.
+katkısını gösterir. Ayrıca kullanıcının fiilî çıkış davranışına uygun olarak
++%2/+%3 hedefe 4/12/24 saat içinde dokunma oranlarını raporlar. Arşiv saatlik
+snapshot içerdiği ve mum içi `high` içermediği için hedef oranları muhafazakâr
+bir alt sınırdır. Bu tablo OOS değildir; yalnız bottleneck/hipotez keşfidir.
 
 Dosyalar Git'e veya GitHub Pages'a gönderilmez. Varsayılan iki kanal da açıktır;
 `ARCHIVE_MARKET_DATA=false` ve/veya `ARCHIVE_FORCE_ORDERS=false` ile kapatılabilir.

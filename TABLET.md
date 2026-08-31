@@ -452,7 +452,10 @@ python signal_bot.py --archive-status
 ```
 
 İlk komut stratejiyi değiştirmez; sabit filtre merdiveninin 4 saatlik sonuçlarını
-gösterir. İkinci komutta `events` değeri yeni sürümden sonra artmalıdır.
+ve +%2/+%3 hedefe 4/12/24 saat içinde dokunma oranlarını gösterir. Hedef hesabı
+saatlik snapshot kullandığından mum içinde görülüp saat başına kadar geri verilen
+hareketleri yakalayamaz; oranlar muhafazakâr alt sınırdır. İkinci komutta `events`
+değeri yeni sürümden sonra artmalıdır.
 
 Yeniden başlatmanın hemen ardından yalnız `connected` satırı bulunabilir; fakat
 uzun süre bağlantı kaydı varken sıfır olay `/arastirma` tarafından arıza olarak

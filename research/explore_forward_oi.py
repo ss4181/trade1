@@ -23,6 +23,8 @@ COST_BPS = 12.0
 HORIZON_HOURS = 4
 COOLDOWN_HOURS = 24
 BOOTSTRAP_SAMPLES = 2000
+TOUCH_HORIZONS = (4, 12, 24)
+TARGETS = (2, 3)
 
 
 def number(value) -> float | None:
@@ -117,6 +119,20 @@ def build_features(panel: dict[str, dict[int, dict]]) -> list[dict]:
                               and lag6["funding"] is not None else None)
             gross = (exit_row["price"] / entry["price"] - 1
                      if entry is not None and exit_row is not None else None)
+            path_metrics = {}
+            for horizon in TOUCH_HORIZONS:
+                path = [by_hour.get(hour + 1 + offset)
+                        for offset in range(horizon + 1)]
+                valid_path = entry is not None and all(path)
+                returns = ([item["price"] / entry["price"] - 1
+                            for item in path] if valid_path else [])
+                path_metrics[f"mfe_{horizon}h"] = (
+                    max(returns) if returns else None)
+                path_metrics[f"mae_{horizon}h"] = (
+                    min(returns) if returns else None)
+                for target in TARGETS:
+                    path_metrics[f"tp{target}_{horizon}h"] = (
+                        max(returns) >= target / 100 if returns else None)
             rows.append({
                 **current, "return_24h": ret24, "oi_change_1h": oi1,
                 "oi_change_6h": oi6, "volume_ratio": volume_ratio,
@@ -127,6 +143,7 @@ def build_features(panel: dict[str, dict[int, dict]]) -> list[dict]:
                 "net_return": (gross - COST_BPS / 10_000
                                if gross is not None else None),
                 "entry_hour": hour + 1, "exit_hour": hour + 1 + HORIZON_HOURS,
+                **path_metrics,
             })
 
     by_hour: dict[int, list[dict]] = defaultdict(list)
@@ -210,6 +227,20 @@ def summarize(events: list[dict]) -> dict:
     days = {datetime.fromtimestamp(row["entry_hour"] * 3600,
                                    tz=timezone.utc).date().isoformat()
             for row in matured}
+    target_stats = {}
+    for horizon in TOUCH_HORIZONS:
+        for target in TARGETS:
+            key = f"tp{target}_{horizon}h"
+            available = [row[key] for row in events if row.get(key) is not None]
+            target_stats[key] = {
+                "n": len(available),
+                "hit_rate_pct": (round(sum(available) / len(available) * 100, 1)
+                                 if available else None),
+            }
+    mfe4 = [row["mfe_4h"] * 100 for row in events
+            if row.get("mfe_4h") is not None]
+    mae4 = [row["mae_4h"] * 100 for row in events
+            if row.get("mae_4h") is not None]
     return {
         "n_total": len(events), "n": len(values),
         "n_pending": len(events) - len(matured),
@@ -223,6 +254,11 @@ def summarize(events: list[dict]) -> dict:
         "bootstrap_p_mean_nonpositive": (
             round(bootstrap_nonpositive(matured), 4) if len(days) >= 2 else None),
         "sample_warning": "small_sample" if len(values) < 30 else "",
+        "target_touches": target_stats,
+        "median_mfe_4h_pct": (round(statistics.median(mfe4), 4)
+                              if mfe4 else None),
+        "median_mae_4h_pct": (round(statistics.median(mae4), 4)
+                              if mae4 else None),
     }
 
 
@@ -263,6 +299,8 @@ def analyze(root: Path) -> dict:
             "Snapshot prices are not executable bid/ask fills.",
             "Funding cash flows and slippage are not modeled.",
             "Liquidation filter is unavailable until the repaired stream collects events.",
+            "TP touch uses hourly archive snapshots, not intrahour candle highs; "
+            "therefore hit rates are conservative lower-bound estimates.",
             "Do not choose a winner from this table and call it OOS.",
         ],
     }
@@ -286,6 +324,19 @@ def print_report(report: dict) -> None:
               f"{shown('win_rate_pct', 6)} {shown('q10_net_pct')} "
               f"{shown('q90_net_pct')} {shown('bootstrap_p_mean_nonpositive', 6)}"
               f" {'KÜÇÜK' if stats['sample_warning'] else ''}")
+    print("\nSNAPSHOT HEDEF DOKUNUSU (mum ici high yok; muhafazakar alt sinir)")
+    print("rule                         TP2/4h TP3/4h TP2/12h TP3/12h TP2/24h TP3/24h MFE4%  MAE4%")
+    for rule, stats in report["rules"].items():
+        touches = stats["target_touches"]
+        def rate(key):
+            value = touches[key]["hit_rate_pct"]
+            return f"{'—' if value is None else value:>7}"
+        mfe = stats["median_mfe_4h_pct"]
+        mae = stats["median_mae_4h_pct"]
+        print(f"{rule:<28} {rate('tp2_4h')} {rate('tp3_4h')} "
+              f"{rate('tp2_12h')} {rate('tp3_12h')} "
+              f"{rate('tp2_24h')} {rate('tp3_24h')} "
+              f"{'—' if mfe is None else mfe:>6} {'—' if mae is None else mae:>6}")
     print("KARAR: yalniz kesif/bottleneck analizi. 90 gun freeze kapisindan once "
           "strateji, guven orani veya canli emir uretilmez.")
 

@@ -42,6 +42,9 @@ class ForwardOIExploreTests(unittest.TestCase):
         self.assertEqual(row["exit_price"], 110.0)
         self.assertAlmostEqual(
             row["net_return"], 110 / 107 - 1 - COST_BPS / 10_000)
+        self.assertTrue(row["tp2_4h"])
+        self.assertFalse(row["tp3_4h"])
+        self.assertIsNone(row["tp2_12h"])
 
     def test_fixed_filter_ladder_and_summary(self):
         features = build_features(self._panel())
@@ -55,6 +58,10 @@ class ForwardOIExploreTests(unittest.TestCase):
         summary = summarize(events)
         self.assertEqual(summary["n"], 1)
         self.assertEqual(summary["n_pending"], 0)
+        self.assertEqual(
+            summary["target_touches"]["tp2_4h"]["hit_rate_pct"], 100.0)
+        self.assertEqual(
+            summary["target_touches"]["tp3_4h"]["hit_rate_pct"], 0.0)
         self.assertEqual(summary["sample_warning"], "small_sample")
 
     def test_pending_outcomes_do_not_change_same_hour_rank(self):
