@@ -69,6 +69,7 @@ def load_rows(root: Path) -> tuple[dict[str, dict[int, dict]], dict]:
                     continue
                 normalized = {
                     "symbol": symbol, "hour": hour, "price": px, "oi": oi,
+                    "contract": str(row.get("perp_sym") or symbol).upper(),
                     "ls": number(row.get("global_ls_ratio")),
                     "taker_ratio": number(row.get("taker_buy_sell_ratio")),
                     "taker_buy": number(row.get("taker_buy_vol")),

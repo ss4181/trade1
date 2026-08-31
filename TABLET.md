@@ -448,6 +448,7 @@ Eldeki veriyi keşif amaçlı hemen ölçmek için:
 
 ```bash
 python research/explore_forward_oi.py --dir .
+python research/eval_forward_oi_barriers.py --dir .
 python signal_bot.py --archive-status
 ```
 
@@ -455,7 +456,10 @@ python signal_bot.py --archive-status
 ve +%2/+%3 hedefe 4/12/24 saat içinde dokunma oranlarını gösterir. Hedef hesabı
 saatlik snapshot kullandığından mum içinde görülüp saat başına kadar geri verilen
 hareketleri yakalayamaz; oranlar muhafazakâr alt sınırdır. İkinci komutta `events`
-değeri yeni sürümden sonra artmalıdır.
+değeri yeni sürümden sonra artmalıdır. Aradaki yeni 5m komutu, aynı P0–P5/Q1
+olaylarında +%2/+%3 hedef ile −%1,5 stop sırasını resmî USD-M mumlarıyla ölçer.
+İlk çalıştırma birkaç dakika sürebilir ve yalnız gereken günlük ZIP'leri
+`research/data/forward_oi_5m/` altında saklar. Bu dosyalar Git'e gönderilmez.
 
 Yeniden başlatmanın hemen ardından yalnız `connected` satırı bulunabilir; fakat
 uzun süre bağlantı kaydı varken sıfır olay `/arastirma` tarafından arıza olarak

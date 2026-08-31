@@ -461,6 +461,11 @@ def test_dashboard_data(tmpdir):
     assert "{{DATA_URL}}" in bot.DASHBOARD_HTML_TEMPLATE
     assert '"/api/dashboard"' in bot.dashboard_html()
     assert '"./data.json"' in bot.dashboard_html("./data.json")
+    # Python string ayrıştırması JS içindeki \' kaçışını tüketiyordu ve
+    # Telegram'a sözcüğü Pages panosunun tamamını SyntaxError ile durduruyordu.
+    page = bot.dashboard_html()
+    assert "const FOOT=`TP2/TP3:" in page and "Telegram'a" in page
+    assert "const FOOT='TP2/TP3:" not in page
     bot.LAST_SPOT_AT["BBBUSDT"] = (
         bot.time.time() - (bot.PRICE_STALE_AFTER_MINUTES * 60 + 1))
     stale = {r["symbol"]: r for r in bot.build_dashboard_data()["signals"]}

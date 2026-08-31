@@ -41,6 +41,19 @@ jobs:
           python -B tests/test_cloud_report.py
           python -B tests/test_watchdog.py
 
+      - name: Pano JavaScript sözdizimi
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import signal_bot
+          html = signal_bot.dashboard_html("https://example.invalid/data.json")
+          script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+          Path(os.environ["RUNNER_TEMP"], "dashboard.js").write_text(
+              script, encoding="utf-8")
+          PY
+          node --check "${{ runner.temp }}/dashboard.js"
+
       - name: Sunucu readiness testleri
         run: python -B tests/server_tests.py
 

@@ -846,6 +846,15 @@ hedef-dokunma oranları da aynı olaylarda ölçülür. Kaynak saatlik snapshot 
 mum içi `high` içermediğinden bunlar muhafazakâr alt sınırlardır. Sonuç yalnız
 hipotez/bottleneck tanısıdır.
 
+Kullanıcının gerçek +%2/+%3 çıkış davranışını riskle birlikte ölçmek için
+`PREREG_FORWARD_OI_BARRIERS.md` sonuç görülmeden önce donduruldu.
+`eval_forward_oi_barriers.py`, aynı olaylarda checksum-doğrulanmış resmî USD-M
+5m kontrat mumuyla +%2/+%3 hedef ve −%1/−%1,5/−%2 stop ilk-dokunmasını ölçer.
+Giriş veri sızıntısını önlemek için sonraki tam UTC saat açılışıdır; aynı 5m
+mumda iki bariyer de görülürse stop önce sayılır. Bu analiz de keşiftir ve canlı
+eşik/bildirim değiştirmez. Kodların sade sözlüğü ve mevcut bulgular
+`FORWARD_OI_RULES_REPORT.md` içindedir.
+
 Aynı denetimde 23 gün ve 8.109 stream-status satırına karşın sıfır force-order
 olayı görüldü. Kök neden Binance'in eski WebSocket `/ws/` yolunu 23 Nisan
 2026'da kapatmasıdır. Arşiv `/market/ws/!forceOrder@arr` yoluna taşındı; birleşik

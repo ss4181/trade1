@@ -241,6 +241,20 @@ katkısını gösterir. Ayrıca kullanıcının fiilî çıkış davranışına 
 snapshot içerdiği ve mum içi `high` içermediği için hedef oranları muhafazakâr
 bir alt sınırdır. Bu tablo OOS değildir; yalnız bottleneck/hipotez keşfidir.
 
+P0–P5/Q1 kodlarının sade açıklaması ve mevcut yorum:
+[`research/FORWARD_OI_RULES_REPORT.md`](research/FORWARD_OI_RULES_REPORT.md).
+Hedefin stoptan önce görülüp görülmediğini resmî, checksum-doğrulanmış USD-M
+5m mumlarıyla ölçen ön-kayıtlı keşif testi:
+
+```bash
+python research/eval_forward_oi_barriers.py --dir .
+```
+
+İlk çalıştırma yalnız gereken günlük mum ZIP'lerini Git dışındaki
+`research/data/forward_oi_5m/` önbelleğine indirir. Birincil rapor +%2/+%3
+hedef, −%1,5 stop ve 4/12/24 saat ufuklarını gösterir; `--full` −%1/−%2 stop
+hassasiyetlerini de basar. Bu da OOS değildir ve canlı sinyal üretmez.
+
 Dosyalar Git'e veya GitHub Pages'a gönderilmez. Varsayılan iki kanal da açıktır;
 `ARCHIVE_MARKET_DATA=false` ve/veya `ARCHIVE_FORCE_ORDERS=false` ile kapatılabilir.
 Gölge kanal ayrıca `SHADOW_EXPERIMENTS_ENABLED=false` ile kapatılabilir.
