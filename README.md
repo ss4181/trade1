@@ -325,6 +325,14 @@ reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
   (şu an aktif kurulumlar), `/status`, `/myid` yazabilirsin. getUpdates
   long-polling ile çalışır (public URL/açık port gerekmez).
   Kapatmak: `TELEGRAM_COMMANDS=false`.
+- **Bildirim düzeni:** Tüm raporlar ortak bir kart düzenindedir. Sinyallerde
+  başlık → fiyat/ufuk → tetikleyen ölçümler → “neden geldi?” → kanıt/risk →
+  mekanik referans sırası kullanılır. Günlük özet olay/bildirim/sessiz kayıt
+  ayrımını ve kısa canlı karnesini gösterir; `/performans` doğrulanmış
+  kohortları, ayrı gözlem kanalını ve kişisel hedef dokunmalarını ayrı
+  bölümlerde verir. `/check` yalnız o andaki aktif koşulları gösterir ve
+  bildirim göndermez; `/status` çalışma/bildirim/erişim durumunu tek bakışta
+  özetler. Bu raporların hiçbiri emir açmaz.
 - **Web panosu:** bot çalışırken `http://<cihaz-ip>:8181` (yalnız yerel ağ) —
   sinyal geçmişi, aktiflerde anlık K/Z, olgunlarda gerçekleşen sonuç,
   TP2/TP3/TP5/TP10 dokunmaları, hedef öncesi düşüş, MFE/MAE ve kişisel +%2

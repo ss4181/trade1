@@ -109,8 +109,25 @@ gitmene gerek yok. Botunla sohbete şunları yaz:
 - **/performans** — gerçekleşen sinyal sonuçları vs backtest beklentisi
 - **/status** — kaç tarama yapıldı, son tarama ne zaman, hata var mı
 
-Ayrıca her gün saat ~09:00'da (TR) tek satırlık **günlük özet** gelir — bu
-mesaj gelmiyorsa bot ölmüş demektir (Termux'u kontrol et).
+Ayrıca her gün saat ~09:00'da (TR) bölümlü bir **günlük özet** gelir. Özet;
+son 24 saatteki olayları, gerçekten gönderilen/sessiz kalan kayıtları,
+tarama sağlığını ve kısa canlı karnesini ayırır. Mesaj gelmiyorsa botu ve
+Termux'u kontrol et.
+
+Telegram raporları artık ortak, okunabilir kart düzenindedir:
+
+- **Sinyal:** başlık, fiyat/ufuk, tetikleyen göstergeler, “neden geldi?”,
+  kanıt/risk ve mekanik fiyat referansları.
+- **/performans:** doğrulanmış canlı kohortlar ile S5/S6 gözlem kanalını
+  birbirine karıştırmaz; kişisel TP dokunma karnesi ayrıca görünür.
+- **/check:** o an aktif koşulları listeler; bildirim göndermez.
+- **/status:** tarama, bildirim kapısı, S2 araştırma izni ve erişim durumunu
+  ayrı bölümlerde gösterir.
+- **Araştırma / Forward OI:** veri kapsamı, kalite kapıları, kural tablosu ve
+  karar uyarısı ayrı başlıklardadır.
+
+Bu raporlar gözlem ve ölçüm içindir; bot emir açmaz ve yatırım tavsiyesi
+değildir.
 
 Güvenlik: bot yalnızca **senin** ve **onayladığın** chat'lerden gelen
 komutlara cevap verir; botu bulan bir yabancı yalnızca `/myid` ve `/katil`

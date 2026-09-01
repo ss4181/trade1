@@ -9,6 +9,7 @@ by a separately declared 90-day out-of-sample window.
 from __future__ import annotations
 
 import json
+import html as _html
 import math
 import statistics
 from datetime import datetime, timedelta, timezone
@@ -309,7 +310,7 @@ def build_research_readiness(
 
 
 def format_research_readiness(report: dict) -> str:
-    """Compact Telegram-safe HTML; all content comes from numeric summaries."""
+    """Telegram için bölümlü, kısa ve güvenli hazırlık raporu üret."""
     market = report["market"]
     liq = report["liquidations"]
     shadow = report["shadow"]
@@ -330,29 +331,50 @@ def format_research_readiness(report: dict) -> str:
         return "—" if value is None else f"{value}{suffix}"
 
     stream_warning = (
-        "⚠️ Baglanti kaydi var ama olay yok: WebSocket akisi supheli.\n"
+        "⚠️ Bağlantı kaydı var ama olay yok: WebSocket akışı şüpheli.\n"
         if liq.get("stream_suspect") else "")
     review_suffix = (f" ({report['days_to_review']} gun)"
                      if report["days_to_review"] is not None else "")
+    phase = phase_names.get(report["phase"], report["phase"])
+    checks = report.get("quality_checks") or {}
+    check_names = (
+        ("market_span_days", "90 gün piyasa kapsamı"),
+        ("hour_coverage_80pct", "saat kapsaması ≥%80"),
+        ("oi_completeness_90pct", "OI doluluğu ≥%90"),
+        ("funding_completeness_80pct", "funding doluluğu ≥%80"),
+        ("long_short_completeness_80pct", "long/short doluluğu ≥%80"),
+        ("recent_archive_48h", "son 48 saatte veri"),
+        ("liquidation_event_days_30", "30 olay günü"),
+    )
+    check_text = " · ".join(
+        ("✅ " if checks.get(key) else "⬜ ") + label
+        for key, label in check_names)
     return (
-        "🧪 <b>Haftalik arastirma hazirlik raporu</b>\n"
-        f"Asama: <b>{phase_names.get(report['phase'], report['phase'])}</b>\n"
-        f"OI arsivi: {market['rows']} toplam / {market['research_rows']} "
-        f"tam-alanli satir · {market['symbols']} sembol · "
-        f"{market['span_days']} gun · saat kapsami "
-        f"%{shown(market['hour_coverage_pct'])}\n"
-        f"Alan dolulugu: OI %{shown(fields['oi'])} · funding "
-        f"%{shown(fields['funding_rate_snapshot'])} · long/short "
-        f"%{shown(fields['global_ls_ratio'])} · basis "
-        f"%{shown(fields['basis'])}\n"
-        f"Likidasyon arsivi: {liq['events']} olay · {liq['event_days']} olay "
-        f"gunu · {liq['status_days']} baglanti gunu\n"
+        "🧪 <b>HAFTALIK ARAŞTIRMA HAZIRLIK RAPORU</b>\n"
+        "<i>Veri birikimi · otomatik eşik değişikliği yok</i>\n\n"
+        f"🧭 <b>Aşama:</b> {phase}\n"
+        f"📦 <b>OI arşivi</b>\n"
+        f"• {market['rows']} toplam · {market['research_rows']} tam-alanlı satır\n"
+        f"• {market['symbols']} sembol · {market['span_days']} gün\n"
+        f"• Saat kapsaması: %{shown(market['hour_coverage_pct'])}\n\n"
+        "🧩 <b>Alan doluluğu</b>\n"
+        f"• OI %{shown(fields['oi'])} · funding "
+        f"%{shown(fields['funding_rate_snapshot'])}\n"
+        f"• Long/short %{shown(fields['global_ls_ratio'])} · basis "
+        f"%{shown(fields['basis'])}\n\n"
+        "🧯 <b>Likidasyon akışı</b>\n"
+        f"• {liq['events']} olay · {liq['event_days']} olay günü · "
+        f"{liq['status_days']} bağlantı günü\n"
         f"{stream_warning}"
-        f"Golge olaylar: G1={shadow['g1_events']} · DL1={shadow['dl1_events']} · "
-        f"bagimsiz gun={shadow['independent_event_days']}\n"
-        f"Sonraki kontrol: {report['next_review_utc'] or 'veri baslayinca'}"
+        "🔬 <b>Gölge olaylar</b>\n"
+        f"• G1={shadow['g1_events']} · DL1={shadow['dl1_events']} · "
+        f"bağımsız gün={shadow['independent_event_days']}\n\n"
+        "✅ <b>Kalite kapıları</b>\n"
+        f"{check_text}\n\n"
+        f"⏭️ <b>Sonraki kontrol:</b> "
+        f"{_html.escape(str(report['next_review_utc'] or 'veri baslayinca'))}"
         f"{review_suffix}\n"
-        f"Karar: {report['next_action']}\n"
-        "<i>Bu rapor veri hazirligini olcer; otomatik esik degistirmez ve "
-        "yatirim sinyali degildir.</i>"
+        f"📌 <b>Karar:</b> {_html.escape(str(report['next_action']))}\n\n"
+        "<i>Bu rapor yalnız veri hazırlığını ölçer; başarı oranı, canlı sinyal "
+        "ve yatırım tavsiyesi değildir.</i>"
     )

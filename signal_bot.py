@@ -2458,16 +2458,19 @@ def _send_price_target_alert(event: dict, hit_keys: list[str]) -> None:
         target_rows.append(
             f"• {sign}%{level:g}: <b>{_fmt_price(target['price'])}</b>")
     text = "\n".join([
-        f"🎯 <b>Fiyat hedefi goruldu</b> — "
-        f"<b>{_html.escape(event['strategy'])}</b> "
-        f"<b>{_html.escape(event['symbol'])}</b>",
-        f"Referans giris: <b>{_fmt_price(event['entry_ref'])}</b>",
+        "🎯 <b>FİYAT HEDEFİ DOKUNDU</b>",
+        f"<i>{_html.escape(str(event.get('strategy') or '?'))} · "
+        f"{_html.escape(str(event.get('symbol') or '?'))} · "
+        f"{_html.escape(str(event.get('direction') or ''))}</i>",
+        "",
+        f"💰 <b>Bildirim referansı:</b> {_fmt_price(event['entry_ref'])}",
+        f"🎯 <b>Ulaşılan seviye:</b> {level_text}",
         *target_rows,
-        f"Ulasilan seviye: <b>{level_text}</b>",
-        f"Hedef oncesi/en fazla ters hareket: "
-        f"<b>{float(event.get('max_adverse_pct') or 0):+.2f}%</b>",
-        "Bu, kapanmis 5dk mumuyla brut fiyat-dokunma kaydidir; "
-        "ucret/slippage dusulmez ve bot emir vermez.",
+        f"⚠️ <b>Hedef öncesi ters hareket:</b> "
+        f"{float(event.get('max_adverse_pct') or 0):+.2f}%",
+        "",
+        "ℹ️ Kapanmış 5dk mumuyla ölçülen brüt fiyat dokunmasıdır; "
+        "ücret/slippage düşülmez, kaldıraçlı ROI değildir ve bot emir vermez.",
     ])
     for cid in TELEGRAM_SUBSCRIBERS:
         _telegram_send_text(text, chat_id=cid)
@@ -2886,12 +2889,21 @@ def _send_overflow_summary(overflow: list[dict]) -> None:
     """Tarama tavanini asan sinyalleri Telegram'a tek ozetle iletir."""
     if not overflow:
         return
-    lines = [f"⚠️ Ayni taramada +{len(overflow)} sinyal daha "
-             f"(piyasa geneli hareket olabilir):"]
-    lines += [f"• {s['strategy']} {s['symbol']} @ {_fmt_price(s['price'])} "
-              f"(~{s['horizon_hours']}h)" for s in overflow[:20]]
-    lines.append("Detaylar log ve /signals/latest icinde.")
-    tg_text = "\n".join(lines[:1] + [_html.escape(line) for line in lines[1:]])
+    lines = ["📚 <b>TOPLU SİNYAL ÖZETİ</b>",
+             f"<i>Aynı taramada ayrıntı sınırını aşan {len(overflow)} olay</i>",
+             "⚠️ Piyasa geneli hareket olabilir; aşağıdaki liste yalnız kısa "
+             "referanstır.", ""]
+    for s in overflow[:20]:
+        lines.append(
+            f"• <b>{_html.escape(str(s.get('strategy') or '?'))}</b> · "
+            f"{_html.escape(str(s.get('symbol') or '?'))} · "
+            f"{_html.escape(str(s.get('direction') or ''))} · "
+            f"{_fmt_price(s.get('price'))} · ~{s.get('horizon_hours', '?')}s")
+    if len(overflow) > 20:
+        lines.append(f"… ayrıca {len(overflow) - 20} olay")
+    lines += ["", "📌 Detaylar signals.log ve /signals/latest içinde.",
+              "<i>Bot emir açmaz; yatırım tavsiyesi değildir.</i>"]
+    tg_text = "\n".join(lines)
     for cid in TELEGRAM_SUBSCRIBERS:
         _telegram_send_text(tg_text, chat_id=cid)
 
@@ -3140,7 +3152,7 @@ def _metric_text(value, digits: int = 1, signed: bool = False) -> str:
 
 
 def format_forward_oi_30d_report(report: dict) -> str:
-    """Tam matrisi Telegram'ın 4096 sınırına uygun, yapıştırılabilir özetle."""
+    """Forward OI raporunu Telegram'da kolay taranır bir karta dönüştür."""
     data = report.get("data") or {}
     download = data.get("download") or {}
     rules = report.get("rules") or {}
@@ -3181,23 +3193,28 @@ def format_forward_oi_30d_report(report: dict) -> str:
     symbols = int(data.get("symbols") or 0)
     feature_rows = int(data.get("feature_rows") or 0)
     message = (
-        "🧪 <b>30 günlük Forward OI test tekrarı</b>\n"
-        "Birikimli keşif arşivi; canlı strateji/eşik değişmez.\n"
-        f"Üretim: {generated_text} · dönem: {period}\n"
-        f"Veri: {accepted:,} satır · {symbols} sembol · "
-        f"{feature_rows:,} olgun özellik\n"
-        f"5dk günleri: {int(download.get('requested') or 0)} gereken · "
+        "🧪 <b>30 GÜNLÜK FORWARD OI RAPORU</b>\n"
+        "<i>Birikimli keşif tekrarı · canlı strateji ve eşikler değişmez</i>\n\n"
+        "📦 <b>Veri kapsamı</b>\n"
+        f"• Üretim: {generated_text}\n"
+        f"• Dönem: {period}\n"
+        f"• Arşiv: {accepted:,} satır · {symbols} sembol\n"
+        f"• Olgun özellik: {feature_rows:,}\n"
+        f"• 5dk veri: {int(download.get('requested') or 0)} gereken · "
         f"{int(download.get('cached') or 0)} önbellek · "
         f"{int(download.get('downloaded') or 0)} yeni · "
         f"{int(download.get('missing') or 0)} eksik · "
         f"{int(download.get('errors') or 0)} hata\n\n"
+        "📊 <b>Kural karşılaştırması</b>\n"
         f"<pre>{_html.escape(chr(10).join(table))}</pre>\n"
-        "H/S: 4 saatte hedefin/stopun önce görülme yüzdesi. "
-        "net/med: 12 bp maliyet sonrası ortalama/medyan getiri. "
-        "p: günlük bootstrap'ta ortalamanın pozitif olmama oranı.\n"
-        "P0 top-10 yükselen; P1 +hacim; P2 +OI; P3 +OI≥%2; "
-        "P4 +short çoğunluğu; P5 +funding artışı; Q1 OI düşüşlü squeeze.\n\n"
-        "⚠️ Bu bir keşif raporudur; OOS güven oranı veya işlem çağrısı değildir. "
+        "<i>H/S = 4 saatte hedefin / stopun önce görülmesi. "
+        "net/med = 12 bp maliyet sonrası ortalama / medyan getiri. "
+        "p = günlük bootstrap'ta ortalamanın pozitif olmama oranı.</i>\n\n"
+        "🗂 <b>Kural sözlüğü</b>\n"
+        "P0 top-10 yükselen · P1 +hacim · P2 +OI · P3 +OI≥%2\n"
+        "P4 +short çoğunluğu · P5 +funding artışı · Q1 OI düşüşlü squeeze\n\n"
+        "⚠️ <b>Karar</b>\n"
+        "Bu bir keşif raporudur; OOS güven oranı veya işlem çağrısı değildir. "
         "90 günlük keşif ve ardından dondurulmuş OOS tamamlanmadan kural açılmaz.\n"
         "📌 Değerlendirme için bu mesajı Claude'a aynen ilet.")
     if len(message) > 4000:
@@ -3287,9 +3304,10 @@ def _start_forward_oi_30d_report_worker(now: datetime | None = None) -> bool:
             print(f"uyari: 30 gunluk Forward OI raporu basarisiz: {safe}",
                   file=sys.stderr, flush=True)
             _telegram_send_text(
-                "⚠️ <b>30 günlük Forward OI testi tamamlanamadı.</b>\n"
-                "Canlı tarama etkilenmedi; bot 24 saat sonra otomatik yeniden "
-                "deneyecek.", chat_id=TELEGRAM_CHAT_ID)
+                "⚠️ <b>FORWARD OI RAPORU TAMAMLANAMADI</b>\n"
+                "<i>Canlı tarama etkilenmedi.</i>\n"
+                "Bot 24 saat sonra otomatik olarak yeniden deneyecek.",
+                chat_id=TELEGRAM_CHAT_ID)
         finally:
             FORWARD_OI_REPORT_WORKER_ACTIVE = False
             _forward_oi_report_worker_lock.release()
@@ -3334,35 +3352,36 @@ def _maybe_daily_summary() -> None:
     _last_summary_day = today
     cutoff = now - timedelta(hours=24)
     by_strat: dict[str, int] = {}
+    push_by_strat: dict[str, int] = {}
+    silent_by_strat: dict[str, int] = {}
     with _recent_lock:
         for s in RECENT_SIGNALS:
             try:
-                if datetime.fromisoformat(s.get("notified_at", "")) >= cutoff:
-                    by_strat[s["strategy"]] = by_strat.get(s["strategy"], 0) + 1
-            except ValueError:
+                notified_at = _target_dt(s.get("notified_at"))
+                if notified_at < cutoff:
+                    continue
+                strategy = str(s.get("strategy") or "?")
+                by_strat[strategy] = by_strat.get(strategy, 0) + 1
+                delivered = bool(s.get("push_allowed")) and not bool(
+                    s.get("suppressed"))
+                bucket = push_by_strat if delivered else silent_by_strat
+                bucket[strategy] = bucket.get(strategy, 0) + 1
+            except (TypeError, ValueError, OverflowError):
                 continue
-    sig_txt = (", ".join(f"{k}:{v}" for k, v in sorted(by_strat.items()))
-               or "yok")
-    perf_line = ""
+    perf: dict = {}
     try:
-        perf = realized_performance(max_signals=30, fetch_missing=False)
-        if perf.get("n_total"):
-            parts = [f"{s} medyan {d['median_pct']:+.2f}% / isabet "
-                     f"%{d['winrate_pct']}"
-                     for s, d in perf["strategies"].items()]
-            perf_line = "\nOlgun sinyal karnesi: " + " · ".join(parts)
+        perf = realized_performance(max_signals=30, fetch_missing=False) or {}
     except Exception:
-        perf_line = ""                      # karne alinamazsa ozet yine gitsin
-    _telegram_send_text(
-        f"☀️ <b>Gunluk ozet</b> — bot calisiyor.\n"
-        f"Son 24h sinyal: {sig_txt}{perf_line}\n"
-        f"Toplam tarama: {SCANS_COMPLETED} · evren: {len(SYMBOLS)} sembol · "
-        f"son taramada hata: {LAST_SCAN_ERRORS}\n"
-        f"Anlik kontrol: /check · canli sonuclar: /performans")
+        perf = {}
+    _telegram_send_text(_format_daily_summary(
+        day=today, signal_counts=by_strat, push_counts=push_by_strat,
+        silent_counts=silent_by_strat, perf=perf))
     if now.weekday() == 0:                  # pazartesi: tam karne
         try:
-            _telegram_send_text("📊 <b>Haftalik karne</b>\n"
-                                + _format_performance(realized_performance()))
+            _telegram_send_text(
+                "📅 <b>HAFTALIK PERFORMANS KARNESİ</b>\n"
+                "<i>Sonuçlar olgunlaşmış sinyaller üzerinden</i>\n\n"
+                + _format_performance(realized_performance()))
         except Exception:
             pass
 
@@ -3943,59 +3962,161 @@ def _format_price_target_summary(summary: dict) -> list[str]:
     """Coin fiyatindaki +% hedef dokunmalarini kanonik getiriden ayri yazar."""
     if not summary:
         return []
-    lines = ["\n<b>Kisisel fiyat-hedefi karnesi</b> "
-             "(bildirim fiyatindan sonraki kapanmis 5dk mumlar):"]
+    lines = ["\n🎯 <b>KİŞİSEL FİYAT HEDEFİ KARNESİ</b>",
+             "<i>Bildirim fiyatından sonraki kapanmış 5dk mumlar · "
+             "kaldıraçsız coin fiyatı</i>"]
     for strategy, levels in sorted(summary.items()):
         for level, row in sorted(levels.items(), key=lambda item: float(item[0])):
-            rate = (f"%{row['hit_rate_pct']:g}" if row.get("hit_rate_pct")
-                    is not None else "—")
-            warning = " · ⚠ kucuk N" if row.get("sample_warning") else ""
+            rate = (f"%{row['hit_rate_pct']:g}"
+                    if row.get("hit_rate_pct") is not None else "—")
+            warning = " · ⚠ küçük N" if row.get("sample_warning") else ""
             lines.append(
-                f"• <b>{strategy} TP{float(level):g}</b>: {row['hit']} isabet / "
-                f"{row['resolved']} sonuclanmis = {rate} · "
+                f"• <b>{_html.escape(str(strategy))} TP{float(level):g}</b> · "
+                f"{row['hit']}/{row['resolved']} isabet = {rate} · "
                 f"{row['pending']} bekliyor{warning}")
-    lines.append("<i>TP2/TP3, coinin kaldiracsiz brut fiyat degisimidir; "
-                 "ucret/slippage dusulmez ve ROE degildir. "
-                 "Bu karne kullanici cikis aliskanligini olcer, backtest ile ayni "
-                 "next-bar-open/zaman-cikisi performansinin yerine gecmez.</i>")
+    lines.append("<i>TP dokunması ücret/slippage düşülmemiş coin fiyatıdır; ROE "
+                 "değildir. Kullanıcının erken çıkış alışkanlığını ölçer; kanonik "
+                 "next-bar-open/zaman-çıkışı performansının yerine geçmez.</i>")
     return lines
+
+
+def _format_daily_performance(perf: dict) -> list[str]:
+    """Günlük özete performansın kısa, karşılaştırılabilir görünümünü ekle."""
+    if not perf or perf.get("error"):
+        return []
+    if not perf.get("n_total"):
+        return ["• Henüz olgunlaşmış sinyal yok; ufuk süresi dolunca ölçülecek."]
+    rows: list[str] = []
+    cohorts = perf.get("cohorts") or []
+    if cohorts:
+        for d in cohorts:
+            strategy = _html.escape(str(d.get("strategy") or "?"))
+            market = "perp" if d.get("performance_market") == "um_perp" else "spot"
+            warning = " · küçük N" if d.get("sample_warning") else ""
+            rows.append(
+                f"• <b>{strategy}</b> · N={d.get('n', 0)} · "
+                f"medyan {float(d.get('net_median_pct', 0)):+.2f}% · "
+                f"isabet %{d.get('net_winrate_pct', '—')} · {market}{warning}")
+    else:
+        for strategy, d in sorted((perf.get("strategies") or {}).items()):
+            bt_med = (f" · backtest medyan {float(d['bt_median_pct']):+.2f}%"
+                      if d.get("bt_median_pct") is not None else "")
+            bt_wr = (f" · backtest isabet %{d['bt_winrate_pct']}"
+                     if d.get("bt_winrate_pct") is not None else "")
+            rows.append(
+                f"• <b>{_html.escape(str(strategy))}</b> · N={d.get('n', 0)} · "
+                f"medyan {float(d.get('median_pct', 0)):+.2f}% · "
+                f"isabet %{d.get('winrate_pct', '—')}"
+                f"{bt_med}{bt_wr}")
+    return rows or ["• Performans satırı oluşmadı."]
+
+
+def _format_daily_summary(*, day: str, signal_counts: dict[str, int],
+                          push_counts: dict[str, int],
+                          silent_counts: dict[str, int],
+                          perf: dict | None = None) -> str:
+    """Günlük Telegram mesajını diğer raporlarla aynı kart düzeninde üret."""
+    total = sum(signal_counts.values())
+    push_total = sum(push_counts.values())
+    silent_total = sum(silent_counts.values())
+    lines = [
+        "☀️ <b>Gunluk ozet</b>",
+        f"<i>{_html.escape(day)} · son 24 saat</i>",
+        "",
+        "🔔 <b>Sinyal olayları</b>",
+        f"• Toplam: <b>{total}</b> olay · {push_total} bildirim · "
+        f"{silent_total} sessiz kayıt",
+    ]
+    if signal_counts:
+        for strategy in sorted(signal_counts):
+            label = _html.escape(str(strategy))
+            detail = f"{signal_counts[strategy]} olay"
+            if push_counts.get(strategy):
+                detail += f" · {push_counts[strategy]} bildirim"
+            if silent_counts.get(strategy):
+                detail += f" · {silent_counts[strategy]} sessiz"
+            lines.append(f"• <b>{label}</b>: {detail}")
+    else:
+        lines.append("• Yeni sinyal olayı yok.")
+    lines += ["", "📡 <b>Tarama</b>",
+              f"• Tamamlanan tur: {SCANS_COMPLETED}",
+              f"• Evren: {len(SYMBOLS)} sembol",
+              f"• Son tarama hatası: {LAST_SCAN_ERRORS}",
+              "", "📊 <b>Olgun canlı sonuçlar / karne</b>"]
+    lines += _format_daily_performance(perf or {})
+    lines += ["", "ℹ️ <b>Hızlı erişim</b>",
+              "• /check — şu an aktif koşullar (bildirim göndermez)",
+              "• /performans — ayrıntılı canlı karne ve hedef dokunmaları",
+              "<i>Bu özet olayları ve ölçümleri gösterir; emir açmaz. "
+              "Yatırım tavsiyesi değildir.</i>"]
+    return "\n".join(lines)
+
+
+def _telegram_fit_report(text: str, label: str) -> str:
+    """Uzun raporu HTML etiketlerini bozmayacak satır sınırında kısalt."""
+    limit = 3900
+    if len(text) <= limit:
+        return text
+    note = (f"\n\n⚠️ <b>{_html.escape(label)}</b> Telegram sınırına sığmadığı "
+            "için kısaltıldı; tam ayrıntı web panosunda ve signals.log'da.\n"
+            "<i>Bot emir açmaz; yatırım tavsiyesi değildir.</i>")
+    kept: list[str] = []
+    for line in text.splitlines():
+        candidate = "\n".join(kept + [line]) + note
+        if len(candidate) > limit:
+            break
+        kept.append(line)
+    return "\n".join(kept) + note
 
 
 def _format_performance(perf: dict) -> str:
     if "error" in perf:
-        lines = [perf["error"]]
+        lines = ["⚠️ <b>PERFORMANS ÖLÇÜMÜ BAŞARISIZ</b>",
+                 _html.escape(str(perf["error"]))]
         lines += _format_price_target_summary(perf.get("price_targets") or {})
-        return "\n".join(lines)
+        return _telegram_fit_report("\n".join(lines), "Performans raporu")
     excluded = perf.get("excluded_out_of_universe") or 0
     excl_note = (f"\n<i>{excluded} eski kayit guncel evren disinda oldugu icin "
                  "olcume katilmadi (Ek F kontaminasyon donemi).</i>"
                  if excluded else "")
     if perf["n_total"] == 0:
-        lines = ["Henuz olgunlasmis sinyal yok (sinyaller ufuk suresi dolunca "
-                 "olculebilir hale gelir)." + excl_note]
+        lines = ["📊 <b>CANLI PERFORMANS</b>",
+                 "<i>Henüz olgunlaşmış sinyal yok; ufuk süresi dolunca "
+                 "ölçülebilir hale gelir (olgunlasmis = kapanmış).</i>"]
+        if excl_note:
+            lines.append(excl_note.strip())
         lines += _format_price_target_summary(perf.get("price_targets") or {})
-        return "\n".join(lines)
-    lines = [f"<b>Canli performans</b> (son {perf['n_total']} olgun sinyal; "
-             "giris/cikis tanimi backtest ile ayni):"]
-    observe_lines = []
+        return _telegram_fit_report("\n".join(lines), "Performans raporu")
+    lines = ["📊 <b>CANLI PERFORMANS</b>",
+             f"<i>Son {perf['n_total']} olgun sinyal · giriş/çıkış tanımı "
+             "backtest ile aynı</i>", "", "✅ <b>DOĞRULANMIŞ KOHORTLAR</b>"]
+    observe_lines: list[str] = []
+    validated_lines: list[str] = []
     cohorts = perf.get("cohorts") or []
     if cohorts:
         for d in cohorts:
-            s = d["strategy"]
+            s = str(d["strategy"])
             market = ("USD-M perp" if d.get("performance_market") == "um_perp"
                       else "spot")
             lo, hi = d.get("net_winrate_ci95_low_pct"), d.get(
                 "net_winrate_ci95_high_pct")
             ci = f"%{lo:g}–%{hi:g}" if lo is not None and hi is not None else "—"
-            warning = " · ⚠ kucuk N" if d.get("sample_warning") else ""
-            row = (f"• <b>{s}</b> [{d['universe']} · {d['confidence']} · "
-                   f"{d['config_version']}]: N={d['n']} net medyan "
-                   f"{d['net_median_pct']:+.2f}% · net isabet "
-                   f"%{d['net_winrate_pct']:g} (95% GA {ci}) · q10 "
-                   f"{d['q10_net_return_pct']:+.2f}% · {market}{warning}")
+            warning = " · ⚠ 작은 N" if d.get("sample_warning") else ""
+            bt = STRATEGY_TEST_STATS.get(s) if s not in OBSERVE_STRATEGIES else None
+            bt_text = (f" · backtest medyan {bt['med']:+.2f}% · "
+                       f"isabet %{bt['wr']}" if bt else "")
+            row = (f"• <b>{_html.escape(s)}</b> · N={d['n']} · "
+                   f"net medyan {d['net_median_pct']:+.2f}% · "
+                   f"net isabet %{d['net_winrate_pct']:g} · 95% GA {ci}"
+                   f"{bt_text}\n"
+                   f"  {d['universe']} · {d['confidence']} · "
+                   f"{d['config_version']} · ort {d['net_mean_pct']:+.2f}% · "
+                   f"q10/q90 {d['q10_net_return_pct']:+.2f}% / "
+                   f"{d['q90_net_return_pct']:+.2f}% · "
+                   f"{market}{warning}")
             # Gozlem kovasi AYRI blokta: dogrulanmis satirlarla ayni listede
             # gorunmesi "ayni statude" izlenimi verirdi.
-            (observe_lines if s in OBSERVE_STRATEGIES else lines).append(row)
+            (observe_lines if s in OBSERVE_STRATEGIES else validated_lines).append(row)
     else:
         # Eski test/entegrasyon cagiricilari icin geriye uyumlu bicim.
         for s, d in perf["strategies"].items():
@@ -4005,25 +4126,25 @@ def _format_performance(perf: dict) -> str:
                        if d.get("bt_median_pct") is not None else "")
             cmp_wr = (f" (backtest %{d['bt_winrate_pct']})"
                       if d.get("bt_winrate_pct") is not None else "")
-            row = (f"• <b>{s}</b>: N={d['n']} medyan {d['median_pct']:+.2f}%"
+            row = (f"• <b>{_html.escape(str(s))}</b>: N={d['n']} medyan {d['median_pct']:+.2f}%"
                    f"{cmp_med} · isabet %{d['winrate_pct']}{cmp_wr} · "
                    f"ort {d['mean_pct']:+.2f}% · {market}")
-            (observe_lines if s in OBSERVE_STRATEGIES else lines).append(row)
+            (observe_lines if s in OBSERVE_STRATEGIES else validated_lines).append(row)
+    lines += validated_lines or ["• Bu dönemde doğrulanmış kohort yok."]
     if observe_lines:
-        lines.append("\n<b>Gozlem kanali — S5/S6</b> (dinamik evren, "
-                     "DOGRULANMAMIS coinler; karsilastirilacak backtest YOK — "
-                     "karar icin degil, kanali olcmek icin):")
-        lines += observe_lines
+        lines += ["", "🔬 <b>Gozlem kanali — S5/S6</b>",
+                  "<i>DOGRULANMAMIS coinler · karşılaştırılacak backtest yok · "
+                  "yalnız kanalı ölçmek için</i>"] + observe_lines
     lines += _format_price_target_summary(perf.get("price_targets") or {})
     if perf["fetch_errors"]:
-        lines.append(f"({perf['fetch_errors']} sinyal veri hatasindan olculemedi)")
+        lines.append(f"⚠️ {perf['fetch_errors']} sinyal veri hatası nedeniyle ölçülemedi.")
     if excl_note:
         lines.append(excl_note.strip())
-    lines.append(f"\n<i>Net = ham getiri − {LIVE_ROUND_TRIP_COST_BPS:g}bp "
-                 "round-trip maliyet varsayimi. S2 funding maliyeti modellenmedi. "
-                 "Kucuk N'de medyan/isabet cok oynak olur; 30+ sinyalden once "
-                 "yargiya varma. Yatirim tavsiyesi degildir.</i>")
-    return "\n".join(lines)
+    lines.append(f"\n<i>Net = ham getiri − {LIVE_ROUND_TRIP_COST_BPS:g}bp round-trip "
+                 "maliyet varsayımı. S2 funding maliyeti modellenmedi. Küçük N'de "
+                 "medyan/isabet çok oynaktır; 30+ sinyalden önce hüküm verme. "
+                 "Yatırım tavsiyesi değildir.</i>")
+    return _telegram_fit_report("\n".join(lines), "Performans raporu")
 
 
 # --------------------------------------------------------------------------
@@ -4835,33 +4956,76 @@ def _start_publish_worker() -> bool:
 
 
 def _format_check_for_telegram(found: list[dict], errors: int) -> str:
-    """/check cevabini kompakt HTML olarak bicimler (Telegram 4096 char siniri
-    icin ilk 25 ile sinirli; detay/referans terminal --check'te)."""
+    """/check cevabını sinyal kartlarıyla aynı düzende biçimlendir."""
     if not found:
-        return ("Su an <b>aktif kurulum yok</b>. Kosullarin hicbiri "
-                "saglanmiyor — normaldir, guclu kurulumlar seyrektir.")
-    lines = [f"<b>Su an {len(found)} aktif kurulum</b> "
-             f"(oncelik S1+S4&gt;S1&gt;S3&gt;S2):"]
+        return ("🔎 <b>ANLIK KONTROL</b>\n"
+                "<i>Aktif koşul aranıyor · bildirim gönderilmez</i>\n\n"
+                "✅ <b>Şu an aktif kurulum yok.</b>\n"
+                "Koşulların hiçbiri sağlanmıyor — güçlü kurulumların seyrek "
+                "olması normaldir.")
+    lines = ["🔎 <b>ANLIK KONTROL</b>",
+             "<i>Aktif koşullar · bu kontrol bildirim göndermez</i>", "",
+             f"✅ <b>{len(found)} aktif kurulum</b>",
+             "Öncelik: S1+S4 → S1 → S3 → S2"]
+    shown_count = 0
     for s in found[:25]:
-        if "rsi" in s:
-            extra = f" RSI {s['rsi']}"
-        elif "volume_logz" in s:
-            extra = f" z {s['volume_logz']}"
-        elif "funding_pct" in s:
-            extra = f" fund {s['funding_pct'][-1]}%"
-        else:
-            extra = ""
         conf = s.get("confidence") or signal_confidence(s["strategy"])[0]
-        lines.append(f"• <b>{_html.escape(s['strategy'])}</b> "
-                     f"[{conf}] {_html.escape(s['symbol'])} @ "
-                     f"{_fmt_price(s['price'])}{extra} → ~{s['horizon_hours']}h")
-    if len(found) > 25:
-        lines.append(f"…ve {len(found) - 25} tane daha")
+        direction = _html.escape(str(s.get("direction") or "LONG"))
+        strategy = _html.escape(str(s.get("strategy") or "?"))
+        symbol = _html.escape(str(s.get("symbol") or "?"))
+        card = ["", f"• <b>{strategy} — {symbol} {direction}</b>",
+                f"  💰 Fiyat: <b>{_fmt_price(s.get('price'))}</b> · "
+                f"ufuk: ~{s.get('horizon_hours', '?')} saat · "
+                f"güven: {_html.escape(str(conf))}"]
+        detail_rows = _signal_detail_rows(s)
+        if detail_rows:
+            label, value = detail_rows[0]
+            card.append(f"  {_html.escape(str(label))}: "
+                        f"{_html.escape(str(value))}")
+        card.append("  📝 Koşul şu anda aktif; giriş kararı kullanıcıya aittir.")
+        # Telegram limiti: öncelikli kurulumları mümkün olduğunca göster,
+        # fakat 25 adet üç satırlı kartın mesajı taşırmasına izin verme.
+        if len("\n".join(lines + card)) > 3700:
+            break
+        lines += card
+        shown_count += 1
+    omitted = len(found) - shown_count
+    if omitted:
+        lines.append(f"\n… ayrıca {omitted} kurulum daha")
     if errors:
-        lines.append(f"(not: {errors} sembol cekilemedi)")
-    lines.append("\n<i>Detay/referans: terminalde --check. "
-                 "Yatirim tavsiyesi degildir.</i>")
+        lines.append(f"\n⚠️ {errors} sembol veri hatası nedeniyle atlandı.")
+    lines.append("\n<i>Detay/referans: terminalde --check. Emir açılmaz; "
+                 "yatırım tavsiyesi değildir.</i>")
     return "\n".join(lines)
+
+
+def _format_status_for_telegram() -> str:
+    """Bot durumunu tek bakışta okunabilir Telegram kartı olarak üret."""
+    mode = ("otomatik evren" if SYMBOL_AUTO
+            else f"çekirdek 30 + geniş {len(EXTENDED_SET)}, statik")
+    disabled = ", ".join(sorted(DISABLED_STRATEGIES)) or "yok"
+    observe = (f"{len(OBSERVE_SYMBOLS)} doğrulanmamış sembol · bildirim "
+               f"{'AÇIK' if OBSERVE_PUSH else 'sessiz'}"
+               if OBSERVE_ENABLED else "kapalı")
+    return (
+        "ℹ️ <b>BOT DURUMU</b>\n"
+        "<i>Çalışma, bildirim ve araştırma özeti</i>\n\n"
+        "📡 <b>Tarama</b>\n"
+        f"• Evren: {len(SYMBOLS)} sembol · {mode}\n"
+        f"• Tamamlanan tur: {SCANS_COMPLETED}\n"
+        f"• Son tarama: {_html.escape(str(LAST_SCAN_AT or '(henüz yok)'))}\n"
+        f"• Son tarama hatası: {LAST_SCAN_ERRORS}\n\n"
+        "🔔 <b>Bildirim kapısı</b>\n"
+        f"• Genel eşik: {_html.escape(str(NOTIFY_MIN_CONFIDENCE))}+\n"
+        f"• Sessiz stratejiler: {_html.escape(disabled)}\n"
+        f"• S2 araştırma bildirimi: {'AÇIK' if S2_RESEARCH_PUSH else 'sessiz'} "
+        "(güven DÜŞÜK)\n"
+        f"• Gözlem kanalı: {observe}\n\n"
+        "👥 <b>Erişim</b>\n"
+        f"• Telegram aboneleri: {len(TELEGRAM_SUBSCRIBERS)}\n\n"
+        "<i>/check anlık koşulları, /performans olgun sonuçları gösterir. "
+        "Bot emir açmaz; yatırım tavsiyesi değildir.</i>"
+    )
 
 
 def handle_telegram_command(text: str, chat_id: str) -> None:
@@ -4876,18 +5040,21 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
                       "/onayla &lt;id&gt; — bekleyen arkadasi ekle\n"
                       "/kaldir &lt;id&gt; — aboneligi kaldir\n") if owner else ""
         _telegram_send_text(
-            "🤖 <b>Signal Bot</b> calisiyor.\n\n"
-            "Asagidaki <b>dugmeleri</b> kullanabilirsin (ya da komut yazabilirsin):\n"
-            "/check — su an aktif kurulumlar\n"
-            "/performans — canli sonuclar vs backtest\n"
-            "/arastirma — OI/funding/likidasyon veri hazirligi\n"
-            "/status — bot durumu\n"
-            "/myid — kendi chat ID'in\n"
-            "/katil — botu kullanmak icin izin iste\n"
-            "/menu — dugmeleri yeniden goster\n"
+            "🤖 <b>SIGNAL BOT</b> ✅\n"
+            "<i>Telegram bildirim ve ölçüm merkezi</i>\n\n"
+            "🔎 <b>Anlık</b>\n"
+            "• /check — aktif koşullar (bildirim göndermez)\n"
+            "• /status — çalışma ve bildirim durumu\n\n"
+            "📊 <b>Raporlar</b>\n"
+            "• /performans — canlı sonuçlar ve hedef karnesi\n"
+            "• /arastirma — OI/funding/likidasyon hazırlığı\n\n"
+            "👤 <b>Erişim</b>\n"
+            "• /myid — kendi chat ID'in\n"
+            "• /katil — botu kullanmak için izin iste\n"
+            "• /menu — düğmeleri yeniden göster\n"
             + admin_help +
-            "\nYeni sinyaller otomatik olarak buraya dusecek. "
-            "Yatirim tavsiyesi degildir.", chat_id=chat_id,
+            "\nYeni sinyaller otomatik olarak buraya düşer. "
+            "Bot emir açmaz; yatırım tavsiyesi değildir.", chat_id=chat_id,
             reply_markup=_menu_keyboard(owner))
     elif cmd == "aboneler":
         if not owner:
@@ -4956,43 +5123,27 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
                 "Cikarilamadi: ya abone degil ya da .env'deki sabit listede "
                 "(onu .env'den silmen gerekir).", chat_id=chat_id)
     elif cmd == "status":
-        _telegram_send_text(
-            "<b>Durum</b>\n"
-            f"Sembol: {len(SYMBOLS)} "
-            f"({'otomatik' if SYMBOL_AUTO else 'cekirdek 30 + genis ' + str(len(EXTENDED_SET)) + ', statik'})\n"
-            f"Tamamlanan tarama: {SCANS_COMPLETED}\n"
-            f"Son tarama: {LAST_SCAN_AT or '(henuz yok)'}\n"
-            f"Son taramada hata: {LAST_SCAN_ERRORS}\n"
-            f"Push esigi: {NOTIFY_MIN_CONFIDENCE}+ "
-            f"(alti sessiz-kayit) · Kapali: "
-            f"{', '.join(sorted(DISABLED_STRATEGIES)) or 'yok'}\n"
-            f"S2 arastirma bildirimi: "
-            f"{'ACIK' if S2_RESEARCH_PUSH else 'sessiz'} "
-            f"(guven DUSUK)\n"
-            f"Gozlem kanali: "
-            + (f"{len(OBSERVE_SYMBOLS)} dogrulanmamis sembol, "
-               f"bildirim {'ACIK' if OBSERVE_PUSH else 'sessiz'}"
-            if OBSERVE_ENABLED else "kapali") + "\n"
-            f"Aboneler: {len(TELEGRAM_SUBSCRIBERS)}", chat_id=chat_id)
+        _telegram_send_text(_format_status_for_telegram(), chat_id=chat_id)
     elif cmd in ("performans", "performance", "perf"):
         if not _check_lock.acquire(blocking=False):
-            _telegram_send_text("Baska bir islem suruyor, birazdan tekrar dene.",
-                                chat_id=chat_id)
+            _telegram_send_text("⏳ <b>Rapor zaten hazırlanıyor.</b>\n"
+                                "Biraz sonra tekrar dene.", chat_id=chat_id)
             return
         try:
-            _telegram_send_text("📊 Olculuyor… (gecmis veriler cekiliyor)",
+            _telegram_send_text("📊 <b>PERFORMANS HESAPLANIYOR</b>\n"
+                                "<i>Geçmiş mumlar ve canlı sonuçlar okunuyor…</i>",
                                 chat_id=chat_id)
             _telegram_send_text(_format_performance(realized_performance()),
                                 chat_id=chat_id)
         except Exception as e:
-            _telegram_send_text(f"Olcum hatasi: {_html.escape(str(e))}",
-                                chat_id=chat_id)
+            _telegram_send_text("⚠️ <b>PERFORMANS ÖLÇÜLEMEDİ</b>\n"
+                                f"{_html.escape(str(e))}", chat_id=chat_id)
         finally:
             _check_lock.release()
     elif cmd in ("arastirma", "research", "oi"):
         if not _check_lock.acquire(blocking=False):
-            _telegram_send_text("Baska bir islem suruyor, birazdan tekrar dene.",
-                                chat_id=chat_id)
+            _telegram_send_text("⏳ <b>Başka bir rapor hazırlanıyor.</b>\n"
+                                "Biraz sonra tekrar dene.", chat_id=chat_id)
             return
         try:
             _telegram_send_text(
@@ -5000,29 +5151,29 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
                 chat_id=chat_id)
         except Exception as e:
             _telegram_send_text(
-                f"Arastirma arsivi okunamadi: {_html.escape(str(e))}",
-                chat_id=chat_id)
+                "⚠️ <b>ARAŞTIRMA ARŞİVİ OKUNAMADI</b>\n"
+                f"{_html.escape(str(e))}", chat_id=chat_id)
         finally:
             _check_lock.release()
     elif cmd == "check":
         if not _check_lock.acquire(blocking=False):
-            _telegram_send_text("Zaten bir tarama suruyor, birkac saniye sonra "
-                                "tekrar dene.", chat_id=chat_id)
+            _telegram_send_text("⏳ <b>Anlık kontrol zaten çalışıyor.</b>\n"
+                                "Birkaç saniye sonra tekrar dene.", chat_id=chat_id)
             return
         try:
-            _telegram_send_text("🔎 Taraniyor… (birkac saniye sur)",
-                                chat_id=chat_id)
+            _telegram_send_text("🔎 <b>ANLIK KONTROL ÇALIŞIYOR</b>\n"
+                                "<i>Koşullar taranıyor…</i>", chat_id=chat_id)
             found, errors = collect_active_setups()
             _telegram_send_text(_format_check_for_telegram(found, errors),
                                 chat_id=chat_id)
         except Exception as e:
-            _telegram_send_text(f"Tarama sirasinda hata: {_html.escape(str(e))}",
-                                chat_id=chat_id)
+            _telegram_send_text("⚠️ <b>ANLIK KONTROL BAŞARISIZ</b>\n"
+                                f"{_html.escape(str(e))}", chat_id=chat_id)
         finally:
             _check_lock.release()
     else:
-        _telegram_send_text(f"Bilinmeyen komut: /{_html.escape(cmd)}. /help yaz.",
-                            chat_id=chat_id)
+        _telegram_send_text(f"❓ <b>Bilinmeyen komut:</b> /{_html.escape(cmd)}\n"
+                            "Komut listesi için /help yaz.", chat_id=chat_id)
 
 
 def handle_callback_query(cq: dict) -> None:

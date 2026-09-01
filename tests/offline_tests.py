@@ -1099,6 +1099,45 @@ def test_perf_formatting():
     ok("performans bicimlendirme")
 
 
+def test_readable_telegram_report_cards():
+    """Ozet/performans/check/status raporlari bolumlu ve Telegram-safe kalir."""
+    daily = bot._format_daily_summary(
+        day="2026-09-01", signal_counts={"S1": 2, "S2": 1},
+        push_counts={"S1": 2, "S2": 1}, silent_counts={},
+        perf={"n_total": 4, "strategies": {
+            "S1": {"n": 4, "median_pct": 1.2, "winrate_pct": 75,
+                    "bt_median_pct": 0.93, "bt_winrate_pct": 62}}})
+    for required in ("Gunluk ozet", "Sinyal olayları", "Tarama",
+                     "Olgun canlı sonuçlar", "+1.20%", "/performans"):
+        assert required in daily, required
+    assert len(daily) < 4000
+
+    check = bot._format_check_for_telegram([{
+        "strategy": "S1", "symbol": "BTCUSDT", "direction": "LONG",
+        "confidence": "YUKSEK", "price": 100.0, "horizon_hours": 24,
+        "rsi": 21.5,
+    }], 0)
+    for required in ("ANLIK KONTROL", "BTCUSDT LONG", "Fiyat",
+                     "Koşul şu anda aktif", "bildirim göndermez"):
+        assert required in check, required
+    assert len(check) < 4000
+    many = [{
+        "strategy": "S1", "symbol": f"COIN{i}USDT", "direction": "LONG",
+        "confidence": "YUKSEK", "price": 100.0, "horizon_hours": 24,
+        "rsi": 21.5,
+    } for i in range(25)]
+    crowded = bot._format_check_for_telegram(many, 0)
+    assert len(crowded) < 4000, len(crowded)
+    assert "ayrıca" in crowded, "uzun /check Telegram limitine sigmali"
+
+    status = bot._format_status_for_telegram()
+    for required in ("BOT DURUMU", "Tarama", "Bildirim kapısı", "Erişim",
+                     "Bot emir açmaz"):
+        assert required in status, required
+    assert len(status) < 4000
+    ok("Telegram rapor kartlari")
+
+
 def test_observation_channel(tmpdir):
     """Gozlem kanali: S1-yalniz, GOZLEM- oneki, referans YOK, ayri kova,
     dogrulanmis istatistigi kirletmiyor, qc_export'a sizmiyor."""
@@ -1294,6 +1333,7 @@ def main():
         test_command_security()
         test_market_archiver(td)
         test_daily_summary_includes_perf()
+        test_readable_telegram_report_cards()
         test_dashboard_data(td)
         test_exact_strategy_performance_and_median(td)
         test_spot_rate_limit_backoff()
