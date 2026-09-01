@@ -194,6 +194,14 @@ Binance için API anahtarı gerekmez (yalnızca halka açık uçlar). Sinyaller
 stdout'a ve `signals.log`'a (JSONL) yazılır; push izni varsa **Telegram**'a
 gönderilir.
 
+Telegram sinyal mesajı önce strateji/sembol/yönü, ardından fiyat-ufuk-piyasa,
+tetikleyen ölçümler, “neden geldi?” özeti, dondurulmuş test ve hedef/ters
+dokunma karnesi, mekanik referanslar ve kişisel TP seviyeleri şeklinde okunur.
+S2'nin güveni **DÜŞÜK** kalır; kullanıcı talebiyle varsayılan olarak yalnız
+`ARAŞTIRMA` etiketiyle push edilir (`S2_RESEARCH_PUSH=true`). Bu özel izin genel
+`NOTIFY_MIN_CONFIDENCE` eşiğini düşürmez. S2'yi sessiz ölçmeye döndürmek için
+`.env` içine `S2_RESEARCH_PUSH=false` yaz; stratejiyi tamamen kapatma.
+
 ## Türev araştırma arşivi
 
 Sürekli çalışan bot, strateji kurallarından tamamen ayrı iki ileriye-dönük veri

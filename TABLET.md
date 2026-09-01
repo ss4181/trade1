@@ -203,6 +203,11 @@ gider).
 ## Günlük kullanım
 
 - Sinyaller kendiliğinden Telegram'a gelir; tablete dokunman gerekmez.
+- Mesajlar kısa bölümlere ayrılır: fiyat/ufuk, tetikleyen ölçümler, neden,
+  dondurulmuş test + hedef/ters-dokunma kanıtı ve mekanik referanslar. S2
+  bildirimleri özellikle **ARAŞTIRMA · Güven: DÜŞÜK** yazar; işlem teyidi
+  değildir. S2'yi yeniden sessiz ölçmek istersen `.env` içine
+  `S2_RESEARCH_PUSH=false` ekleyip botu yeniden başlat.
 - Push edilen bir sinyalden sonra coin fiyatı bildirim fiyatına göre +%2 veya
   +%3 hedefe ulaşırsa bot ayrıca bir kez hedef bildirimi yollar. +%5 ve +%10
   hedefleri bildirim üretmeden pano analitiği için izlenir. Bu yüzde

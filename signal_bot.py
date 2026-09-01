@@ -1088,11 +1088,16 @@ STRATEGY_CONF = {
 }
 NOTIFY_MIN_CONFIDENCE = _env("NOTIFY_MIN_CONFIDENCE", "ORTA").strip().upper()
 
+# S2'nin kaniti DUSUK kalir; bu anahtar guven kademesini veya strateji
+# matematigini degistirmeden yalniz ileri olcum icin Telegram push'una izin
+# verir. Boylece tum bildirim esigini DUSUK'e indirip diger zayif kanallari
+# istemeden acmayiz. Mesajda acikca ARASTIRMA olarak etiketlenir.
+S2_RESEARCH_PUSH = _env("S2_RESEARCH_PUSH", True, cast=_flag)
+
 # Bir stratejiyi TAMAMEN kapatmak icin (taranmaz, loglanmaz, API cagrisi da
-# yapilmaz): DISABLED_STRATEGIES=S2 gibi virgullu liste. NOT: varsayilan bos —
-# S2 su an "sessiz-kayit" modunda (push edilmez ama loglanir) cunku canli
-# performans olcumu (/performans) nihai kaldir/tut kararini VERIyle verecek;
-# tamamen kapatirsan o kanit birikmez.
+# yapilmaz): DISABLED_STRATEGIES=S2 gibi virgullu liste. NOT: varsayilan bos.
+# S2_RESEARCH_PUSH=false yapilirsa S2 sessiz-kayitta kalir; tamamen kapatmak
+# canli performans kanitinin birikmesini de durdurur.
 DISABLED_STRATEGIES = {s.strip().upper()
                        for s in _env("DISABLED_STRATEGIES", "").split(",")
                        if s.strip()}
@@ -1734,25 +1739,25 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
     if "volume_logz" in sig:
         rows.append(("Hacim log-Z", str(sig["volume_logz"])))
     if "market_regime" in sig:
-        rows.append(("Piyasa rejimi (gozlem)", str(sig["market_regime"])))
+        rows.append(("Piyasa rejimi (gözlem)", str(sig["market_regime"])))
     if "funding_pct" in sig:
         rows.append(("Funding %", ", ".join(str(x) for x in sig["funding_pct"])))
     if sig.get("performance_symbol"):
-        rows.append(("Performans piyasasi",
+        rows.append(("Performans piyasası",
                      f"USD-M perp ({sig['performance_symbol']})"))
     if sig.get("price_source") == "spot_scaled_proxy":
-        rows.append(("Fiyat kaynagi",
-                     "futures ticker alinamadi; olceklenmis spot proxy"))
+        rows.append(("Fiyat kaynağı",
+                     "futures ticker alınamadı; ölçeklenmiş spot proxy"))
     if sig.get("funding_interval_hours"):
-        rows.append(("Funding araligi",
+        rows.append(("Funding aralığı",
                      f"{sig['funding_interval_hours']:g} saat "
                       f"(yaklasik {sig.get('funding_window_hours', '?')} saatlik pencere)"))
     if "rank_24h" in sig:
-        rows.append(("24s yukselen sirasi", f"#{sig['rank_24h']}"))
+        rows.append(("24s yükselen sırası", f"#{sig['rank_24h']}"))
     if "return_24h_pct" in sig:
-        rows.append(("Kapanmis mum 24s getiri", f"{sig['return_24h_pct']:+.3f}%"))
+        rows.append(("Kapanmış mum 24s getirisi", f"{sig['return_24h_pct']:+.3f}%"))
     if "volume_ratio" in sig:
-        rows.append(("1s hacim / onceki 24s medyan", f"{sig['volume_ratio']:.3f}x"))
+        rows.append(("1s hacim / önceki 24s medyan", f"{sig['volume_ratio']:.3f}x"))
     if "oi_change_1h_pct" in sig:
         rows.append(("Open interest 1s", f"{sig['oi_change_1h_pct']:+.3f}%"))
     if "global_long_short_ratio" in sig:
@@ -1760,7 +1765,7 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
     if sig.get("global_short_account_pct") is not None:
         rows.append(("Short hesap payi", f"%{sig['global_short_account_pct']:.2f}"))
     if sig.get("announcement_at"):
-        rows.append(("Resmi duyuru", str(sig["announcement_at"])))
+        rows.append(("Resmî duyuru", str(sig["announcement_at"])))
     if sig.get("delist_at"):
         rows.append(("Binance spot durdurma", str(sig["delist_at"])))
     if "bybit_perp_available" in sig:
@@ -1770,7 +1775,7 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
         rows.append(("OKX USDT swap", "VAR" if sig["okx_perp_available"]
                      else "YOK"))
     if sig.get("article_url"):
-        rows.append(("Resmi makale", str(sig["article_url"])))
+        rows.append(("Resmî makale", str(sig["article_url"])))
     return rows
 
 
@@ -1863,39 +1868,184 @@ def _price_target_lines(sig: dict) -> list[str]:
     ]
 
 
+_TELEGRAM_DETAIL_ICONS = {
+    "RSI": "🧭",
+    "Hacim log-Z": "📊",
+    "Piyasa rejimi (gözlem)": "🌐",
+    "Funding %": "💸",
+    "Performans piyasası": "🏦",
+    "Fiyat kaynağı": "🔎",
+    "Funding aralığı": "🔁",
+    "24s yükselen sırası": "🔟",
+    "Kapanmış mum 24s getirisi": "📈",
+    "1s hacim / önceki 24s medyan": "📊",
+    "Open interest 1s": "🔥",
+    "Global hesap long/short": "🌍",
+    "Short hesap payi": "🎯",
+    "Resmî duyuru": "📣",
+    "Binance spot durdurma": "⏳",
+    "Bybit linear perp": "🏦",
+    "OKX USDT swap": "🏦",
+    "Resmî makale": "🔗",
+}
+
+
+def _display_confidence(confidence: str | None) -> str:
+    return {
+        "COK YUKSEK": "ÇOK YÜKSEK", "YUKSEK": "YÜKSEK",
+        "DUSUK": "DÜŞÜK", "GOZLEM": "GÖZLEM",
+    }.get(str(confidence or ""), str(confidence or "—"))
+
+
+def _telegram_reason(sig: dict) -> str:
+    """Sinyalin matematiksel tetigini tek, jargon-aciklayici cumleye indir."""
+    strategy = str(sig.get("strategy") or "")
+    base = OBSERVE_BASE_OF.get(strategy, strategy).split("+")[0]
+    if base == "S1":
+        reason = (f"RSI(14) {sig.get('rsi', '—')} ile {RSI_OVERSOLD} eşiğinin "
+                  "altında; fiyat yeni dip yaparken RSI daha yüksek dip yaptı.")
+        if "+S4" in strategy or strategy == "S5":
+            reason += (f" Son 24 saatte log-hacim Z≥"
+                       f"{VOLUME_ZSCORE_THRESHOLD:g} teyidi de var.")
+        return reason
+    if base == "S2":
+        values = ", ".join(f"{float(x):g}%" for x in sig.get("funding_pct", []))
+        return (f"Son {FUNDING_PERSISTENCE} kapanmış funding ({values or '—'}) "
+                f"≤ {FUNDING_SQUEEZE_THRESHOLD_PCT:g}%; short kalabalığı "
+                "sıkışma adayıdır, fakat funding tek başına yön teyidi değildir.")
+    if base == "S3":
+        return (f"Log-hacim Z={sig.get('volume_logz', '—')} ile "
+                f"{VOLUME_ZSCORE_THRESHOLD:g} eşiğini geçti ve mum yeşil "
+                "kapandı; kısa vadeli alıcı momentumu adayıdır.")
+    if strategy == "G1":
+        return ("İlk-10 günlük yükselen, hacim ve OI artışı ile short hesap "
+                "çoğunluğu aynı kapanmış veride birlikte görüldü.")
+    if strategy == "DL1":
+        return ("Resmî Binance tam-token delist duyurusu tespit edildi; bu "
+                "bir piyasa olayı alarmıdır, giriş sinyali değildir.")
+    return str(sig.get("note") or "Stratejinin tanımlı koşulları birlikte sağlandı.")
+
+
+def _telegram_compact_warning(sig: dict) -> str | None:
+    strategy = str(sig.get("strategy") or "")
+    if strategy == "S2":
+        return ("S2 düşük kanıtlı araştırma kanalıdır. Dondurulmuş test medyanı "
+                "negatif ve ters fiyat hareketi kuyruğu geniştir; işlem teyidi "
+                "olarak yorumlanmamalıdır.")
+    if strategy == "G1":
+        return ("G1 doğrulanmadı: train N=401, net medyan -%0,30 ve isabet "
+                "%45,9. Yalnız ileri gözlem içindir.")
+    if strategy == "DL1":
+        return ("DL1 olay alarmıdır. Deliste kadar bekletme tarihsel olarak "
+                "zararlı; dış-borsa short hipotezi henüz doğrulanmadı.")
+    if sig.get("observe"):
+        return ("Dinamik gözlem evrenindeki bu coin için backtest yok; ana "
+                "S1/S1+S4 istatistikleri burada geçerli değildir.")
+    return None
+
+
+def _telegram_evidence_lines(sig: dict) -> list[str]:
+    """Test, dokunma ve canli kişisel karneyi birbirine karistirmadan ozetle."""
+    strategy = str(sig.get("strategy") or "")
+    lines: list[str] = []
+    bt = STRATEGY_TEST_STATS.get(strategy)
+    if bt:
+        med = f"{float(bt['med']):+.2f}%" if bt.get("med") is not None else "—"
+        wr = f"%{float(bt['wr']):g}" if bt.get("wr") is not None else "—"
+        lines.append(f"🧪 <b>Dondurulmuş test:</b> {bt.get('h', '?')} saat · "
+                     f"N={bt.get('n', 0)} · medyan {med} · isabet {wr}")
+    ref = sig.get("ref") or {}
+    touch = ref.get("touch") or ()
+    stops = ref.get("stopt") or ()
+    if touch:
+        text = " · ".join(f"+%{x:g}: %{p:g}" for x, p in touch)
+        lines.append(f"🎯 <b>24 aylık hedef dokunması:</b> {text}")
+    if stops:
+        text = " · ".join(f"-%{x:g}: %{p:g}" for x, p in stops)
+        lines.append(f"🛑 <b>Aynı ufukta ters dokunma:</b> {text}")
+    live = price_target_summary().get(strategy, {}).get(
+        _target_level_key(USER_SUCCESS_TARGET_PCT), {})
+    if live.get("resolved"):
+        small = " · küçük N" if live.get("sample_warning") else ""
+        lines.append(
+            f"📡 <b>Canlı kişisel TP{USER_SUCCESS_TARGET_PCT:g}:</b> "
+            f"%{live['hit_rate_pct']:g} ({live['hit']}/{live['resolved']}{small})")
+    return lines
+
+
+def _telegram_signal_text(sig: dict) -> str:
+    """Okunabilir, bolumlu ve Telegram HTML sinirina uygun sinyal metni."""
+    strategy = str(sig.get("strategy") or "?")
+    direction = str(sig.get("direction") or "")
+    conf = str(sig.get("confidence") or signal_confidence(strategy)[0])
+    if strategy == "S2":
+        mode, marker = "ARAŞTIRMA", "🧪"
+    elif sig.get("observe") or strategy in SHADOW_STRATEGIES:
+        mode, marker = "GÖZLEM", "🔬"
+    elif sig.get("strength") == "STRONG":
+        mode, marker = "SİNYAL", "✅"
+    else:
+        mode, marker = "SİNYAL", "🟦"
+    lines = [
+        f"🔔 <b>{_html.escape(strategy)} — "
+        f"{_html.escape(str(sig.get('symbol') or '?'))} "
+        f"{_html.escape(direction)}</b> {marker}",
+        f"<i>({mode} · Güven: {_display_confidence(conf)})</i>",
+        "",
+        f"💰 <b>Fiyat:</b> {_fmt_price(sig.get('price'))}",
+        f"⏱️ <b>Beklenen ufuk:</b> ~{sig.get('horizon_hours', '?')} saat",
+    ]
+    for label, value in _signal_detail_rows(sig):
+        icon = _TELEGRAM_DETAIL_ICONS.get(label, "•")
+        lines.append(f"{icon} <b>{_html.escape(label)}:</b> "
+                     f"{_html.escape(str(value))}")
+    lines += ["", f"💡 <b>Neden geldi?</b> "
+              f"{_html.escape(_telegram_reason(sig))}"]
+    warning = _telegram_compact_warning(sig)
+    if warning:
+        lines.append(f"⚠️ <b>Dikkat:</b> {_html.escape(warning)}")
+    evidence = _telegram_evidence_lines(sig)
+    if evidence:
+        lines += ["", "<b>📚 Kanıt ve risk</b>", *evidence]
+    ref = sig.get("ref") or {}
+    if ref:
+        lines += [
+            "", "<b>📌 Mekanik referanslar</b>",
+            f"• Giriş ref: <b>{_fmt_price(ref.get('entry_ref'))}</b> "
+            "(sinyal mumu kapanışı)",
+            f"• Zaman çıkışı: <b>~{ref.get('time_exit_hours', '?')} saat</b>"
+            + (f" · son { _html.escape(str(ref['exit_by']))}"
+               if ref.get("exit_by") else ""),
+            f"• Kötü %10 / medyan / iyi %10: "
+            f"{_fmt_price(ref.get('q10_price'))} / "
+            f"{_fmt_price(ref.get('median_price'))} / "
+            f"{_fmt_price(ref.get('q90_price'))}",
+        ]
+    profile = sig.get("price_target") or {}
+    targets = profile.get("targets") or []
+    if targets:
+        target_text = " · ".join(
+            f"TP{float(t['level_pct']):g} {_fmt_price(t.get('price'))}"
+            for t in targets)
+        lines += ["", f"🎯 <b>Kişisel fiyat takibi:</b> {target_text}"]
+    try:
+        stamp = _target_dt(sig.get("bar_time")).strftime("%Y-%m-%d %H:%M UTC")
+    except (TypeError, ValueError):
+        stamp = str(sig.get("bar_time") or "—")
+    lines += [
+        "", "ℹ️ Yüzdeler coin fiyatına aittir; kaldıraçlı ROI değildir. "
+        "Bot emir açmaz veya kapatmaz.",
+        f"🕒 <i>Sinyal mumu: {_html.escape(stamp)}</i>",
+    ]
+    return "\n".join(lines)
+
+
 def send_telegram_message(sig: dict) -> bool:
     """Telegram Bot API ile sinyal gonderir. Anahtar yoksa sessizce atlar;
     hata olursa uyarir ama tarama dongusunu ASLA durdurmaz."""
     if not ENABLE_TELEGRAM:
         return False
-    icon = "‼️" if sig.get("strength") == "STRONG" else "\U0001f514"
-    conf = sig.get("confidence")
-    head_tail = (f"({sig['strength']} · Guven: {conf})" if conf
-                 else f"({sig['strength']})")
-    lines = [
-        f"{icon} <b>{_html.escape(sig['strategy'])}</b> — "
-        f"<b>{_html.escape(sig['symbol'])}</b> {sig['direction']} "
-        f"{head_tail}",
-        f"Fiyat: {_fmt_price(sig['price'])}",
-        f"Beklenen ufuk: ~{sig['horizon_hours']} saat",
-    ]
-    lines += [f"{label}: {_html.escape(val)}"
-              for label, val in _signal_detail_rows(sig)]
-    lines.append(_html.escape(sig["note"]))
-    for warn in _observe_lines(sig):
-        lines.append(f"\n<b>⚠️ {_html.escape(warn)}</b>")
-    ref_lines = _ref_lines(sig)
-    if ref_lines:
-        lines.append("")
-        lines += [f"<i>{_html.escape(l)}</i>" if l.startswith(("—", "Fiyat-bazli"))
-                  else _html.escape(l) for l in ref_lines]
-    target_lines = _price_target_lines(sig)
-    if target_lines:
-        lines.append("")
-        lines += [f"<i>{_html.escape(l)}</i>" if l.startswith("—")
-                  else _html.escape(l) for l in target_lines]
-    lines.append(f"<i>{_html.escape(sig['bar_time'])}</i>")
-    text = "\n".join(lines)
+    text = _telegram_signal_text(sig)
     delivered = False
     for cid in TELEGRAM_SUBSCRIBERS:          # sahip + izinli arkadaslar
         delivered = _telegram_send_text(text, chat_id=cid) or delivered
@@ -2660,6 +2810,7 @@ def _backfill_price_targets_from_signal_log() -> int:
 
 def _delivery_record(sig: dict, push: bool) -> dict:
     conf = sig.get("confidence", "YUKSEK")
+    strategy = str(sig.get("strategy") or "")
     reasons = []
     if sig.get("observe"):
         # Gozlem sinyalinin push'unu CONF_RANK degil OBSERVE_PUSH belirler:
@@ -2668,6 +2819,10 @@ def _delivery_record(sig: dict, push: bool) -> dict:
         observe_push = sig.get("push_policy_enabled", OBSERVE_PUSH)
         if not observe_push:
             reasons.append("observe_channel_silent")
+    elif strategy == "S2" and S2_RESEARCH_PUSH:
+        # Guven DUSUK kalir; yalniz kullanicinin talep ettigi arastirma
+        # bildirimi genel NOTIFY_MIN_CONFIDENCE kapisini kontrollu asar.
+        pass
     elif CONF_RANK.get(conf, 2) < CONF_RANK.get(NOTIFY_MIN_CONFIDENCE, 1):
         reasons.append("confidence_below_threshold")
     if not push:
@@ -2699,10 +2854,13 @@ def notify(sig: dict, push: bool = True) -> dict:
         record["price_target"] = target_profile
     conf = record.get("confidence", "YUKSEK")
     reason = record.get("suppression_reason") or ""
-    tag = ("  [SESSIZ: guven esigi alti]"
+    tag = ("  [ARASTIRMA PUSH]"
+           if record.get("strategy") == "S2" and record["push_allowed"]
+           and S2_RESEARCH_PUSH else
+           ("  [SESSIZ: guven esigi alti]"
            if "confidence_below_threshold" in reason else
            ("  [TOPLU OZETTE: tarama-basi tavan]"
-            if "scan_push_cap" in reason else ""))
+            if "scan_push_cap" in reason else "")))
     line = (f"[{record['bar_time']}] {record['strategy']:<6} "
             f"{record['symbol']:<12} {record['direction']} "
             f"({record['strength']}/{conf}) "
@@ -2802,12 +2960,14 @@ def scan_all(state: ScanState) -> int:
     for sig in collected:
         conf_ok = (CONF_RANK.get(sig.get("confidence", "YUKSEK"), 2)
                    >= CONF_RANK.get(NOTIFY_MIN_CONFIDENCE, 1))
-        if conf_ok and pushed >= MAX_PUSH_PER_SCAN:
+        policy_push = (conf_ok or (sig.get("strategy") == "S2"
+                                   and S2_RESEARCH_PUSH))
+        if policy_push and pushed >= MAX_PUSH_PER_SCAN:
             overflow.append(sig)
             notify(sig, push=False)
         else:
             notify(sig)
-            if conf_ok:
+            if policy_push:
                 pushed += 1
     # Gozlem sinyalleri kendi push tavanina tabidir; dogrulanmis sinyallerin
     # MAX_PUSH_PER_SCAN butcesini TUKETMEZ (onlarin onune de gecemez).
@@ -3322,6 +3482,9 @@ def _run_forever_locked(once: bool = False,
           f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'}), "
           f"{SCAN_INTERVAL_MINUTES}dk aralik "
            f"(telegram={'acik' if ENABLE_TELEGRAM else 'kapali'})", flush=True)
+    if S2_RESEARCH_PUSH:
+        print("S2 arastirma bildirimleri acik (guven DUSUK kalir; genel push "
+              "esigi degismez)", flush=True)
     if SHADOW_EXPERIMENTS_ENABLED:
         print("golge deneyler acik: G1 tum aktif USD-M + DL1 resmi tam-token "
               f"delist (push={'acik' if SHADOW_PUSH_ENABLED else 'sessiz'})",
@@ -3929,9 +4092,10 @@ STRATEGY_DOCS = {
         "exit": "Zaman cikisi ~72 saat.",
         "stats": "Cekirdek test: edge +0.14, olay p=0.08, gun-kumesi p=0.347, "
                  "medyan -0.36%, kazanma %47. Sinyaller ~5 sembolde yogunlasiyor.",
-        "risk": "EN RISKLI: kotu %10 = -9.1% (en derin kuyruk). Bu yuzden "
-                "varsayilan olarak telefonuna PUSH EDILMEZ (sessiz-kayit); "
-                "panoda ve /performans'ta gorunur. Iyilestirme yollari tukendi "
+        "risk": "EN RISKLI: kotu %10 = -9.1% (en derin kuyruk). Istege gore "
+                "yalniz ARASTIRMA etiketiyle push edilir; bu guven seviyesini "
+                "yukseltmez. Panoda ve /performans'ta ayri izlenir. "
+                "Iyilestirme yollari tukendi "
                  "(REPORT Ek D); canli veri birikince kaldir/tut karari verilecek.",
     },
     "S5": {
@@ -4220,7 +4384,8 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         ]
         strategies.append({
             "name": key, "confidence": conf, "evidence": evid,
-            "pushed": (SHADOW_PUSH_ENABLED if key in SHADOW_STRATEGIES else
+            "pushed": (S2_RESEARCH_PUSH if key == "S2" else
+                       SHADOW_PUSH_ENABLED if key in SHADOW_STRATEGIES else
                        OBSERVE_PUSH if key in OBSERVE_STRATEGIES else
                        CONF_RANK.get(conf, 2) >= CONF_RANK.get(
                            NOTIFY_MIN_CONFIDENCE, 1)),
@@ -4244,6 +4409,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "errors": LAST_SCAN_ERRORS, "symbols": len(SYMBOLS),
             "interval_min": SCAN_INTERVAL_MINUTES,
             "min_conf": NOTIFY_MIN_CONFIDENCE,
+            "s2_research_push": S2_RESEARCH_PUSH,
             "disabled": sorted(DISABLED_STRATEGIES),
             "started": STARTED_AT,
             "round_trip_cost_bps": LIVE_ROUND_TRIP_COST_BPS,
@@ -4800,6 +4966,9 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
             f"Push esigi: {NOTIFY_MIN_CONFIDENCE}+ "
             f"(alti sessiz-kayit) · Kapali: "
             f"{', '.join(sorted(DISABLED_STRATEGIES)) or 'yok'}\n"
+            f"S2 arastirma bildirimi: "
+            f"{'ACIK' if S2_RESEARCH_PUSH else 'sessiz'} "
+            f"(guven DUSUK)\n"
             f"Gozlem kanali: "
             + (f"{len(OBSERVE_SYMBOLS)} dogrulanmamis sembol, "
                f"bildirim {'ACIK' if OBSERVE_PUSH else 'sessiz'}"

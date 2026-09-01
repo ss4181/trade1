@@ -68,6 +68,7 @@ def test_snapshot_isolation():
 
 
 def test_notify_gating_and_push_flag():
+    old_s2_push = bot.S2_RESEARCH_PUSH
     pushed = []
     def delivered(s):
         pushed.append(("tg", s["strategy"]))
@@ -77,19 +78,29 @@ def test_notify_gating_and_push_flag():
     base = {"direction": "LONG", "strength": "NORMAL", "price": 1,
             "bar_time": "2026-07-19T12:00:00+00:00", "note": "n",
             "horizon_hours": 24, "symbol": "X"}
-    bot.notify({**base, "strategy": "S2", "confidence": "DUSUK"})
-    bot.notify({**base, "strategy": "S1", "confidence": "YUKSEK"})
-    bot.notify({**base, "strategy": "S1", "confidence": "YUKSEK"}, push=False)
-    assert len(bot.RECENT_SIGNALS) == 3          # hepsi tamponda
-    assert pushed == [("tg", "S1")]                    # yalniz 1 push
-    rows = list(bot.RECENT_SIGNALS)
-    assert rows[0]["suppressed"] is True
-    assert rows[0]["suppression_reason"] == "scan_push_cap"
-    assert rows[1]["push_allowed"] is True
-    assert rows[2]["suppression_reason"] == "confidence_below_threshold"
-    assert all(r.get("event_id") and r.get("schema_version") == 2 for r in rows)
-    assert len(bot.PRICE_TARGET_STATE["events"]) == 1, \
-        "yalniz gercekten teslim edilen S1 hedef takibine girmeli"
+    try:
+        bot.S2_RESEARCH_PUSH = True
+        bot.notify({**base, "strategy": "S2", "confidence": "DUSUK"})
+        bot.notify({**base, "strategy": "S1", "confidence": "YUKSEK"})
+        bot.notify({**base, "strategy": "S1", "confidence": "YUKSEK"}, push=False)
+        assert len(bot.RECENT_SIGNALS) == 3          # hepsi tamponda
+        assert pushed == [("tg", "S2"), ("tg", "S1")]
+        rows = list(bot.RECENT_SIGNALS)
+        assert rows[0]["suppressed"] is True
+        assert rows[0]["suppression_reason"] == "scan_push_cap"
+        assert rows[1]["push_allowed"] is True
+        assert rows[2]["push_allowed"] is True
+        assert all(r.get("event_id") and r.get("schema_version") == 2
+                   for r in rows)
+        assert len(bot.PRICE_TARGET_STATE["events"]) == 2, \
+            "teslim edilen S2 arastirma push'u da hedef takibine girmeli"
+        bot.S2_RESEARCH_PUSH = False
+        quiet = bot._delivery_record(
+            {**base, "strategy": "S2", "confidence": "DUSUK"}, push=True)
+        assert quiet["push_allowed"] is False
+        assert quiet["suppression_reason"] == "confidence_below_threshold"
+    finally:
+        bot.S2_RESEARCH_PUSH = old_s2_push
     ok("guven esigi + push bayragi")
 
 
@@ -261,6 +272,35 @@ def test_ref_lines():
     ok("bildirim referans satirlari")
 
 
+def test_readable_telegram_signal_text():
+    ref = bot.build_ref_levels("S2", 0.10527, 0.01)
+    ref["exit_by"] = "2026-09-04 12:00 UTC"
+    sig = {
+        "strategy": "S2", "symbol": "TESTUSDT", "direction": "LONG",
+        "strength": "NORMAL", "confidence": "DUSUK", "price": 0.10527,
+        "bar_time": "2026-09-01T11:00:00+00:00", "horizon_hours": 72,
+        "funding_pct": [-0.031, -0.034], "funding_interval_hours": 8,
+        "funding_window_hours": 16, "performance_symbol": "TESTUSDT",
+        "note": "negatif funding yiginlanmasi", "ref": ref,
+        "price_target": {"targets": [
+            {"level_pct": 2, "price": 0.1073754},
+            {"level_pct": 3, "price": 0.1084281},
+            {"level_pct": 5, "price": 0.1105335},
+            {"level_pct": 10, "price": 0.115797},
+        ]},
+    }
+    text = bot._telegram_signal_text(sig)
+    for required in ("S2 — TESTUSDT LONG", "ARAŞTIRMA · Güven: DÜŞÜK",
+                     "💰 <b>Fiyat:</b>", "💡 <b>Neden geldi?</b>",
+                     "📚 Kanıt ve risk", "Dondurulmuş test",
+                     "24 aylık hedef dokunması", "Aynı ufukta ters dokunma",
+                     "📌 Mekanik referanslar", "Kişisel fiyat takibi",
+                     "kaldıraçlı ROI değildir"):
+        assert required in text, required
+    assert len(text) < 4000, len(text)
+    ok("okunabilir Telegram sinyal sablonu")
+
+
 def test_command_security():
     bot.ENABLE_TELEGRAM = True
     bot.TELEGRAM_BOT_TOKEN = "X"
@@ -343,7 +383,7 @@ def test_disabled_strategies_and_header():
                                "confidence": "YUKSEK", "price": 1,
                                "bar_time": "t", "note": "n",
                                "horizon_hours": 24})
-    assert "Guven: YUKSEK" in captured["text"].splitlines()[0]
+    assert "SİNYAL · Güven: YÜKSEK" in captured["text"]
     ok("strateji kapatma anahtari + baslikta guven")
 
 
@@ -1073,6 +1113,7 @@ def test_observation_channel(tmpdir):
         for i in range(250)]
     orig_div = bot.bullish_divergence
     orig_push = bot.OBSERVE_PUSH
+    orig_s2_push = bot.S2_RESEARCH_PUSH
     bot.bullish_divergence = lambda c, l, r, i: True
     bot.DISABLED_STRATEGIES = set()
     try:
@@ -1106,8 +1147,11 @@ def test_observation_channel(tmpdir):
         rec = bot._delivery_record(sig, push=True)
         assert rec["push_allowed"] is False
         assert rec["suppression_reason"] == "observe_channel_silent"
-        # dogrulanmis sinyal esikten etkilenmeye devam etmeli
+        # S2 yalniz kendi ARASTIRMA izniyle esigi asar; guveni yine DUSUK.
         low = {"strategy": "S2", "confidence": "DUSUK"}
+        bot.S2_RESEARCH_PUSH = True
+        assert bot._delivery_record(low, push=True)["push_allowed"] is True
+        bot.S2_RESEARCH_PUSH = False
         assert bot._delivery_record(low, push=True)["push_allowed"] is False
 
         # /performans: gozlem AYRI blokta, S1 satiriyla karismaz
@@ -1228,6 +1272,7 @@ def test_observation_channel(tmpdir):
     finally:
         bot.bullish_divergence = orig_div
         bot.OBSERVE_PUSH = orig_push
+        bot.S2_RESEARCH_PUSH = orig_s2_push
     ok("gozlem kanali (S1-yalniz, ayri kova, referans yok, qc sizintisi yok)")
 
 
@@ -1244,6 +1289,7 @@ def main():
         test_overflow_summary_fanout()
         test_state_persistence(td)
         test_ref_lines()
+        test_readable_telegram_signal_text()
         test_disabled_strategies_and_header()
         test_command_security()
         test_market_archiver(td)
