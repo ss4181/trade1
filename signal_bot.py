@@ -1748,6 +1748,11 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
     if sig.get("price_source") == "spot_scaled_proxy":
         rows.append(("Fiyat kaynağı",
                      "futures ticker alınamadı; ölçeklenmiş spot proxy"))
+    elif sig.get("price_source") == "usdm_24h_ticker_last_at_scan":
+        rows.append(("Fiyat kaynağı", "bildirim anındaki USD-M ticker"))
+    elif sig.get("price_source") == "closed_usdm_1h_fallback":
+        rows.append(("Fiyat kaynağı",
+                     "ticker yok; son kapanmış USD-M 1s mum fallback"))
     if sig.get("funding_interval_hours"):
         rows.append(("Funding aralığı",
                      f"{sig['funding_interval_hours']:g} saat "
@@ -1764,6 +1769,14 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
         rows.append(("Global hesap long/short", str(sig["global_long_short_ratio"])))
     if sig.get("global_short_account_pct") is not None:
         rows.append(("Short hesap payi", f"%{sig['global_short_account_pct']:.2f}"))
+    if sig.get("strategy") == "G1" and sig.get("condition_price") is not None:
+        rows.append(("Koşul mumu kapanışı", _fmt_price(sig["condition_price"])))
+    if sig.get("strategy") == "G1" and sig.get("notification_delay_minutes") is not None:
+        rows.append(("Bildirim gecikmesi",
+                     f"{float(sig['notification_delay_minutes']):.1f} dakika"))
+    if sig.get("strategy") == "G1" and sig.get("measurement_entry_time_utc"):
+        rows.append(("Ölçüm girişi",
+                     f"sonraki 1s açılışı · {sig['measurement_entry_time_utc']}"))
     if sig.get("announcement_at"):
         rows.append(("Resmî duyuru", str(sig["announcement_at"])))
     if sig.get("delist_at"):
@@ -1882,6 +1895,9 @@ _TELEGRAM_DETAIL_ICONS = {
     "Open interest 1s": "🔥",
     "Global hesap long/short": "🌍",
     "Short hesap payi": "🎯",
+    "Koşul mumu kapanışı": "🕯️",
+    "Bildirim gecikmesi": "⏳",
+    "Ölçüm girişi": "📐",
     "Resmî duyuru": "📣",
     "Binance spot durdurma": "⏳",
     "Bybit linear perp": "🏦",
@@ -1933,8 +1949,12 @@ def _telegram_compact_warning(sig: dict) -> str | None:
                 "negatif ve ters fiyat hareketi kuyruğu geniştir; işlem teyidi "
                 "olarak yorumlanmamalıdır.")
     if strategy == "G1":
+        delay = float(sig.get("notification_delay_minutes") or 0)
+        late = (f" Bildirim koşul kapanışından {delay:.1f} dakika sonra üretildi; "
+                "gösterilen fiyat tarama-anı ticker fiyatıdır."
+                if delay >= 10 else "")
         return ("G1 doğrulanmadı: train N=401, net medyan -%0,30 ve isabet "
-                "%45,9. Yalnız ileri gözlem içindir.")
+                f"%45,9. Yalnız ileri gözlem içindir.{late}")
     if strategy == "DL1":
         return ("DL1 olay alarmıdır. Deliste kadar bekletme tarihsel olarak "
                 "zararlı; dış-borsa short hipotezi henüz doğrulanmadı.")
@@ -1986,13 +2006,14 @@ def _telegram_signal_text(sig: dict) -> str:
         mode, marker = "SİNYAL", "✅"
     else:
         mode, marker = "SİNYAL", "🟦"
+    price_label = ("Tarama anı fiyatı" if strategy == "G1" else "Fiyat")
     lines = [
         f"🔔 <b>{_html.escape(strategy)} — "
         f"{_html.escape(str(sig.get('symbol') or '?'))} "
         f"{_html.escape(direction)}</b> {marker}",
         f"<i>({mode} · Güven: {_display_confidence(conf)})</i>",
         "",
-        f"💰 <b>Fiyat:</b> {_fmt_price(sig.get('price'))}",
+        f"💰 <b>{price_label}:</b> {_fmt_price(sig.get('price'))}",
         f"⏱️ <b>Beklenen ufuk:</b> ~{sig.get('horizon_hours', '?')} saat",
     ]
     for label, value in _signal_detail_rows(sig):
@@ -4256,8 +4277,10 @@ STRATEGY_DOCS = {
                "onceki 24 saatin medyaninin en az 2 kati, OI artisi en az %2 "
                "ve global hesap long/short orani 1'in altindaysa golge LONG "
                "olayi uretilir.",
-        "entry": "Olcum girisi sonraki 1s mum acilisi; canli bildirim fiyatı "
-                 "son kapanmis USD-M 1s mum kapanisidir.",
+        "entry": "Olcum girisi sonraki 1s mum acilisidir. Canli bildirimde "
+                 "tarama anindaki USD-M ticker fiyati gosterilir; kosulu "
+                 "doguran kapanmis 1s mum fiyati ve bildirim gecikmesi ayri "
+                 "satirlarda verilir.",
         "exit": "Dondurulmus sonuc ufku 4 saattir; +%2/+%3 dokunma ayrica "
                 "kisisel hedef karnesinde izlenir. Bot emir vermez.",
         "stats": "Tarihsel train RED: N=401, 4s net ortalama -%0,13, medyan "

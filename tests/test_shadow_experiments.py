@@ -82,7 +82,8 @@ class ShadowExperimentTests(unittest.TestCase):
                     "quoteAsset": "USDT"}]})
             if path.endswith("ticker/24hr"):
                 return Response([{"symbol": "AAAUSDT",
-                                  "priceChangePercent": "6"}])
+                                  "priceChangePercent": "6",
+                                  "lastPrice": "104.25"}])
             if path.endswith("klines"):
                 return Response(klines(self.now))
             if path.endswith("openInterestHist"):
@@ -99,6 +100,13 @@ class ShadowExperimentTests(unittest.TestCase):
             second = shadow.scan_g1(futures_get, root / "state.json", root,
                                     now=self.now)
             self.assertEqual([row["strategy"] for row in first], ["G1"])
+            self.assertEqual(first[0]["price"], 104.25)
+            self.assertEqual(first[0]["condition_price"], 106.0)
+            self.assertEqual(first[0]["price_source"],
+                             "usdm_24h_ticker_last_at_scan")
+            self.assertEqual(first[0]["measurement_entry_time_utc"],
+                             "2026-08-31T12:00:00+00:00")
+            self.assertEqual(first[0]["notification_delay_minutes"], 30.0)
             self.assertEqual(second, [])
             self.assertEqual(len(calls), before)
             events = list(root.glob("shadow_events_*.jsonl"))

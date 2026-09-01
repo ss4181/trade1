@@ -204,7 +204,7 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
     top = ranked[:G1_TOP_N]
 
     snapshots, evaluated = [], {}
-    for rank, (ticker_change, symbol, _ticker) in enumerate(top, 1):
+    for rank, (ticker_change, symbol, ticker) in enumerate(top, 1):
         try:
             klines = _response_json(futures_get("/fapi/v1/klines", {
                 "symbol": symbol, "interval": "1h", "limit": 26,
@@ -219,6 +219,11 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
                 }))
             metrics = evaluate_g1_snapshot(
                 klines, oi_rows, ls_rows, rank, ticker_change, now_ms)
+            # Koşul yalnız kapanmış 1s mumla hesaplanır; kullanıcıya gösterilen
+            # fiyat ise tarama anındaki USD-M ticker fiyatıdır. Böylece bot saat
+            # içinde gecikmeli çalışırsa eski mum kapanışı "giriş fiyatı" gibi
+            # görünmez. Ticker yoksa açıkça işaretli kapanış fallback'i kalır.
+            metrics["observed_price"] = _float(ticker.get("lastPrice"))
             evaluated[symbol] = metrics
             snapshots.append({
                 "schema_version": "shadow-market-v1", "kind": "G1_SNAPSHOT",
@@ -255,11 +260,27 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
         if metrics["condition"] and not was_true and fire_ok:
             bar_time = datetime.fromtimestamp(
                 metrics["bar_open_ms"] / 1000, tz=timezone.utc)
+            condition_close = datetime.fromtimestamp(
+                metrics["bar_close_ms"] / 1000, tz=timezone.utc)
+            measurement_entry = datetime.fromtimestamp(
+                (metrics["bar_close_ms"] + 1) / 1000, tz=timezone.utc)
+            observed_price = metrics.get("observed_price")
+            has_observed_price = (observed_price is not None
+                                  and observed_price > 0)
+            display_price = (observed_price if has_observed_price
+                             else metrics["close"])
+            delay_minutes = max(
+                0.0, (now_ms - (metrics["bar_close_ms"] + 1)) / 60_000)
             signal = {
                 "strategy": "G1", "symbol": symbol, "direction": "LONG",
                 "strength": "RESEARCH", "confidence": "GOZLEM",
                 "confidence_note": "Tarihsel train kapısı RED; ileri ölçüm",
-                "bar_time": _iso(bar_time), "price": metrics["close"],
+                "bar_time": _iso(bar_time), "price": display_price,
+                "observed_at": _iso(now),
+                "condition_bar_close_utc": _iso(condition_close),
+                "measurement_entry_time_utc": _iso(measurement_entry),
+                "condition_price": metrics["close"],
+                "notification_delay_minutes": round(delay_minutes, 2),
                 "horizon_hours": G1_HORIZON_HOURS,
                 "rank_24h": metrics["rank"],
                 "return_24h_pct": round(metrics["return_24h"] * 100, 3),
@@ -278,9 +299,11 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
                 "signal_market": "usd_m_perp",
                 "performance_market": "um_perp",
                 "performance_symbol": symbol,
-                "price_source": "closed_usdm_1h",
+                "price_source": ("usdm_24h_ticker_last_at_scan"
+                                 if has_observed_price
+                                 else "closed_usdm_1h_fallback"),
                 "push_policy_enabled": True,
-                "config_version": "G1-prereg-2026-08-31-v1",
+                "config_version": "G1-prereg-2026-09-01-v2-price-fix",
             }
             signals.append(signal)
             last_fire[symbol] = _iso(now)

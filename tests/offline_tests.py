@@ -298,6 +298,16 @@ def test_readable_telegram_signal_text():
                      "kaldıraçlı ROI değildir"):
         assert required in text, required
     assert len(text) < 4000, len(text)
+    g1_text = bot._telegram_signal_text({
+        "strategy": "G1", "symbol": "AAAUSDT", "direction": "LONG",
+        "strength": "RESEARCH", "confidence": "GOZLEM", "price": 98.5,
+        "condition_price": 100.0, "notification_delay_minutes": 12.0,
+        "measurement_entry_time_utc": "2026-09-01T12:00:00+00:00",
+        "horizon_hours": 4, "note": "gölge araştırma", "observe": True,
+    })
+    assert "💰 <b>Tarama anı fiyatı:</b>" in g1_text
+    assert "Koşul mumu kapanışı" in g1_text
+    assert "Ölçüm girişi" in g1_text
     ok("okunabilir Telegram sinyal sablonu")
 
 

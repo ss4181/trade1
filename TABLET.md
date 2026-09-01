@@ -523,6 +523,19 @@ Telegram mesajlarını susturup veri toplamayı sürdürmek için
 silme: anlamlı değerlendirme için en az 3–6 ay ve yeterli bağımsız olay günü
 gerekecek.
 
+G1 giriş fiyatı ve likidasyon-proxy araştırmasını elle kontrol etmek için:
+
+```bash
+python research/eval_g1_liquidation_proxy.py --dir .
+```
+
+İlk çalıştırma olgun G1 olaylarının yalnız 4 saatlik sonuç pencereleri için
+resmî Binance 5 dakikalık USD-M mumlarını indirip
+`research/data/g1_liquidation_5m/` altında önbellekler. Rapor `veri yetersiz`
+diyorsa G1 değiştirilmez; bu beklenen güvenli davranıştır. Buradaki
+`forceOrder` fiyat kümeleri gerçekleşmiş olay proxy'sidir, CoinGlass benzeri
+bekleyen likidasyon haritası değildir.
+
 ## Sınırlar
 
 - Ev interneti/elektrik kesilirse bot da durur (dönünce elle başlat).

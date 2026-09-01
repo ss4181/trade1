@@ -97,6 +97,13 @@ perpetual** sözleşmelerdir. DL1 pair/margin/futures kaldırma duyurularını k
 etmez. Dış borsa “VAR” alanı short önerisi değil, o andaki point-in-time
 bulunabilirlik kaydıdır.
 
+G1 bildirimindeki **Fiyat**, tarama anındaki USD-M perpetual ticker fiyatıdır.
+Koşulu doğuran son kapanmış 1 saatlik mumun kapanışı ayrı bir `Koşul mumu
+kapanışı` satırında, dondurulmuş araştırma girişi ise `Ölçüm girişi` satırında
+gösterilir. Böylece gecikmiş taramada eski mum kapanışı güncel giriş fiyatı gibi
+sunulmaz. Performans hesabı değişmemiştir: sonraki 1 saatlik mum açılışı → +4
+saat kapanış.
+
 `shadow_market_YYYY-MM.jsonl` tüm G1 ilk-10 incelemelerini ve aktif DL1
 snapshot'larını; `shadow_events_YYYY-MM.jsonl` yalnız tetiklenen olayları tutar.
 Dosyalar Git'e/Pages'e gitmez. Durum: `python signal_bot.py --shadow-status`.
@@ -227,6 +234,21 @@ python signal_bot.py --archive-status
 python signal_bot.py --shadow-status
 python signal_bot.py --research-status
 ```
+
+G1 ile gerçekleşmiş likidasyon yoğunluğu/fiyat kümelerini veri sızıntısız
+karşılaştıran manuel keşif testi:
+
+```bash
+python research/eval_g1_liquidation_proxy.py --dir .
+```
+
+Bu test iki proxy ölçer: sinyalden önceki 1 saatte short-likidasyon patlaması
+(`LQ1`) ve önceki 24 saatte koşul fiyatının üstünde gerçekleşmiş short-
+likidasyon fiyat kümesi (`LQ2`). `forceOrder` verisi bekleyen pozisyonların
+gerçek bir likidasyon haritası değildir; yalnız gerçekleşmiş, örneklenmiş
+olaylardır. Sonuçlar en az 90 takvim günü, 30 gerçek likidasyon olay günü ve 30
+olgun G1 olayı olmadan canlı filtreye veya güven oranına dönüştürülmez. Dondurulan
+protokol: `research/PREREG_G1_LIQUIDATION_PROXY.md`.
 
 Bot her pazartesi 06:00 UTC'den (Türkiye 09:00) sonraki ilk turda sahibine
 Telegram'dan haftalık araştırma hazırlık raporu gönderir. Aynı rapor istenen
