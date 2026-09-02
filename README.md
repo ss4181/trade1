@@ -254,6 +254,10 @@ Bot her pazartesi 06:00 UTC'den (Türkiye 09:00) sonraki ilk turda sahibine
 Telegram'dan haftalık araştırma hazırlık raporu gönderir. Aynı rapor istenen
 anda `/arastirma` komutuyla alınabilir. Rapor satır/süre, saat kapsaması, OI,
 funding, long/short ve basis doluluğu ile likidasyon günlerini gösterir.
+Raporun `Kaynak` satırı mesajın Termux/tablet mi yoksa Render/bulut sürecinden
+mi geldiğini gösterir. Otomatik raporu gönderen süreç hiç piyasa arşivi
+görmüyorsa sıfırlı normal rapor yerine açık bir `ARŞİV BULUNAMADI` uyarısı
+gönderilir; manuel `/arastirma` teşhisi çalışmaya devam eder.
 
 Bu döngü modeli her hafta yeniden eğitmez. İlk 90 gün keşif/veri-kalitesi
 dönemidir. Kalite kapısı geçilince OI+funding+long/short+likidasyon adayı ayrıca

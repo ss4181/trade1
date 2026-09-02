@@ -352,6 +352,8 @@ def format_research_readiness(report: dict) -> str:
     return (
         "🧪 <b>HAFTALIK ARAŞTIRMA HAZIRLIK RAPORU</b>\n"
         "<i>Veri birikimi · otomatik eşik değişikliği yok</i>\n\n"
+        f"🖥️ <b>Kaynak:</b> "
+        f"{_html.escape(str(report.get('source_label') or 'belirtilmedi'))}\n"
         f"🧭 <b>Aşama:</b> {phase}\n"
         f"📦 <b>OI arşivi</b>\n"
         f"• {market['rows']} toplam · {market['research_rows']} tam-alanlı satır\n"

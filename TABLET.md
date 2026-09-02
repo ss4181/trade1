@@ -466,6 +466,12 @@ süreyi görürsün. Bot aynı raporu varsayılan olarak her pazartesi 09:00 Tü
 saatinden sonraki ilk taramada otomatik gönderir. Bu haftalık döngü yalnız veri
 sağlığını günceller; strateji eşiklerini otomatik değiştirmez.
 
+Mesajdaki `Kaynak: Termux / tablet` satırı doğru süreci doğrular. `Render /
+bulut` görünürse eski bulut servisinin Telegram tokenını kaldır veya servisi
+kapat. `ARŞİV BULUNAMADI` uyarısı gelirse `.env` düzeltmesi çalışan sürece henüz
+yüklenmemiştir; botu yeniden başlat. Otomatik rapor artık arşiv yokken yanıltıcı
+sıfır tablosu göndermez.
+
 Protokol: ilk 90 gün keşif ve veri-kalitesi, ardından aday kuralın ön-kaydı;
 `RESEARCH_OOS_START_UTC` bu dondurma anında yazılır ve sonraki 90 gün yalnız
 dokunulmamış OOS veri toplanır. 180 günlük döngü tamamlanmadan OI stratejisi

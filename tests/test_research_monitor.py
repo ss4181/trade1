@@ -95,9 +95,11 @@ class ResearchMonitorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             report = monitor.build_research_readiness(
                 tmp, now=datetime(2026, 8, 31, tzinfo=timezone.utc))
+            report["source_label"] = "Termux / tablet"
             message = monitor.format_research_readiness(report)
         self.assertEqual(report["phase"], "NO_DATA")
         self.assertIn("VERI YOK", message)
+        self.assertIn("Kaynak:</b> Termux / tablet", message)
         self.assertNotIn(tmp, message)
 
     def test_legacy_market_rows_are_not_lost(self):

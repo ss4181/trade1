@@ -211,9 +211,25 @@ RESEARCH_WEEKLY_SUMMARY_ENABLED = _env(
     "RESEARCH_WEEKLY_SUMMARY_ENABLED", True, cast=_flag)
 RESEARCH_WEEKLY_WEEKDAY = _env("RESEARCH_WEEKLY_WEEKDAY", 0, cast=int)
 RESEARCH_WEEKLY_HOUR_UTC = _env("RESEARCH_WEEKLY_HOUR_UTC", 6, cast=int)
+RESEARCH_WEEKLY_REQUIRE_DATA = _env(
+    "RESEARCH_WEEKLY_REQUIRE_DATA", True, cast=_flag)
 RESEARCH_DISCOVERY_DAYS = _env("RESEARCH_DISCOVERY_DAYS", 90, cast=int)
 RESEARCH_OOS_DAYS = _env("RESEARCH_OOS_DAYS", 90, cast=int)
 RESEARCH_OOS_START_UTC = _env("RESEARCH_OOS_START_UTC", "").strip()
+
+
+def _default_research_report_source() -> str:
+    """Scheduled raporun hangi çalışma ortamından geldiğini sır sızdırmadan yaz."""
+    if os.getenv("RENDER") or os.getenv("RENDER_SERVICE_NAME"):
+        return "Render / bulut"
+    if (os.getenv("TERMUX_VERSION") or "com.termux" in sys.prefix.lower()
+            or "com.termux" in os.getenv("PREFIX", "").lower()):
+        return "Termux / tablet"
+    return "yerel süreç"
+
+
+RESEARCH_REPORT_SOURCE = _env(
+    "RESEARCH_REPORT_SOURCE", _default_research_report_source()).strip()
 
 # 5dk tarama: sinyaller 1h bar KAPANISINDA dogar — daha sik tarama sinyal
 # setini DEGISTIRMEZ (kenar-tetikleme ayni kosulu tekrar bildirmez); kazanci
@@ -3039,10 +3055,28 @@ FORWARD_OI_REPORT_WORKER_LAST_ERROR: str | None = None
 
 def research_readiness_report() -> dict:
     """Yerel ileri arşivin OI araştırmasına hazır oluşunu ağsız ölç."""
-    return build_research_readiness(
+    report = build_research_readiness(
         ARCHIVE_DIR, discovery_days=RESEARCH_DISCOVERY_DAYS,
         oos_days=RESEARCH_OOS_DAYS,
         oos_start_utc=RESEARCH_OOS_START_UTC or None)
+    # Dizin yolu yayımlanmaz; yalnız güvenli ortam etiketi çoklu süreçleri
+    # (özellikle eski Render kopyası ile Termux) ayırt etmeyi sağlar.
+    report["source_label"] = RESEARCH_REPORT_SOURCE or "tanımsız süreç"
+    return report
+
+
+def _format_missing_research_archive(report: dict) -> str:
+    source = _html.escape(str(report.get("source_label") or "tanımsız süreç"))
+    return (
+        "⚠️ <b>HAFTALIK ARAŞTIRMA ARŞİVİ BULUNAMADI</b>\n"
+        f"🖥️ <b>Kaynak:</b> {source}\n\n"
+        "Bu bot süreci hiçbir <code>market_archive_*.jsonl</code> kaydı "
+        "görmüyor. Sıfırlardan oluşan normal rapor gönderilmedi.\n\n"
+        "Muhtemel neden: süreç, doğru <code>ARCHIVE_DIR</code> yazılmadan önce "
+        "başlatıldı veya arşivi olmayan ikinci bir bulut kopyası aynı Telegram "
+        "tokenını kullanıyor. <code>/arastirma</code> komutundaki Kaynak satırını "
+        "ve çalışan süreçleri kontrol et."
+    )
 
 
 def _saved_research_week() -> str | None:
@@ -3083,7 +3117,11 @@ def _maybe_weekly_research_summary() -> None:
     _last_research_summary_week = slot
     try:
         report = research_readiness_report()
-        if _telegram_send_text(format_research_readiness(report),
+        no_market_data = int(report.get("market", {}).get("rows") or 0) == 0
+        message = (_format_missing_research_archive(report)
+                   if RESEARCH_WEEKLY_REQUIRE_DATA and no_market_data
+                   else format_research_readiness(report))
+        if _telegram_send_text(message,
                                chat_id=TELEGRAM_CHAT_ID):
             _save_research_week(slot)
     except Exception as exc:
@@ -3522,6 +3560,9 @@ def _run_forever_locked(once: bool = False,
           f"({'otomatik evren' if SYMBOL_AUTO else 'statik liste'}), "
           f"{SCAN_INTERVAL_MINUTES}dk aralik "
            f"(telegram={'acik' if ENABLE_TELEGRAM else 'kapali'})", flush=True)
+    print(f"arastirma raporu kaynagi: {RESEARCH_REPORT_SOURCE or 'tanimsiz'} "
+          f"(bos arsiv={'uyari' if RESEARCH_WEEKLY_REQUIRE_DATA else 'rapor'})",
+          flush=True)
     if S2_RESEARCH_PUSH:
         print("S2 arastirma bildirimleri acik (guven DUSUK kalir; genel push "
               "esigi degismez)", flush=True)
