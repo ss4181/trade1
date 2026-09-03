@@ -32,6 +32,9 @@ G1_OI_CHANGE_1H_MIN = 0.02
 G1_LONG_SHORT_MAX = 1.0
 G1_COOLDOWN_HOURS = 24
 G1_HORIZON_HOURS = 4
+S2_DERIV_HORIZON_HOURS = 72
+S2_DERIV_LOOKBACK_HOURS = 8
+S2_DERIV_MAX_AGE_MINUTES = 15
 
 TITLE_RE = re.compile(
     r"^Binance Will Delist (?P<tokens>.+?) on (?P<date>\d{4}-\d{2}-\d{2})$")
@@ -59,6 +62,142 @@ def _float(value) -> float | None:
 def _response_json(response) -> object:
     response.raise_for_status()
     return response.json()
+
+
+def _metric_before(rows: list, cutoff_ms: int, field: str,
+                   max_age_minutes: int = S2_DERIV_MAX_AGE_MINUTES
+                   ) -> tuple[float | None, int | None]:
+    """Kesme anından kesinlikle önceki, yeterince taze metrics değerini al."""
+    usable = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            stamp = int(row.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            continue
+        value = _float(row.get(field))
+        if 0 < stamp < cutoff_ms and value is not None:
+            usable.append((stamp, value))
+    if not usable:
+        return None, None
+    stamp, value = max(usable)
+    if cutoff_ms - stamp > max_age_minutes * 60_000:
+        return None, None
+    return value, stamp
+
+
+def evaluate_s2_derivatives_snapshot(
+        oi_rows: list, top_position_rows: list, global_ls_rows: list,
+        funding_rows: list[dict], event_ms: int) -> dict:
+    """S2-DERIV-v2 özelliklerini geleceğe bakmadan hesapla."""
+    lag_ms = event_ms - S2_DERIV_LOOKBACK_HOURS * 3_600_000
+    oi_now, oi_at = _metric_before(oi_rows, event_ms, "sumOpenInterest")
+    oi_lag, oi_lag_at = _metric_before(
+        oi_rows, lag_ms, "sumOpenInterest")
+    global_now, global_at = _metric_before(
+        global_ls_rows, event_ms, "longShortRatio")
+    global_lag, global_lag_at = _metric_before(
+        global_ls_rows, lag_ms, "longShortRatio")
+    top_position, top_position_at = _metric_before(
+        top_position_rows, event_ms, "longShortRatio")
+
+    oi_change = (oi_now / oi_lag - 1
+                 if oi_now is not None and oi_lag not in (None, 0) else None)
+    global_change = (global_now / global_lag - 1
+                     if global_now is not None and global_lag not in (None, 0)
+                     else None)
+    ordered_funding = sorted(
+        [row for row in funding_rows if isinstance(row, dict)
+         and _float(row.get("rate")) is not None
+         and int(row.get("time") or 0) <= event_ms],
+        key=lambda row: int(row.get("time") or 0))
+    previous_rate = (_float(ordered_funding[-2].get("rate"))
+                     if len(ordered_funding) >= 2 else None)
+    current_rate = (_float(ordered_funding[-1].get("rate"))
+                    if ordered_funding else None)
+    funding_delta = (current_rate - previous_rate
+                     if current_rate is not None and previous_rate is not None
+                     else None)
+    oi_complete = oi_change is not None and top_position is not None
+    divergence_complete = funding_delta is not None and global_change is not None
+    return {
+        "event_time_ms": event_ms,
+        "oi": oi_now, "oi_at": oi_at,
+        "oi_lag8h": oi_lag, "oi_lag8h_at": oi_lag_at,
+        "oi_change_8h": oi_change,
+        "top_position_ls_ratio": top_position,
+        "top_position_ls_at": top_position_at,
+        "global_ls_ratio": global_now, "global_ls_at": global_at,
+        "global_ls_lag8h": global_lag,
+        "global_ls_lag8h_at": global_lag_at,
+        "global_ls_change_8h": global_change,
+        "funding_rate": current_rate, "funding_previous": previous_rate,
+        "funding_delta": funding_delta,
+        "oi_short_build_complete": oi_complete,
+        "oi_short_build_candidate": (
+            bool(oi_change > 0 and top_position < 1.0)
+            if oi_complete else None),
+        "funding_ls_divergence_complete": divergence_complete,
+        "funding_ls_divergence_candidate": (
+            bool(funding_delta < 0 and global_change > 0)
+            if divergence_complete else None),
+    }
+
+
+def capture_s2_derivatives_shadow(
+        futures_get: Callable, symbol: str, contract: str,
+        funding_rows: list[dict], archive_dir: Path,
+        now: datetime | None = None) -> dict:
+    """Bir S2 olayını sessizce arşivler; hiçbir bildirim veya emir üretmez."""
+    now = now or _utc_now()
+    event_ms = int(funding_rows[-1]["time"])
+    errors = []
+
+    def fetch(path: str, params: dict) -> list:
+        try:
+            payload = _response_json(futures_get(path, params))
+            return payload if isinstance(payload, list) else []
+        except Exception as exc:  # ana S2 akışını bozma; eksikliği kaydet
+            errors.append(f"{path.rsplit('/', 1)[-1]}:{type(exc).__name__}")
+            return []
+
+    # S2, funding zamanından birkaç saat sonra taranabilir. "Son N kayıt"
+    # istemek event-8h gözlemini kaçırabileceği için her sorguyu olay zamanına
+    # sabitliyoruz; böylece ileri veri sızıntısı da API seviyesinde engellenir.
+    history_start = (event_ms - S2_DERIV_LOOKBACK_HOURS * 3_600_000
+                     - S2_DERIV_MAX_AGE_MINUTES * 60_000)
+    history_end = event_ms - 1
+    common = {"symbol": contract, "period": "5m",
+              "startTime": history_start, "endTime": history_end}
+    oi_rows = fetch("/futures/data/openInterestHist",
+                    {**common, "limit": 110})
+    global_rows = fetch("/futures/data/globalLongShortAccountRatio",
+                        {**common, "limit": 110})
+    top_rows = fetch("/futures/data/topLongShortPositionRatio",
+                     {"symbol": contract, "period": "5m", "limit": 4,
+                      "startTime": (event_ms
+                                    - S2_DERIV_MAX_AGE_MINUTES * 60_000),
+                      "endTime": history_end})
+    features = evaluate_s2_derivatives_snapshot(
+        oi_rows, top_rows, global_rows, funding_rows, event_ms)
+    event_time = datetime.fromtimestamp(event_ms / 1000, tz=timezone.utc)
+    row = {
+        "schema_version": "s2-derivatives-shadow-v1",
+        "kind": "S2_DERIV_SHADOW", "strategy": "S2",
+        "source": "binance_usdm_point_in_time",
+        "recorded_at": _iso(now), "bar_time": _iso(event_time),
+        "event_id": f"S2-DERIV|{symbol}|{event_ms}",
+        "symbol": symbol, "contract": contract, "direction": "LONG",
+        "universe": "core30", "performance_market": "um_perp",
+        "horizon_hours": S2_DERIV_HORIZON_HOURS,
+        "experimental": True, "push_allowed": False,
+        "config_version": "S2-DERIV-v2-forward-shadow",
+        "unavailable_reason": ",".join(errors) if errors else None,
+        **features,
+    }
+    append_jsonl(archive_dir, "shadow_events", [row], now)
+    return row
 
 
 def empty_state() -> dict:
@@ -545,6 +684,10 @@ def poll_dl1(http_get: Callable, spot_get: Callable, state_path: Path,
 def summarize_archive(archive_dir: Path) -> dict:
     result = {"schema_version": STATE_SCHEMA_VERSION, "files": [],
               "rows": 0, "g1_events": 0, "dl1_events": 0,
+              "s2_derivatives_events": 0,
+              "s2_oi_short_build_complete": 0,
+              "s2_oi_short_build_candidates": 0,
+              "s2_funding_ls_divergence_candidates": 0,
               "first_at": None, "last_at": None}
     stamps = []
     for path in sorted(archive_dir.glob("shadow_*.jsonl")):
@@ -558,6 +701,14 @@ def summarize_archive(archive_dir: Path) -> dict:
             kind = str(row.get("kind") or "")
             result["g1_events"] += int(kind == "G1_EVENT")
             result["dl1_events"] += int(kind == "DL1_EVENT")
+            if kind == "S2_DERIV_SHADOW":
+                result["s2_derivatives_events"] += 1
+                result["s2_oi_short_build_complete"] += int(
+                    row.get("oi_short_build_complete") is True)
+                result["s2_oi_short_build_candidates"] += int(
+                    row.get("oi_short_build_candidate") is True)
+                result["s2_funding_ls_divergence_candidates"] += int(
+                    row.get("funding_ls_divergence_candidate") is True)
             stamp = row.get("recorded_at") or row.get("observed_at")
             if stamp:
                 stamps.append(str(stamp))

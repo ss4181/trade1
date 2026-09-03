@@ -1,0 +1,64 @@
+{
+  "study_id": "S2-LS-v1",
+  "phase": "train",
+  "prereg_sha256": "6cd38e94cbddd39db30f7f8155e0c8a03dbb01bd71e2283a9f114eb6461c0706",
+  "event_rows_before_price_filter": 228,
+  "metric_coverage": 0.9736842105263158,
+  "summaries": {
+    "all_s2": {
+      "n": 228,
+      "days": 175,
+      "symbols": 16,
+      "mean_net_pct": 1.5394445605492069,
+      "median_net_pct": 0.662295833734621,
+      "win_rate": 0.5350877192982456,
+      "q10_net_pct": -9.667474942150886,
+      "q90_net_pct": 13.011628677923511,
+      "top5_share": 0.706140350877193
+    },
+    "matched_s2": {
+      "n": 222,
+      "days": 172,
+      "symbols": 16,
+      "mean_net_pct": 1.7023155920036692,
+      "median_net_pct": 0.8645263127917961,
+      "win_rate": 0.545045045045045,
+      "q10_net_pct": -9.240641549091398,
+      "q90_net_pct": 12.881302804255407,
+      "top5_share": 0.7117117117117117
+    },
+    "ls_below_1": {
+      "n": 13,
+      "days": 13,
+      "symbols": 6,
+      "mean_net_pct": 2.6663252555361794,
+      "median_net_pct": 0.0605054641730019,
+      "win_rate": 0.5384615384615384,
+      "q10_net_pct": -9.149141899496106,
+      "q90_net_pct": 12.85922756821421,
+      "top5_share": 0.9230769230769231
+    },
+    "ls_at_least_1": {
+      "n": 209,
+      "days": 161,
+      "symbols": 16,
+      "mean_net_pct": 1.6423532684346613,
+      "median_net_pct": 0.8812002584052226,
+      "win_rate": 0.5454545454545454,
+      "q10_net_pct": -9.170080954076731,
+      "q90_net_pct": 12.786769904331388,
+      "top5_share": 0.7081339712918661
+    }
+  },
+  "mean_uplift_pct_vs_ls_at_least_1": 1.023971987101518,
+  "clustered_one_sided_pvalue": 0.35652869426114775,
+  "gate_passed": false,
+  "gate_failures": [
+    "filtreli N=13 < 50",
+    "bağımsız gün=13 < 30",
+    "sembol=6 < 8",
+    "top-5 sembol payı %70 üzerinde",
+    "gün-kümeli uplift p-değeri 0.10 üzerinde",
+    "filtreli medyan LS>=1 medyanından yüksek değil"
+  ]
+}

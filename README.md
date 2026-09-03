@@ -112,6 +112,32 @@ Kapatma: `SHADOW_EXPERIMENTS_ENABLED=false`; yalnız bildirimi susturma:
 [`PREREG_GAINER_SHORT_CROWD.md`](research/PREREG_GAINER_SHORT_CROWD.md) ve
 [`PREREG_DELIST_EVENT.md`](research/PREREG_DELIST_EVENT.md).
 
+### S2 türev ileri-test gölgesi
+
+S2 için iki türev hipotez tarihsel train bölümünde ön-kayıtlı olarak ölçüldü:
+
+- **OI-short build:** mevcut S2 + son 8 saatte OI artışı + top-trader pozisyon
+  long/short oranı `<1`.
+- **Funding-L/S uyumsuzluğu:** funding daha negatife giderken global hesap
+  long/short oranının son 8 saatte artması.
+
+İlk aday olumlu görünse de bağımsızlık/anlamlılık kapısını geçmedi (N=62,
+57 gün, net medyan +%1,878; gün-kümeli p=0,2563 ve ilk 5 sembol yoğunluğu
+%85,5). İkinci aday mevcut S2'yi iyileştirmedi. Bu nedenle ikisi de **canlı
+strateji veya güven oranı değildir**. Bot yalnız gerçek bir S2 olayı olduğunda
+özellikleri point-in-time olarak `shadow_events_YYYY-MM.jsonl` içine kaydeder;
+Telegram/email/emir üretmez ve S2'nin eşiğini, cooldown'unu veya push kararını
+değiştirmez. `S2_DERIVATIVES_SHADOW_ENABLED=false` ile kapatılabilir.
+
+Top-trader pozisyon oranının güncel Binance ucu API anahtarı istediğinden,
+`.env` içindeki `BINANCE_MARKET_DATA_API_KEY` alanına yalnız market-data/okuma
+yetkili; işlem ve para çekme yetkileri kapalı bir anahtar girilmelidir. Anahtar
+yoksa global L/S uyumsuzluğu kaydı sürer fakat OI-short adayı “eksik” kalır.
+Haftalık `/arastirma` raporu olay, tam kayıt ve aday sayılarını ayrıca gösterir.
+Araştırma ayrıntıları:
+[`S2_DERIVATIVES_V2_REPORT.md`](research/S2_DERIVATIVES_V2_REPORT.md) ve
+[`PREREG_S2_DERIVATIVES_V2.md`](research/PREREG_S2_DERIVATIVES_V2.md).
+
 Yeni bağımsız strateji adayı olarak sabit kurallı long-only VWAP mean-reversion
 (`S7`) sınandı. Çekirdek-30 train'de N=251, net ortalama −%0.219, isabet %51.8
 ve gün-kümeli p=0.8803 çıktığı için önceden kayıtlı kapıda elendi; test dilimine

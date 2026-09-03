@@ -61,6 +61,7 @@ from derivatives_archive import (
     summarize_archive as summarize_derivatives_archive,
 )
 from shadow_experiments import (
+    capture_s2_derivatives_shadow,
     poll_dl1 as poll_shadow_delists,
     scan_g1 as scan_shadow_gainers,
     summarize_archive as summarize_shadow_archive,
@@ -202,6 +203,8 @@ SHADOW_MAX_PUSH_PER_RUN = _env("SHADOW_MAX_PUSH_PER_RUN", 20, cast=int)
 SHADOW_DELIST_POLL_MINUTES = _env(
     "SHADOW_DELIST_POLL_MINUTES", 30, cast=int)
 SHADOW_STRATEGIES = {"G1", "DL1"}
+S2_DERIVATIVES_SHADOW_ENABLED = _env(
+    "S2_DERIVATIVES_SHADOW_ENABLED", True, cast=_flag)
 
 # Haftalık döngü yalnız arşiv kalitesini/örnek hazırlığını raporlar. Strateji
 # eşiklerini otomatik optimize ETMEZ: 90 gün keşif sonunda kural ayrıca ön
@@ -310,6 +313,8 @@ CONFLUENCE_LOOKBACK_HOURS = _env("CONFLUENCE_LOOKBACK_HOURS", 24)
 SPOT_HOSTS = ["https://api.binance.com", "https://data-api.binance.vision"]
 _spot_host_idx = 0
 FUT_API = "https://fapi.binance.com"   # fapi'nin aynasi yok (S2 + evren bagimli)
+BINANCE_MARKET_DATA_API_KEY = _env(
+    "BINANCE_MARKET_DATA_API_KEY", "").strip()
 _HOST_SWITCH_CODES = (403, 418, 451)
 _TRANSIENT_CODES = (429, 500, 502, 503, 504)
 SPOT_MAX_RETRIES = _env("SPOT_MAX_RETRIES", 4)
@@ -416,7 +421,8 @@ def _spot_get(path: str, params: dict | None = None) -> requests.Response:
     raise last_exc  # type: ignore[misc]
 
 
-def _futures_get(path: str, params: dict | None = None) -> requests.Response:
+def _futures_get(path: str, params: dict | None = None, *,
+                 market_data_key: bool = False) -> requests.Response:
     """USD-M GET; 429 kapisini tum futures cagrilari arasinda paylastirir."""
     global _futures_blocked_until
     retries = max(1, int(FUTURES_MAX_RETRIES))
@@ -424,7 +430,11 @@ def _futures_get(path: str, params: dict | None = None) -> requests.Response:
     for attempt in range(retries):
         _wait_for_market_gate("futures")
         try:
-            r = requests.get(FUT_API + path, params=params, timeout=30)
+            kwargs = {"params": params, "timeout": 30}
+            if market_data_key and BINANCE_MARKET_DATA_API_KEY:
+                kwargs["headers"] = {
+                    "X-MBX-APIKEY": BINANCE_MARKET_DATA_API_KEY}
+            r = requests.get(FUT_API + path, **kwargs)
             r.raise_for_status()
             return r
         except requests.RequestException as e:
@@ -1702,6 +1712,24 @@ def scan_symbol(symbol: str, state: ScanState,
                             if contract != symbol else "")),
                 "horizon_hours": 72,
             })
+            if not snapshot and S2_DERIVATIVES_SHADOW_ENABLED:
+                try:
+                    def s2_shadow_get(path, params):
+                        needs_key = path.endswith(
+                            "/topLongShortPositionRatio")
+                        if needs_key and not BINANCE_MARKET_DATA_API_KEY:
+                            raise RuntimeError(
+                                "market-data API key yapilandirilmamis")
+                        return _futures_get(
+                            path, params, market_data_key=needs_key)
+
+                    capture_s2_derivatives_shadow(
+                        s2_shadow_get, symbol, contract, fr, ARCHIVE_DIR)
+                except Exception as e:
+                    # Gölge araştırma asla canlı S2 olayını düşürmemeli.
+                    print("uyari: S2 turev golge kaydi basarisiz: "
+                          f"{type(e).__name__}: {_redact(str(e))}",
+                          file=sys.stderr, flush=True)
 
     if signals:
         sigma = realized_sigma1h(closes)
@@ -3570,6 +3598,11 @@ def _run_forever_locked(once: bool = False,
         print("golge deneyler acik: G1 tum aktif USD-M + DL1 resmi tam-token "
               f"delist (push={'acik' if SHADOW_PUSH_ENABLED else 'sessiz'})",
               flush=True)
+    if S2_DERIVATIVES_SHADOW_ENABLED:
+        print("S2 turev golgesi acik: yalniz yerel veri, bildirim/emir yok "
+              f"(top-position anahtari="
+              f"{'hazir' if BINANCE_MARKET_DATA_API_KEY else 'eksik'})",
+              flush=True)
     if not ENABLE_TELEGRAM:
         if not _ENV_FOUND:
             print(f"NOT: Telegram KAPALI cunku .env bulunamadi.\n"
@@ -4607,6 +4640,9 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "market_regime": market_regime_snapshot(),
             "shadow_experiments_enabled": SHADOW_EXPERIMENTS_ENABLED,
             "shadow_push_enabled": SHADOW_PUSH_ENABLED,
+            "s2_derivatives_shadow_enabled": S2_DERIVATIVES_SHADOW_ENABLED,
+            "top_position_market_data_key_configured": bool(
+                BINANCE_MARKET_DATA_API_KEY),
             "shadow_worker_active": SHADOW_WORKER_ACTIVE,
             "shadow_worker_last_error": SHADOW_WORKER_LAST_ERROR,
             # bildirim kanali sagligi: sinyal uretilse de gonderim

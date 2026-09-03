@@ -71,6 +71,101 @@ class ShadowExperimentTests(unittest.TestCase):
             int(self.now.timestamp() * 1000))
         self.assertFalse(failed["condition"])
 
+    def test_s2_derivatives_shadow_is_causal_and_silent(self):
+        event = datetime(2026, 9, 1, 16, tzinfo=timezone.utc)
+        event_ms = int(event.timestamp() * 1000)
+        lag_ms = event_ms - 8 * 3_600_000
+        oi = [
+            {"timestamp": lag_ms - 300_000, "sumOpenInterest": "100"},
+            {"timestamp": lag_ms, "sumOpenInterest": "999"},
+            {"timestamp": event_ms - 300_000, "sumOpenInterest": "120"},
+            {"timestamp": event_ms, "sumOpenInterest": "999"},
+        ]
+        global_ls = [
+            {"timestamp": lag_ms - 300_000, "longShortRatio": "0.80"},
+            {"timestamp": event_ms - 300_000, "longShortRatio": "0.90"},
+        ]
+        top = [{"timestamp": event_ms - 300_000,
+                "longShortRatio": "0.70"}]
+        funding = [
+            {"time": lag_ms, "rate": -0.0003},
+            {"time": event_ms, "rate": -0.0004},
+        ]
+        result = shadow.evaluate_s2_derivatives_snapshot(
+            oi, top, global_ls, funding, event_ms)
+        self.assertAlmostEqual(result["oi_change_8h"], .2)
+        self.assertAlmostEqual(result["global_ls_change_8h"], .125)
+        self.assertTrue(result["oi_short_build_candidate"])
+        self.assertTrue(result["funding_ls_divergence_candidate"])
+
+        requested = {}
+
+        def futures_get(path, params=None):
+            requested[path] = dict(params or {})
+            if path.endswith("openInterestHist"):
+                return Response(oi)
+            if path.endswith("globalLongShortAccountRatio"):
+                return Response(global_ls)
+            if path.endswith("topLongShortPositionRatio"):
+                return Response(top)
+            raise AssertionError(path)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            row = shadow.capture_s2_derivatives_shadow(
+                futures_get, "AAAUSDT", "AAAUSDT", funding, Path(tmp),
+                now=event + timedelta(minutes=4))
+            lines = list(Path(tmp).glob("shadow_events_*.jsonl"))
+            self.assertEqual(len(lines), 1)
+            saved = json.loads(lines[0].read_text(encoding="utf-8"))
+        self.assertEqual(row["push_allowed"], False)
+        self.assertEqual(saved["kind"], "S2_DERIV_SHADOW")
+        self.assertEqual(saved["event_id"], f"S2-DERIV|AAAUSDT|{event_ms}")
+        for params in requested.values():
+            self.assertLess(params["endTime"], event_ms)
+        self.assertLessEqual(
+            requested["/futures/data/openInterestHist"]["startTime"],
+            lag_ms - 300_000)
+
+    def test_s2_derivatives_missing_top_position_is_recorded_not_raised(self):
+        event = datetime(2026, 9, 1, 16, tzinfo=timezone.utc)
+        event_ms = int(event.timestamp() * 1000)
+        lag_ms = event_ms - 8 * 3_600_000
+        oi = [
+            {"timestamp": lag_ms - 300_000, "sumOpenInterest": "100"},
+            {"timestamp": event_ms - 300_000, "sumOpenInterest": "120"},
+        ]
+        global_ls = [
+            {"timestamp": lag_ms - 300_000, "longShortRatio": "0.80"},
+            {"timestamp": event_ms - 300_000, "longShortRatio": "0.90"},
+        ]
+        funding = [
+            {"time": lag_ms, "rate": -0.0003},
+            {"time": event_ms, "rate": -0.0004},
+        ]
+
+        def futures_get(path, params=None):
+            if path.endswith("openInterestHist"):
+                return Response(oi)
+            if path.endswith("globalLongShortAccountRatio"):
+                return Response(global_ls)
+            if path.endswith("topLongShortPositionRatio"):
+                return Response({}, status=401)
+            raise AssertionError(path)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            row = shadow.capture_s2_derivatives_shadow(
+                futures_get, "AAAUSDT", "AAAUSDT", funding, Path(tmp),
+                now=event + timedelta(minutes=4))
+            summary = shadow.summarize_archive(Path(tmp))
+        self.assertFalse(row["oi_short_build_complete"])
+        self.assertIsNone(row["oi_short_build_candidate"])
+        self.assertTrue(row["funding_ls_divergence_complete"])
+        self.assertIn("topLongShortPositionRatio:RuntimeError",
+                      row["unavailable_reason"])
+        self.assertEqual(summary["s2_derivatives_events"], 1)
+        self.assertEqual(summary["s2_oi_short_build_complete"], 0)
+        self.assertEqual(summary["s2_funding_ls_divergence_candidates"], 1)
+
     def test_g1_same_closed_hour_is_deduplicated(self):
         calls = []
 

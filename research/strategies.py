@@ -8,7 +8,10 @@ import numpy as np
 import pandas as pd
 from numpy.lib.stride_tricks import sliding_window_view
 
-from common import edge_trigger
+try:  # Paket olarak test edildiğinde ve script olarak çalıştırıldığında uyumlu.
+    from .common import edge_trigger
+except ImportError:  # pragma: no cover - doğrudan script çalıştırma yolu
+    from common import edge_trigger
 
 
 def wilder_rsi(close: pd.Series, period: int = 14) -> pd.Series:

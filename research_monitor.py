@@ -184,7 +184,8 @@ def build_research_readiness(
             liq_first = stamp if liq_first is None else min(liq_first, stamp)
             liq_last = stamp if liq_last is None else max(liq_last, stamp)
 
-    g1_events = dl1_events = 0
+    g1_events = dl1_events = s2_derivatives_events = 0
+    s2_oi_complete = s2_oi_candidates = s2_divergence_candidates = 0
     event_days: set[str] = set()
     for row in _jsonl(root.glob("shadow_events_*.jsonl")):
         if row is None:
@@ -193,6 +194,13 @@ def build_research_readiness(
         kind = str(row.get("kind") or "")
         g1_events += int(kind == "G1_EVENT")
         dl1_events += int(kind == "DL1_EVENT")
+        if kind == "S2_DERIV_SHADOW":
+            s2_derivatives_events += 1
+            s2_oi_complete += int(row.get("oi_short_build_complete") is True)
+            s2_oi_candidates += int(
+                row.get("oi_short_build_candidate") is True)
+            s2_divergence_candidates += int(
+                row.get("funding_ls_divergence_candidate") is True)
         stamp = _parse_time(row.get("recorded_at") or row.get("bar_time"))
         if stamp:
             event_days.add(stamp.date().isoformat())
@@ -300,6 +308,10 @@ def build_research_readiness(
         },
         "shadow": {
             "g1_events": g1_events, "dl1_events": dl1_events,
+            "s2_derivatives_events": s2_derivatives_events,
+            "s2_oi_short_build_complete": s2_oi_complete,
+            "s2_oi_short_build_candidates": s2_oi_candidates,
+            "s2_funding_ls_divergence_candidates": s2_divergence_candidates,
             "independent_event_days": len(event_days),
         },
         "malformed_rows": malformed,
@@ -371,6 +383,12 @@ def format_research_readiness(report: dict) -> str:
         "🔬 <b>Gölge olaylar</b>\n"
         f"• G1={shadow['g1_events']} · DL1={shadow['dl1_events']} · "
         f"bağımsız gün={shadow['independent_event_days']}\n\n"
+        "🧲 <b>S2 türev gölgesi</b>\n"
+        f"• Olay={shadow.get('s2_derivatives_events', 0)} · "
+        f"OI tam={shadow.get('s2_oi_short_build_complete', 0)}\n"
+        f"• OI-short adayı={shadow.get('s2_oi_short_build_candidates', 0)} · "
+        f"Funding-LS uyumsuzluğu="
+        f"{shadow.get('s2_funding_ls_divergence_candidates', 0)}\n\n"
         "✅ <b>Kalite kapıları</b>\n"
         f"{check_text}\n\n"
         f"⏭️ <b>Sonraki kontrol:</b> "

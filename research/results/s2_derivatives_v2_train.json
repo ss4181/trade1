@@ -1,0 +1,170 @@
+{
+  "study_id": "S2-DERIV-v2",
+  "phase": "train",
+  "prereg_sha256": "b2c3908f6ab6e99691d1b6938cff6c1f5ee2c89c99b620a07610ba98cc0f28fc",
+  "s2_rows": 228,
+  "evaluations": {
+    "OI_SHORT_BUILD": {
+      "candidate": "OI_SHORT_BUILD",
+      "coverage": 0.956140350877193,
+      "retention": 0.28440366972477066,
+      "filtered": {
+        "n": 62,
+        "days": 57,
+        "symbols": 9,
+        "mean_net_pct": 2.644439078953518,
+        "median_net_pct": 1.8775937155280256,
+        "win_rate": 0.6129032258064516,
+        "q10_net_pct": -7.617135822676069,
+        "q90_net_pct": 12.881302804255405,
+        "top5_share": 0.8548387096774194,
+        "top_symbols": [
+          {
+            "symbol": "SEIUSDT",
+            "n": 19
+          },
+          {
+            "symbol": "TIAUSDT",
+            "n": 14
+          },
+          {
+            "symbol": "TRXUSDT",
+            "n": 11
+          },
+          {
+            "symbol": "XLMUSDT",
+            "n": 5
+          },
+          {
+            "symbol": "ATOMUSDT",
+            "n": 4
+          }
+        ]
+      },
+      "rejected": {
+        "n": 156,
+        "days": 128,
+        "symbols": 16,
+        "mean_net_pct": 1.784476274900992,
+        "median_net_pct": 0.45256618234877316,
+        "win_rate": 0.532051282051282,
+        "q10_net_pct": -9.10814019369195,
+        "q90_net_pct": 12.965811252351969,
+        "top5_share": 0.7051282051282052,
+        "top_symbols": [
+          {
+            "symbol": "SEIUSDT",
+            "n": 39
+          },
+          {
+            "symbol": "TIAUSDT",
+            "n": 31
+          },
+          {
+            "symbol": "BCHUSDT",
+            "n": 16
+          },
+          {
+            "symbol": "APTUSDT",
+            "n": 12
+          },
+          {
+            "symbol": "ATOMUSDT",
+            "n": 12
+          }
+        ]
+      },
+      "mean_uplift_pct": 0.8599628040525262,
+      "clustered_one_sided_pvalue": 0.2563487302539492,
+      "gate_passed": false,
+      "gate_failures": [
+        "top-5 sembol payı %70 üzerinde",
+        "gün-kümeli p>0.025"
+      ]
+    },
+    "FUNDING_LS_DIVERGENCE": {
+      "candidate": "FUNDING_LS_DIVERGENCE",
+      "coverage": 0.956140350877193,
+      "retention": 0.25229357798165136,
+      "filtered": {
+        "n": 55,
+        "days": 51,
+        "symbols": 11,
+        "mean_net_pct": 1.4913294000900208,
+        "median_net_pct": 0.1133160075260797,
+        "win_rate": 0.509090909090909,
+        "q10_net_pct": -9.091560323730352,
+        "q90_net_pct": 18.064186757273877,
+        "top5_share": 0.7454545454545455,
+        "top_symbols": [
+          {
+            "symbol": "SEIUSDT",
+            "n": 13
+          },
+          {
+            "symbol": "TIAUSDT",
+            "n": 12
+          },
+          {
+            "symbol": "BCHUSDT",
+            "n": 6
+          },
+          {
+            "symbol": "TRXUSDT",
+            "n": 6
+          },
+          {
+            "symbol": "APTUSDT",
+            "n": 4
+          }
+        ]
+      },
+      "rejected": {
+        "n": 163,
+        "days": 131,
+        "symbols": 15,
+        "mean_net_pct": 2.2104932808265136,
+        "median_net_pct": 1.3802255314487968,
+        "win_rate": 0.5705521472392638,
+        "q10_net_pct": -8.047023987194642,
+        "q90_net_pct": 12.679582345037911,
+        "top5_share": 0.7116564417177914,
+        "top_symbols": [
+          {
+            "symbol": "SEIUSDT",
+            "n": 45
+          },
+          {
+            "symbol": "TIAUSDT",
+            "n": 33
+          },
+          {
+            "symbol": "TRXUSDT",
+            "n": 14
+          },
+          {
+            "symbol": "ATOMUSDT",
+            "n": 12
+          },
+          {
+            "symbol": "BCHUSDT",
+            "n": 12
+          }
+        ]
+      },
+      "mean_uplift_pct": -0.7191638807364928,
+      "clustered_one_sided_pvalue": 0.6880623875224955,
+      "gate_passed": false,
+      "gate_failures": [
+        "isabet %52 altında",
+        "top-5 sembol payı %70 üzerinde",
+        "gün-kümeli p>0.025",
+        "ortalama uplift pozitif değil",
+        "medyan uplift pozitif değil",
+        "ortalama uplift +0.50 puanın altında"
+      ]
+    }
+  },
+  "selected_candidate": null,
+  "live_integration_allowed": false
+}

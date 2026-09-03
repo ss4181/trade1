@@ -865,6 +865,46 @@ Birleşik keşif saati, tam market alanlarının başlangıcı ile onarılmış 
 gerçek force-order olayının daha geç olanından itibaren 90 gün sayılır; dolayısıyla
 önceki `2026-11-04` tahmini artık birleşik strateji için geçerli değildir.
 
+## Ek V — S2 + global hesap long/short filtresi (2026-09-02): RED
+
+Kullanıcının “funding negatifken short hesaplar çoğunluktaysa yükseliş ihtimali
+artar” hipotezi, sonuca bakılmadan `PREREG_S2_LONG_SHORT_FILTER.md` içinde
+donduruldu. Mevcut S2 (`<=−%0.03`, persistence=2, 24h cooldown), çekirdek-30 ve
+train/test sınırı değişmedi. Resmî USD-M daily metrics
+`count_long_short_ratio` değeri olay zamanından kesinlikle önceki 5m kayıttan
+alındı; 72h perp getirisi ve 12bp round-trip maliyet kullanıldı.
+
+Train'de 228 S2 olayının %97,4'ü oranla eşleşti. `LS<1` yalnız **13 olay / 13
+gün / 6 sembol** üretti: net ortalama +%2,666, medyan +%0,061, isabet %53,8.
+`LS>=1` grubu N=209, ortalama +%1,642, medyan +%0,881, isabet %54,5 oldu.
+Ortalama fark pozitif görünse de gün-kümeli p=0,3565; medyan daha kötü ve
+filtreli olayların %92,3'ü ilk beş sembolde. Ön-kayıtlı train kapısı altı
+nedenle geçmedi; dokunulmamış 2026H1 test açılmadı. **Canlı S2 mantığı ve
+bildirimleri değiştirilmedi.** Tam tablo ve yorum `S2_LONG_SHORT_REPORT.md`.
+
+## Ek W — S2 OI/pozisyon ve funding–LS uyumsuzluğu (2026-09-03): RED
+
+İlk LS<1 testinden sonra iki yeni mekanizma sonuçtan önce
+`PREREG_S2_DERIVATIVES_V2.md` içinde donduruldu. `OI_SHORT_BUILD`, 8h OI artışı
+ve büyük yatırımcı pozisyon oranı<1 koşulunu; `FUNDING_LS_DIVERGENCE`, funding
+daha negatife giderken 8h global hesap oranının yükselmesini sınadı. İki aday
+için train p-kapısı Bonferroni ile 0,025'ti.
+
+OI adayı N=62, medyan +%1,878, isabet %61,3 ve karşı gruba +0,860 puan ortalama
+fark gösterdi; ancak gün-kümeli p=0,2563 ve top-5 sembol payı %85,5 oldu.
+Funding–LS uyumsuzluğu N=55, isabet %50,9, uplift −0,719 puan ve p=0,6881 ile
+doğrudan başarısızdı. İki aday da train kapısını geçmedi; test açılmadı ve
+canlı S2 değiştirilmedi. Ayrıntılar `S2_DERIVATIVES_V2_REPORT.md` dosyasında.
+
+Kullanıcı onayıyla yalnız **ileri gölge izleme** başlatıldı. Gerçek bir S2 olayı
+oluştuğunda 8 saatlik OI değişimi, top-trader pozisyon L/S oranı, global hesap
+L/S değişimi ve funding değişimi point-in-time olarak
+`shadow_events_YYYY-MM.jsonl` dosyasına yazılır. Kayıt `push_allowed=false`
+taşır; Telegram/email/emir üretmez, canlı S2 eşiği/cooldown'u/güven etiketi
+değişmez. Haftalık `/arastirma` yalnız olay, eksiksiz kayıt ve aday sayılarını
+raporlar. Bu ileri örnekler yeterli bağımsız gün/sembol ve dondurulmuş OOS
+kapısı oluşmadan canlı karara dönüştürülmeyecektir.
+
 ## 10. İzleme önerileri (bir sonraki değerlendirme için)
 
 1. ~~`signals.log`'a düşen her sinyal için gerçekleşen getiriyi loglayan takip

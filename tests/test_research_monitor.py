@@ -45,9 +45,13 @@ class ResearchMonitorTests(unittest.TestCase):
                     "received_at_utc": stamp.isoformat(),
                 }) + "\n")
         shadow = root / "shadow_events_2026-01.jsonl"
-        shadow.write_text(json.dumps({
-            "kind": "G1_EVENT", "recorded_at": start.isoformat(),
-        }) + "\n", encoding="utf-8")
+        shadow.write_text("\n".join(json.dumps(row) for row in [
+            {"kind": "G1_EVENT", "recorded_at": start.isoformat()},
+            {"kind": "S2_DERIV_SHADOW", "recorded_at": start.isoformat(),
+             "oi_short_build_complete": True,
+             "oi_short_build_candidate": True,
+             "funding_ls_divergence_candidate": False},
+        ]) + "\n", encoding="utf-8")
         return start, now
 
     def test_90_day_quality_gate_becomes_interim_review(self):
@@ -61,6 +65,9 @@ class ResearchMonitorTests(unittest.TestCase):
         self.assertEqual(report["liquidations"]["observed_days"], 30)
         self.assertEqual(report["liquidations"]["event_days"], 30)
         self.assertEqual(report["shadow"]["g1_events"], 1)
+        self.assertEqual(report["shadow"]["s2_derivatives_events"], 1)
+        self.assertEqual(report["shadow"]["s2_oi_short_build_complete"], 1)
+        self.assertEqual(report["shadow"]["s2_oi_short_build_candidates"], 1)
 
     def test_missing_required_field_blocks_freeze(self):
         with tempfile.TemporaryDirectory() as tmp:

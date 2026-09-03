@@ -433,6 +433,22 @@ Bot üç bağımsız arşiv ailesi tutar:
    aktif USD-M evrenindeki ilk-10 yükselen incelemelerini ve DL1'in resmî
    tam-token delist + Binance/Bybit/OKX snapshot'larını tutar. Bunlar işlem
    değildir; tarihsel kapıları geçmemiş ileri araştırma olaylarıdır.
+4. Gerçek bir S2 olayı oluştuğunda `shadow_events_YYYY-MM.jsonl` aynı zamanda
+   OI-short build ve funding/L-S uyumsuzluğu özelliklerini sessizce kaydeder.
+   Bu kanal Telegram bildirimi veya emir üretmez; mevcut S2'yi değiştirmez.
+
+S2 türev ölçümündeki top-trader pozisyon oranı için Binance market-data API
+anahtarı gerekir. Binance'te yalnız okuma/market-data yetkili, **trade ve para
+çekme yetkileri kapalı** bir anahtar oluştur; sonra tablette `.env` dosyana
+yalnız şu değişken adlarını ekle (değeri hiçbir mesaja veya Git'e yazma):
+
+```bash
+S2_DERIVATIVES_SHADOW_ENABLED=true
+BINANCE_MARKET_DATA_API_KEY=BURAYA_KENDI_DEGERIN
+```
+
+Anahtar eklenmezse bot çalışmaya devam eder; global L/S uyumsuzluğu ölçülür,
+fakat top-position eksik olduğundan OI-short build kaydı “tam” sayılmaz.
 
 Yeni sürümü çektikten sonra bağımlılığı ve botu yenile:
 
@@ -448,8 +464,10 @@ rm -f .stop-signal-bot
 nohup ./termux/boot-signal-bot.sh >/dev/null 2>&1 &
 ```
 
-Başlangıç logunda `USD-M likidasyon arsivi basladi` ve `golge deneyler acik`
-görünmelidir. Başka bir
+Başlangıç logunda `USD-M likidasyon arsivi basladi`, `golge deneyler acik` ve
+`S2 turev golgesi acik` görünmelidir. Son satırda `top-position anahtari=hazir`
+yazması ilgili okuma anahtarının yüklendiğini doğrular; anahtarın kendisi hiçbir
+zaman loglanmaz. Başka bir
 terminalden dosya kapsamını istediğin an kontrol edebilirsin:
 
 ```bash
@@ -462,7 +480,8 @@ ls -lh market_archive_*.jsonl liquidation_archive_*.jsonl shadow_*.jsonl 2>/dev/
 
 Telegram'da `/arastirma` yazınca OI/funding/long-short/basis alanlarının
 doluluğunu, saat kapsamasını, likidasyon günlerini ve ilk değerlendirmeye kalan
-süreyi görürsün. Bot aynı raporu varsayılan olarak her pazartesi 09:00 Türkiye
+süreyi; ayrıca S2 türev gölgesinin olay/tam/adaya dönüşen kayıt sayılarını
+görürsün. Bot aynı raporu varsayılan olarak her pazartesi 09:00 Türkiye
 saatinden sonraki ilk taramada otomatik gönderir. Bu haftalık döngü yalnız veri
 sağlığını günceller; strateji eşiklerini otomatik değiştirmez.
 
