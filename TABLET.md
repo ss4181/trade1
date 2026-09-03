@@ -541,7 +541,8 @@ ilk/son olay zamanını gösterir. Web sunucusu kullanılıyorsa `/health` için
 
 Dosyalar `.gitignore` kapsamındadır; GitHub'a ve public panoya yüklenmez.
 Bot bunları Termux'ta varsayılan olarak **her 24 saatte bir** Android ortak
-depolamasındaki `~/storage/shared/trade1-backup` klasörüne aynalar. İlk yedek
+depolamasındaki `~/storage/shared/trade1-backup` aktarım klasörüne aynalar.
+Syncthing-Fork bu klasörü Windows bilgisayara taşır. İlk kopya
 bot başladıktan hemen sonra alınır. Değişmeyen dosyalar atlanır; aktif JSONL
 dosyası atomik kopyalandığı için hedefte yarım dosya bırakılmaz. `.env`, token
 ve API anahtarları hiçbir zaman kopyalanmaz.
@@ -571,10 +572,11 @@ Varsayılan yedek `signals.log` ile sır içermeyen bot durumlarını da kapsar.
 Kapatmak için `.env` içine `ARCHIVE_BACKUP_ENABLED=false` yazabilirsin; süre
 ve hedef için `.env.example` içindeki `ARCHIVE_BACKUP_*` ayarlarına bak.
 
-Önemli: `~/storage/shared` aynı tabletin ortak depolamasıdır. Termux verisi
-silinirse kurtarır, fakat cihaz kaybına karşı gerçek bir cihaz-dışı yedek
-değildir. Bu klasörü düzenli olarak PC/USB'ye veya özel bir bulut hesabına
-kopyala; public repo/Pages'e yükleme.
+Önemli: `~/storage/shared` tek başına yedek değildir; yalnız bilgisayara aktarım
+kuyruğudur. Gerçek yedek, Syncthing'de Windows tarafı `Receive Only` ve tablet
+tarafı `Send Only` ayarlanıp iki tarafta `Up to Date` görüldüğünde tamamlanır.
+Ayrıntılı eşleştirme ve doğrulama: [`PC_BACKUP.md`](PC_BACKUP.md). Public
+repo/Pages'e ham arşiv yükleme.
 
 Arşiv toplamayı kapatmak
 için `.env` içine `ARCHIVE_MARKET_DATA=false` veya `ARCHIVE_FORCE_ORDERS=false`

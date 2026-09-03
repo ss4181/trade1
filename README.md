@@ -261,11 +261,13 @@ python signal_bot.py --shadow-status
 python signal_bot.py --research-status
 ```
 
-### Günlük arşiv yedeği
+### Günlük bilgisayar yedeği
 
 Termux/tablet sürümünde ham araştırma arşivi ilk sürekli çalışmada hemen,
-sonrasında **24 saatte bir** `~/storage/shared/trade1-backup` klasörüne
-otomatik olarak aynalanır. Yedek taramadan ayrı bir arka plan işinde çalışır;
+sonrasında **24 saatte bir** `~/storage/shared/trade1-backup` aktarım klasörüne
+otomatik olarak aynalanır. Syncthing-Fork bu klasörü Windows bilgisayardaki
+`Documents\Trade1-Backup` hedefine aktarır. Yedek taramadan ayrı bir arka plan
+işinde çalışır;
 başarısız olması canlı sinyal döngüsünü durdurmaz. Değişmeyen dosyalar atlanır,
 değişen dosya önce geçici bir dosyaya yazılıp atomik olarak yerine geçirilir.
 `.env`, Telegram tokenı ve GitHub anahtarı hiçbir zaman seçilmez. Yedek hatası
@@ -285,11 +287,11 @@ son başarı, kopyalanan/atlanan dosya sayısı ve varsa hatayı gösterir. Ayar
 `ARCHIVE_BACKUP_*` değişkenleriyle değiştirilebilir; Termux dışındaki
 ortamlarda güvenli varsayılan kapalıdır.
 
-Bu hedef tabletteki ortak depolamadır: Termux uygulaması silinmesine karşı
-ikinci kopya sağlar fakat tablet kaybolur veya bozulursa iki kopya da gidebilir.
-Gerçek cihaz-dışı koruma için `trade1-backup` klasörünü ayrıca PC'ye, USB'ye
-veya erişimi özel bir bulut klasörüne eşitle. Public GitHub/Pages ham arşiv ve
-abone durumları için uygun değildir.
+Tabletteki klasör yalnız aktarım kuyruğudur; gerçek yedek ancak Windows'ta
+eşitleme tamamlanınca oluşur. Tablet `Send Only`, Windows `Receive Only` ve
+Windows sürümleme süresi 365 gün olmalıdır. Kurulum ve doğrulama adımları:
+[`PC_BACKUP.md`](PC_BACKUP.md). Public GitHub/Pages ham arşiv ve abone durumları
+için uygun değildir.
 
 G1 ile gerçekleşmiş likidasyon yoğunluğu/fiyat kümelerini veri sızıntısız
 karşılaştıran manuel keşif testi:
