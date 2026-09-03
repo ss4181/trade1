@@ -55,6 +55,7 @@ from pathlib import Path
 
 import requests
 
+import archive_backup as archive_backup_module
 from derivatives_archive import (
     DEFAULT_STREAM_URL as DEFAULT_FORCE_ORDER_STREAM_URL,
     ForceOrderArchiveWorker,
@@ -697,6 +698,27 @@ _market_regime_lock = threading.Lock()
 _last_market_regime_refresh = 0.0
 _last_archive_hour: str | None = None
 ARCHIVE_DIR = Path(_env("ARCHIVE_DIR", str(Path(__file__).parent))).expanduser()
+_TERMUX_RUNTIME = bool(
+    os.getenv("TERMUX_VERSION") or "com.termux" in sys.prefix.lower()
+    or "com.termux" in os.getenv("PREFIX", "").lower())
+_DEFAULT_ARCHIVE_BACKUP_DIR = Path.home() / "storage" / "shared" / \
+    "trade1-backup"
+# Ham araştırma arşivinin Git/Pages dışında ikinci kopyası. Varsayılan yalnız
+# Termux'ta açıktır; masaüstü/GitHub/Render süreçleri kendiliğinden yazmaz.
+ARCHIVE_BACKUP_ENABLED = _env(
+    "ARCHIVE_BACKUP_ENABLED", _TERMUX_RUNTIME, cast=_flag)
+ARCHIVE_BACKUP_DIR = Path(_env(
+    "ARCHIVE_BACKUP_DIR", str(_DEFAULT_ARCHIVE_BACKUP_DIR))).expanduser()
+ARCHIVE_BACKUP_INTERVAL_HOURS = max(
+    1.0, _env("ARCHIVE_BACKUP_INTERVAL_HOURS", 24.0, cast=float))
+ARCHIVE_BACKUP_RETRY_HOURS = max(
+    0.25, _env("ARCHIVE_BACKUP_RETRY_HOURS", 1.0, cast=float))
+ARCHIVE_BACKUP_INCLUDE_STATE = _env(
+    "ARCHIVE_BACKUP_INCLUDE_STATE", True, cast=_flag)
+ARCHIVE_BACKUP_NOTIFY_FAILURE = _env(
+    "ARCHIVE_BACKUP_NOTIFY_FAILURE", True, cast=_flag)
+ARCHIVE_BACKUP_STATE_FILE = Path(__file__).parent / _env(
+    "ARCHIVE_BACKUP_STATE_FILE", ".archive_backup_state.json")
 RESEARCH_MONITOR_STATE_FILE = Path(__file__).parent / _env(
     "RESEARCH_MONITOR_STATE_FILE", ".research_monitor_state.json")
 # Birikimli Forward-OI hedef/stop matrisi ayda bir ayrı bir süreçte yenilenir.
@@ -717,6 +739,9 @@ FORWARD_OI_5M_CACHE_DIR = Path(_env(
 _archive_worker_lock = threading.Lock()
 ARCHIVE_WORKER_ACTIVE = False
 ARCHIVE_WORKER_LAST_ERROR: str | None = None
+_archive_backup_worker_lock = threading.Lock()
+ARCHIVE_BACKUP_WORKER_ACTIVE = False
+ARCHIVE_BACKUP_WORKER_LAST_ERROR: str | None = None
 SHADOW_STATE_FILE = Path(__file__).parent / _env(
     "SHADOW_STATE_FILE", ".experiment_state.json")
 _shadow_worker_lock = threading.Lock()
@@ -989,6 +1014,174 @@ def _start_shadow_worker() -> bool:
             _shadow_worker_lock.release()
 
     threading.Thread(target=work, name="shadow-experiments", daemon=True).start()
+    return True
+
+
+def _parse_archive_backup_time(value) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _load_archive_backup_state() -> dict:
+    try:
+        data = json.loads(ARCHIVE_BACKUP_STATE_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, TypeError, ValueError):
+        return {}
+
+
+def _save_archive_backup_state(state: dict) -> None:
+    ARCHIVE_BACKUP_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = ARCHIVE_BACKUP_STATE_FILE.with_suffix(
+        ARCHIVE_BACKUP_STATE_FILE.suffix + ".tmp")
+    temp_path.write_text(json.dumps(
+        state, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8")
+    temp_path.replace(ARCHIVE_BACKUP_STATE_FILE)
+
+
+def archive_backup_status() -> dict:
+    state = _load_archive_backup_state()
+    return {
+        "enabled": ARCHIVE_BACKUP_ENABLED,
+        "active": ARCHIVE_BACKUP_WORKER_ACTIVE,
+        "interval_hours": ARCHIVE_BACKUP_INTERVAL_HOURS,
+        "include_state": ARCHIVE_BACKUP_INCLUDE_STATE,
+        "directory": str(ARCHIVE_BACKUP_DIR),
+        "directory_exists": ARCHIVE_BACKUP_DIR.is_dir(),
+        "last_attempt_at": state.get("last_attempt_at"),
+        "last_success_at": state.get("last_success_at"),
+        "last_error": state.get("last_error"),
+        "files_total": int(state.get("files_total") or 0),
+        "copied": int(state.get("copied") or 0),
+        "skipped": int(state.get("skipped") or 0),
+        "bytes": int(state.get("bytes") or 0),
+    }
+
+
+def _archive_backup_due(now: datetime | None = None) -> bool:
+    if not ARCHIVE_BACKUP_ENABLED:
+        return False
+    now = now or datetime.now(timezone.utc)
+    state = _load_archive_backup_state()
+    last_success = _parse_archive_backup_time(state.get("last_success_at"))
+    if (last_success and now - last_success
+            < timedelta(hours=ARCHIVE_BACKUP_INTERVAL_HOURS)):
+        return False
+    last_attempt = _parse_archive_backup_time(state.get("last_attempt_at"))
+    if (last_attempt and now - last_attempt
+            < timedelta(hours=ARCHIVE_BACKUP_RETRY_HOURS)):
+        return False
+    return True
+
+
+def _perform_archive_backup(now: datetime | None = None,
+                            *, notify_failure: bool = True) -> dict:
+    """Tek günlük yedek turu; hata canlı taramaya hiçbir zaman yayılmaz."""
+    global ARCHIVE_BACKUP_WORKER_LAST_ERROR
+    now = now or datetime.now(timezone.utc)
+    state = _load_archive_backup_state()
+    state.update({"schema_version": 1, "last_attempt_at": now.isoformat()})
+    try:
+        _save_archive_backup_state(state)
+        # Varsayılan Android ortak depolama kökü Termux izni verilmeden yoktur.
+        # Sessizce aynı isimli özel bir klasör oluşturup sahte güven yaratma.
+        shared_root = Path.home() / "storage" / "shared"
+        try:
+            uses_shared = ARCHIVE_BACKUP_DIR.resolve().is_relative_to(
+                shared_root.resolve())
+        except (OSError, RuntimeError):
+            uses_shared = False
+        if uses_shared and not shared_root.is_dir():
+            raise RuntimeError(
+                "Android ortak depolama izni yok; termux-setup-storage calistir")
+        summary = archive_backup_module.backup_once(
+            ARCHIVE_DIR, ARCHIVE_BACKUP_DIR,
+            include_state=ARCHIVE_BACKUP_INCLUDE_STATE,
+            state_source=Path(__file__).parent)
+        if int(summary.get("files_total") or 0) <= 0:
+            raise RuntimeError("yedeklenecek araştırma arşivi bulunamadı")
+        state.update({
+            "last_success_at": now.isoformat(), "last_error": None,
+            "files_total": int(summary.get("files_total") or 0),
+            "copied": int(summary.get("copied") or 0),
+            "skipped": int(summary.get("skipped") or 0),
+            "bytes": int(summary.get("bytes") or 0),
+        })
+        ARCHIVE_BACKUP_WORKER_LAST_ERROR = None
+        try:
+            _save_archive_backup_state(state)
+        except OSError as save_exc:
+            # Kopyalar hedefte güvenle durur; yalnız zamanlayıcı durumu
+            # yazılamamıştır. Ana tarama bu nedenle durdurulmaz.
+            state["state_persist_error"] = (
+                f"{type(save_exc).__name__}: {_redact(str(save_exc))}"[:500])
+            ARCHIVE_BACKUP_WORKER_LAST_ERROR = state["state_persist_error"]
+            print(f"uyari: yedek durum dosyasi kaydedilemedi: {save_exc}",
+                  file=sys.stderr, flush=True)
+        print("gunluk arsiv yedegi: "
+              f"{state['copied']} kopya, {state['skipped']} degismemis, "
+              f"{state['files_total']} toplam dosya", flush=True)
+        return state
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {_redact(str(exc))}"[:500]
+        ARCHIVE_BACKUP_WORKER_LAST_ERROR = error
+        state["last_error"] = error
+        should_notify = notify_failure and ARCHIVE_BACKUP_NOTIFY_FAILURE
+        last_notified = _parse_archive_backup_time(
+            state.get("last_failure_notified_at"))
+        should_notify = should_notify and (
+            last_notified is None or now - last_notified >= timedelta(hours=24))
+        if should_notify and _telegram_send_text(
+                "⚠️ <b>GÜNLÜK ARAŞTIRMA YEDEĞİ BAŞARISIZ</b>\n"
+                f"• Hata: <code>{_html.escape(error)}</code>\n"
+                "• Tablet taraması çalışmaya devam ediyor.\n"
+                "• Kontrol: <code>python signal_bot.py --backup-status</code>",
+                chat_id=TELEGRAM_CHAT_ID):
+            state["last_failure_notified_at"] = now.isoformat()
+        try:
+            _save_archive_backup_state(state)
+        except OSError as save_exc:
+            # Durum dosyasının da yazılamadığı en kötü durumda dahi yedek
+            # hatası canlı tarama döngüsüne yayılmaz.
+            print(f"uyari: yedek hata durumu kaydedilemedi: {save_exc}",
+                  file=sys.stderr, flush=True)
+        print(f"uyari: gunluk arsiv yedegi basarisiz: {error}",
+              file=sys.stderr, flush=True)
+        return state
+
+
+def _start_archive_backup_worker(now: datetime | None = None) -> bool:
+    """Vadesi gelen günlük yedeği ana taramayı bloklamadan başlat."""
+    global ARCHIVE_BACKUP_WORKER_ACTIVE
+    now = now or datetime.now(timezone.utc)
+    if not _archive_backup_due(now):
+        return False
+    if not _archive_backup_worker_lock.acquire(blocking=False):
+        return False
+    ARCHIVE_BACKUP_WORKER_ACTIVE = True
+
+    def work() -> None:
+        global ARCHIVE_BACKUP_WORKER_ACTIVE, ARCHIVE_BACKUP_WORKER_LAST_ERROR
+        try:
+            _perform_archive_backup(now)
+        except Exception as exc:
+            # Durum dosyası dahi yazılamasa ana tarama yaşamaya devam eder.
+            ARCHIVE_BACKUP_WORKER_LAST_ERROR = (
+                f"{type(exc).__name__}: {_redact(str(exc))}"[:500])
+            print("uyari: yedek iscisinde beklenmeyen hata: "
+                  f"{ARCHIVE_BACKUP_WORKER_LAST_ERROR}",
+                  file=sys.stderr, flush=True)
+        finally:
+            ARCHIVE_BACKUP_WORKER_ACTIVE = False
+            _archive_backup_worker_lock.release()
+
+    threading.Thread(target=work, name="archive-backup", daemon=True).start()
     return True
 
 
@@ -3616,6 +3809,10 @@ def _run_forever_locked(once: bool = False,
               f"(top-position anahtari="
               f"{'hazir' if BINANCE_MARKET_DATA_API_KEY else 'eksik'})",
               flush=True)
+    if ARCHIVE_BACKUP_ENABLED:
+        print("gunluk arsiv yedegi acik: "
+              f"her {ARCHIVE_BACKUP_INTERVAL_HOURS:g}saat, "
+              "Android ortak depolama", flush=True)
     if not ENABLE_TELEGRAM:
         if not _ENV_FOUND:
             print(f"NOT: Telegram KAPALI cunku .env bulunamadi.\n"
@@ -3683,6 +3880,10 @@ def _run_forever_locked(once: bool = False,
             LAST_SCAN_FINISHED_AT = datetime.now(timezone.utc).isoformat()
             LAST_LOOP_HEARTBEAT_AT = LAST_SCAN_FINISHED_AT
             SCAN_IN_PROGRESS = False
+            if not once:
+                # Yedek tarama sonucuna bağlı değildir: mevcut arşiv, Binance
+                # taraması o turda hata verse bile vadesi geldiyse kopyalanır.
+                _start_archive_backup_worker()
         if once:
             break
         # bir sonraki bar kapanisindan ~90sn sonrasina hizalan
@@ -4636,6 +4837,9 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "user_success": target_summary.get(key, {}).get(
                 _target_level_key(USER_SUCCESS_TARGET_PCT), {}),
         })
+    backup = archive_backup_status()
+    # Public panoya cihaz dizinini yazma; yalnız sağlık özeti yayımlanır.
+    backup.pop("directory", None)
     return {
         "now": now.isoformat(timespec="seconds"),
         "status": {
@@ -4661,6 +4865,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
                 BINANCE_MARKET_DATA_API_KEY),
             "shadow_worker_active": SHADOW_WORKER_ACTIVE,
             "shadow_worker_last_error": SHADOW_WORKER_LAST_ERROR,
+            "archive_backup": backup,
             # bildirim kanali sagligi: sinyal uretilse de gonderim
             # basarisiz olabilir; uzaktan gorunur olmali (2026-07-26)
             "telegram_enabled": ENABLE_TELEGRAM,
@@ -5487,6 +5692,10 @@ def main() -> None:
                     help="G1/DL1 golge olay/snapshot arsivinin kapsama ozetini yaz")
     ap.add_argument("--research-status", action="store_true",
                     help="OI/funding/likidasyon arastirma hazirligini yaz")
+    ap.add_argument("--backup-status", action="store_true",
+                    help="gunluk yerel arsiv yedeginin durumunu yaz")
+    ap.add_argument("--backup-now", action="store_true",
+                    help="arsiv yedegini simdi calistir ve sonucu yaz")
     args = ap.parse_args()
     if args.test_notify:
         run_test_notify()
@@ -5499,6 +5708,15 @@ def main() -> None:
     elif args.research_status:
         print(json.dumps(research_readiness_report(),
                          ensure_ascii=False, indent=2))
+    elif args.backup_status:
+        print(json.dumps(archive_backup_status(),
+                         ensure_ascii=False, indent=2))
+    elif args.backup_now:
+        result = _perform_archive_backup(notify_failure=False)
+        print(json.dumps(archive_backup_status(),
+                         ensure_ascii=False, indent=2))
+        if result.get("last_error"):
+            raise SystemExit(1)
     elif args.check:
         run_check()
     else:

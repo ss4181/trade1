@@ -261,6 +261,36 @@ python signal_bot.py --shadow-status
 python signal_bot.py --research-status
 ```
 
+### Günlük arşiv yedeği
+
+Termux/tablet sürümünde ham araştırma arşivi ilk sürekli çalışmada hemen,
+sonrasında **24 saatte bir** `~/storage/shared/trade1-backup` klasörüne
+otomatik olarak aynalanır. Yedek taramadan ayrı bir arka plan işinde çalışır;
+başarısız olması canlı sinyal döngüsünü durdurmaz. Değişmeyen dosyalar atlanır,
+değişen dosya önce geçici bir dosyaya yazılıp atomik olarak yerine geçirilir.
+`.env`, Telegram tokenı ve GitHub anahtarı hiçbir zaman seçilmez. Yedek hatası
+Telegram'a aynı sorun için en fazla 24 saatte bir bildirilir.
+
+Android ortak depolamasına ilk kez erişirken tablette bir kez:
+
+```bash
+termux-setup-storage
+cd ~/trade1
+python signal_bot.py --backup-now
+python signal_bot.py --backup-status
+```
+
+İlk komutta Android'in dosya erişim iznini onayla. `--backup-status` son deneme,
+son başarı, kopyalanan/atlanan dosya sayısı ve varsa hatayı gösterir. Ayarlar
+`ARCHIVE_BACKUP_*` değişkenleriyle değiştirilebilir; Termux dışındaki
+ortamlarda güvenli varsayılan kapalıdır.
+
+Bu hedef tabletteki ortak depolamadır: Termux uygulaması silinmesine karşı
+ikinci kopya sağlar fakat tablet kaybolur veya bozulursa iki kopya da gidebilir.
+Gerçek cihaz-dışı koruma için `trade1-backup` klasörünü ayrıca PC'ye, USB'ye
+veya erişimi özel bir bulut klasörüne eşitle. Public GitHub/Pages ham arşiv ve
+abone durumları için uygun değildir.
+
 G1 ile gerçekleşmiş likidasyon yoğunluğu/fiyat kümelerini veri sızıntısız
 karşılaştıran manuel keşif testi:
 

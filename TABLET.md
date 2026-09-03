@@ -539,14 +539,49 @@ işaretlenir. `--archive-status`, kaç olay ve durum kaydı bulunduğunu,
 ilk/son olay zamanını gösterir. Web sunucusu kullanılıyorsa `/health` içindeki
 `force_order_archive.connected` alanı canlı bağlantıyı doğrular.
 
-Dosyalar `.gitignore` kapsamındadır; GitHub'a ve public panoya yüklenmez. Ayda
-bir harici diske/özel buluta yedeklemek gerekir. Kapatmak istersen `.env` içine
-`ARCHIVE_MARKET_DATA=false` veya `ARCHIVE_FORCE_ORDERS=false` ekle. Dosyaları
-G1/DL1'i tamamen kapatmak için `SHADOW_EXPERIMENTS_ENABLED=false`, yalnız
-Telegram mesajlarını susturup veri toplamayı sürdürmek için
-`SHADOW_PUSH_ENABLED=false` ekle. Dosyaları
-silme: anlamlı değerlendirme için en az 3–6 ay ve yeterli bağımsız olay günü
-gerekecek.
+Dosyalar `.gitignore` kapsamındadır; GitHub'a ve public panoya yüklenmez.
+Bot bunları Termux'ta varsayılan olarak **her 24 saatte bir** Android ortak
+depolamasındaki `~/storage/shared/trade1-backup` klasörüne aynalar. İlk yedek
+bot başladıktan hemen sonra alınır. Değişmeyen dosyalar atlanır; aktif JSONL
+dosyası atomik kopyalandığı için hedefte yarım dosya bırakılmaz. `.env`, token
+ve API anahtarları hiçbir zaman kopyalanmaz.
+
+İlk kurulumda Android erişim iznini bir kez ver:
+
+```bash
+cd ~/trade1
+termux-setup-storage
+# Android izin penceresinde dosya/depolama erişimini onayla
+python signal_bot.py --backup-now
+python signal_bot.py --backup-status
+```
+
+Başarılı durumda `last_success_at`, dosya sayıları ve `last_error: null`
+görürsün. Bot logunda da `gunluk arsiv yedegi:` satırı oluşur. Bir hata olursa
+tarama çalışmaya devam eder, bir saat sonra yeniden denenir ve aynı hata
+Telegram'a en fazla günde bir kez bildirilir. Elle yalnız listelemek veya başka
+bir USB/PC hedefine kopyalamak istersen hâlâ şunları kullanabilirsin:
+
+```bash
+python archive_backup.py --dry-run ~/storage/shared/trade1-backup
+python archive_backup.py --include-state /baska/ozel/hedef
+```
+
+Varsayılan yedek `signals.log` ile sır içermeyen bot durumlarını da kapsar.
+Kapatmak için `.env` içine `ARCHIVE_BACKUP_ENABLED=false` yazabilirsin; süre
+ve hedef için `.env.example` içindeki `ARCHIVE_BACKUP_*` ayarlarına bak.
+
+Önemli: `~/storage/shared` aynı tabletin ortak depolamasıdır. Termux verisi
+silinirse kurtarır, fakat cihaz kaybına karşı gerçek bir cihaz-dışı yedek
+değildir. Bu klasörü düzenli olarak PC/USB'ye veya özel bir bulut hesabına
+kopyala; public repo/Pages'e yükleme.
+
+Arşiv toplamayı kapatmak
+için `.env` içine `ARCHIVE_MARKET_DATA=false` veya `ARCHIVE_FORCE_ORDERS=false`
+yaz. G1/DL1'i tamamen kapatmak için `SHADOW_EXPERIMENTS_ENABLED=false`; yalnız
+Telegram'ı susturup veri toplamayı sürdürmek için `SHADOW_PUSH_ENABLED=false`.
+Bu JSONL dosyalarını silme: anlamlı değerlendirme için en az 3–6 ay ve yeterli
+bağımsız olay günü gerekecek.
 
 G1 giriş fiyatı ve likidasyon-proxy araştırmasını elle kontrol etmek için:
 

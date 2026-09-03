@@ -12,6 +12,7 @@ signals.log
 .experiment_state.json
 .research_monitor_state.json
 .forward_oi_report_state.json
+.archive_backup_state.json
 .subscribers.json
 .signal_bot.lock
 .stop-signal-bot
