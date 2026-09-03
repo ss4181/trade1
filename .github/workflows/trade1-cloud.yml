@@ -32,6 +32,9 @@ jobs:
       DASHBOARD_ENABLED: "false"
       DAILY_SUMMARY_HOUR_UTC: "-1"
       ARCHIVE_MARKET_DATA: "false"
+      # Haftalık araştırma raporunun tek lideri kalıcı tablet sürecidir.
+      # GitHub runner geçicidir ve yerel market arşivi taşımaz.
+      RESEARCH_WEEKLY_SUMMARY_ENABLED: "false"
       # Tablet tek G1/DL1 arşiv lideridir. Aksi halde iki bağımsız state aynı
       # gölge olayı iki kez bildirir ve GitHub runner verisi kalıcı olmaz.
       SHADOW_EXPERIMENTS_ENABLED: "false"

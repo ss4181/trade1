@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import patch
 
@@ -60,6 +61,20 @@ class ResearchWeeklyDeliveryTests(unittest.TestCase):
             bot._last_research_summary_week = None
             bot._maybe_weekly_research_summary()
         self.assertEqual(sent, ["NORMAL RAPOR"])
+
+    def test_archive_disabled_process_cannot_send_automatic_report(self) -> None:
+        with patch.object(bot, "RESEARCH_WEEKLY_SUMMARY_ENABLED", True), \
+                patch.object(bot, "RESEARCH_WEEKLY_REQUIRE_DATA", True), \
+                patch.object(bot, "ARCHIVE_MARKET_DATA", False), \
+                patch.object(bot, "ENABLE_TELEGRAM", True), \
+                patch.object(bot, "_telegram_send_text") as send:
+            bot._maybe_weekly_research_summary()
+        send.assert_not_called()
+
+    def test_github_actions_source_is_identified(self) -> None:
+        with patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=False):
+            self.assertEqual(bot._default_research_report_source(),
+                             "GitHub Actions / geçici bulut")
 
 
 if __name__ == "__main__":

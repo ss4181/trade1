@@ -210,8 +210,15 @@ S2_DERIVATIVES_SHADOW_ENABLED = _env(
 # eşiklerini otomatik optimize ETMEZ: 90 gün keşif sonunda kural ayrıca ön
 # kaydedilir, RESEARCH_OOS_START_UTC o anda yazılır ve 90 gün dokunulmaz OOS
 # verisi beklenir.
+def _is_ephemeral_research_runtime() -> bool:
+    """Kalıcı yerel araştırma arşivi olmayan bilinen bulut süreçleri."""
+    return (os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true"
+            or bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_NAME")))
+
+
 RESEARCH_WEEKLY_SUMMARY_ENABLED = _env(
-    "RESEARCH_WEEKLY_SUMMARY_ENABLED", True, cast=_flag)
+    "RESEARCH_WEEKLY_SUMMARY_ENABLED",
+    not _is_ephemeral_research_runtime(), cast=_flag)
 RESEARCH_WEEKLY_WEEKDAY = _env("RESEARCH_WEEKLY_WEEKDAY", 0, cast=int)
 RESEARCH_WEEKLY_HOUR_UTC = _env("RESEARCH_WEEKLY_HOUR_UTC", 6, cast=int)
 RESEARCH_WEEKLY_REQUIRE_DATA = _env(
@@ -223,6 +230,8 @@ RESEARCH_OOS_START_UTC = _env("RESEARCH_OOS_START_UTC", "").strip()
 
 def _default_research_report_source() -> str:
     """Scheduled raporun hangi çalışma ortamından geldiğini sır sızdırmadan yaz."""
+    if os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true":
+        return "GitHub Actions / geçici bulut"
     if os.getenv("RENDER") or os.getenv("RENDER_SERVICE_NAME"):
         return "Render / bulut"
     if (os.getenv("TERMUX_VERSION") or "com.termux" in sys.prefix.lower()
@@ -3132,6 +3141,10 @@ def _maybe_weekly_research_summary() -> None:
     global _last_research_summary_week
     if not RESEARCH_WEEKLY_SUMMARY_ENABLED or not ENABLE_TELEGRAM:
         return
+    # Arşiv toplamayan geçici/yedek süreç rapor lideri olamaz. Manuel
+    # /arastirma komutu bundan etkilenmez; yalnız otomatik gürültü engellenir.
+    if RESEARCH_WEEKLY_REQUIRE_DATA and not ARCHIVE_MARKET_DATA:
+        return
     slot = research_weekly_slot(
         datetime.now(timezone.utc), RESEARCH_WEEKLY_WEEKDAY,
         RESEARCH_WEEKLY_HOUR_UTC)
@@ -3653,7 +3666,10 @@ def _run_forever_locked(once: bool = False,
             if SCANS_COMPLETED % 12 == 0:
                 _start_performance_worker(max_signals=40)
             _maybe_daily_summary()
-            _maybe_weekly_research_summary()
+            if not once:
+                # Tek-seferlik GitHub/manual taramalar arşiv raporu göndermez;
+                # rapor yalnız kalıcı tarama liderinin görevidir.
+                _maybe_weekly_research_summary()
             if not once:
                 _maybe_forward_oi_30d_report()
         except Exception as e:  # tek dongu hatasi 7/24 servisi dusurmemeli
