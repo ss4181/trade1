@@ -111,6 +111,7 @@ class PriceTargetAnalyticsTests(unittest.TestCase):
         notified = datetime.now(timezone.utc) - timedelta(hours=1)
         record = self.record("b" * 32)
         record["notified_at"] = notified.isoformat()
+        record["delivery_confirmed"] = True
         log_path = Path(self.tmp.name) / "signals.log"
         log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
         bot.SIGNAL_LOG = str(log_path)

@@ -18,6 +18,10 @@ signals.log
 .stop-signal-bot
 .server-stack-unavailable
 .watchdog_state.json
+.notification_outbox.json
+.notification_outbox.json.tmp
+backup_manifest.json
+.pc_backup_status.json
 market_archive_*.jsonl
 liquidation_archive_*.jsonl
 shadow_market_*.jsonl

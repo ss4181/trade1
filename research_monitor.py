@@ -94,6 +94,15 @@ def build_research_readiness(
     """Summarize archive coverage without network calls or parameter fitting."""
     root = Path(archive_dir)
     now = _utc(now or datetime.now(timezone.utc))
+    oos_start = _parse_optional_utc(oos_start_utc)
+    sample_end = min(now, oos_start + timedelta(days=max(30, oos_days))) if oos_start else now
+
+    def in_window(stamp):
+        return stamp is not None and stamp <= sample_end and (oos_start is None or stamp >= oos_start)
+
+    def finite_field(row, name):
+        value = row.get(name)
+        return isinstance(value, (float, int)) and not isinstance(value, bool) and math.isfinite(value)
     market_rows = research_rows = malformed = 0
     market_times: list[datetime] = []
     hours: set[str] = set()
@@ -117,6 +126,8 @@ def build_research_readiness(
         if stamp is None:
             malformed += 1
             continue
+        if not in_window(stamp):
+            continue
         market_rows += 1
         market_times.append(stamp)
         hour = stamp.replace(minute=0, second=0, microsecond=0).isoformat()
@@ -124,7 +135,7 @@ def build_research_readiness(
         rows_by_hour[hour] = rows_by_hour.get(hour, 0) + 1
         if row.get("sym"):
             symbols.add(str(row["sym"]))
-        core_complete = all(row.get(name) is not None for name in (
+        core_complete = all(finite_field(row, name) for name in (
             "oi", "perp_px", "global_ls_ratio", "taker_buy_sell_ratio",
             "funding_rate_snapshot"))
         if research_first is None and core_complete:
@@ -135,7 +146,7 @@ def build_research_readiness(
                 research_last, stamp)
             research_hours.add(hour)
             for name in MARKET_FIELDS:
-                if row.get(name) is not None:
+                if finite_field(row, name):
                     field_counts[name] += 1
 
     first = min(market_times) if market_times else None
@@ -145,7 +156,7 @@ def build_research_readiness(
     span_days = round(
         (research_last - research_first).total_seconds() / 86400, 1
     ) if research_first and research_last else 0.0
-    stale_hours = round((now - research_last).total_seconds() / 3600, 1) \
+    stale_hours = round((sample_end - research_last).total_seconds() / 3600, 1) \
         if research_last else None
     median_symbols = (round(statistics.median(rows_by_hour.values()), 1)
                       if rows_by_hour else 0.0)
@@ -165,6 +176,8 @@ def build_research_readiness(
         record_type = row.get("record_type")
         stamp = _parse_time(row.get("received_at_utc") or row.get("at_utc")
                             or row.get("event_time_utc"))
+        if not in_window(stamp):
+            continue
         if record_type == "force_order":
             liquidation_events += 1
             if stamp:
@@ -192,6 +205,9 @@ def build_research_readiness(
             malformed += 1
             continue
         kind = str(row.get("kind") or "")
+        stamp = _parse_time(row.get("recorded_at") or row.get("bar_time"))
+        if not in_window(stamp):
+            continue
         g1_events += int(kind == "G1_EVENT")
         dl1_events += int(kind == "DL1_EVENT")
         if kind == "S2_DERIV_SHADOW":
@@ -208,9 +224,13 @@ def build_research_readiness(
     discovery_days = max(30, int(discovery_days))
     oos_days = max(30, int(oos_days))
     oos_start = _parse_optional_utc(oos_start_utc)
-    hour_coverage = _pct(len(research_hours), span_hours)
+    # OOS gaps at the beginning/end count as gaps too, not just those between
+    # the first and last available snapshots. Training rows never fill them.
+    if oos_start:
+        span_hours = max(0, math.ceil((sample_end - oos_start).total_seconds() / 3600))
+    hour_coverage = min(100.0, _pct(len(research_hours), span_hours) or 0) if span_hours else None
     quality_checks = {
-        "market_span_days": span_days >= discovery_days - 1,
+        "market_span_days": span_days >= (oos_days if oos_start else discovery_days) - 1,
         "hour_coverage_80pct": (hour_coverage or 0) >= 80,
         "oi_completeness_90pct": (completeness["oi"] or 0) >= 90,
         "funding_completeness_80pct": (
@@ -266,8 +286,16 @@ def build_research_readiness(
             action = ("OOS süre doldu fakat veri kalite kapısı geçilmedi; "
                       "stratejiyi kabul etme.")
 
+    if oos_start and first is None:
+        next_review = oos_start + timedelta(days=oos_days)
+        phase = "OOS_COLLECTING" if now < next_review else "OOS_QUALITY_BLOCKED"
+        action = "OOS penceresinde veri yok; eğitim verisi kalite kapısını dolduramaz."
     days_to_review = (round((next_review - now).total_seconds() / 86400, 1)
                       if next_review else None)
+    oi_checks = {k: v for k, v in quality_checks.items() if k != "liquidation_event_days_30"}
+    oi_review = ((oos_start + timedelta(days=oos_days)) if oos_start else
+                 research_first + timedelta(days=discovery_days) if research_first else None)
+    oi_ready = bool(oi_review and now >= oi_review and all(oi_checks.values()))
     return {
         "schema_version": "research-readiness-v1",
         "generated_at_utc": _iso(now),
@@ -281,6 +309,20 @@ def build_research_readiness(
         "days_to_review": days_to_review,
         "quality_ready": quality_ready,
         "quality_checks": quality_checks,
+        "quality_window": {"start_utc": _iso(oos_start), "end_utc": _iso(sample_end),
+                           "scope": "oos_only" if oos_start else "discovery_only"},
+        "hypotheses": {
+            "oi_funding_ls": {"quality_ready": oi_ready, "quality_checks": oi_checks,
+                              "next_review_utc": _iso(oi_review),
+                              "requires_liquidations": False},
+            "g1_liquidation": {"quality_ready": quality_ready and bool(
+                next_review and now >= next_review), "quality_checks": quality_checks,
+                               "next_review_utc": _iso(next_review)},
+            "s2_top_position": {"complete_events": s2_oi_complete,
+                                "minimum_events": 30,
+                                "quality_ready": oi_ready and s2_oi_complete >= 30,
+                                "note": "Top-position API key and point-in-time samples required; not a success probability"},
+        },
         "market": {
             "rows": market_rows, "symbols": len(symbols),
             "first_utc": _iso(first), "last_utc": _iso(last),
@@ -361,6 +403,18 @@ def format_research_readiness(report: dict) -> str:
     check_text = " · ".join(
         ("✅ " if checks.get(key) else "⬜ ") + label
         for key, label in check_names)
+    hypotheses = report.get("hypotheses", {})
+    oi = hypotheses.get("oi_funding_ls", {})
+    separate_tracks = (
+        "\n🧭 <b>Ayrı araştırma takvimleri</b>\n"
+        f"• OI/funding/LS (likidasyon gerektirmez): "
+        f"{_html.escape(str(oi.get('next_review_utc') or 'veri bekleniyor'))}\n"
+        "• G1 + likidasyon: aşağıdaki birleşik takvim.\n"
+        f"• Kalite penceresi: {_html.escape(str(report.get('quality_window', {}).get('scope', 'discovery_only')))}\n"
+    ) if hypotheses else ""
+    key_warning = ("⚠️ S2 top-position: BINANCE_MARKET_DATA_API_KEY yerelde yapılandırılmalı; "
+                   "anahtarı Telegram'a veya repoya yazma.\n"
+                   if report.get("s2_top_position_key_configured") is False else "")
     return (
         "🧪 <b>HAFTALIK ARAŞTIRMA HAZIRLIK RAPORU</b>\n"
         "<i>Veri birikimi · otomatik eşik değişikliği yok</i>\n\n"
@@ -391,6 +445,7 @@ def format_research_readiness(report: dict) -> str:
         f"{shadow.get('s2_funding_ls_divergence_candidates', 0)}\n\n"
         "✅ <b>Kalite kapıları</b>\n"
         f"{check_text}\n\n"
+        f"{separate_tracks}{key_warning}"
         f"⏭️ <b>Sonraki kontrol:</b> "
         f"{_html.escape(str(report['next_review_utc'] or 'veri baslayinca'))}"
         f"{review_suffix}\n"

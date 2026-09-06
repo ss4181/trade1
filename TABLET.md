@@ -57,6 +57,21 @@ cd ~/trade1
 pip install -r requirements.txt
 ```
 
+### 2b) Python sürümünü sabitle (önemli)
+
+CI ve `.python-version` **3.12** kullanır. Termux `pkg upgrade` Python'u
+3.14'e çekince site-packages kaybolur ve bot günlerce düşebilir (2026-08-01).
+
+```bash
+python -V    # 3.12.x olmali; 3.14+ ise asagidaki uyarilari oku
+```
+
+- `pkg upgrade` yapmadan önce `python -V` not et; sürüm değiştiyse hemen
+  `pip install -r requirements.txt` çalıştır.
+- Python 3.14+ görürsen boot loguna `DIKKAT: Python 3.14+` yazılır. Mümkünse
+  3.12'de kal (`pkg install python` ile yeni major'a geçme).
+- Cloud tarayıcı ve tablet bekçisi de 3.12'ye hizalandı.
+
 ### 3) .env dosyasını oluştur
 ```bash
 cp .env.example .env
@@ -602,3 +617,34 @@ bekleyen likidasyon haritası değildir.
 
 - Ev interneti/elektrik kesilirse bot da durur (dönünce elle başlat).
 - Bu bir uyarı botudur; işlem açmaz. Yatırım tavsiyesi değildir.
+# 7 Eylül 2026 güncellemesini uygulama
+
+Önce mevcut botu güvenli durdurun; `.env` ve arşivleri silmeyin:
+
+```bash
+cd ~/trade1
+touch .stop-signal-bot
+pkill -f "python signal_bot.py" 2>/dev/null || true
+git pull --ff-only origin main
+pip install -r requirements.txt
+python signal_bot.py --backup-now
+python signal_bot.py --backup-status
+rm -f .stop-signal-bot
+nohup ./termux/boot-signal-bot.sh >/dev/null 2>&1 &
+```
+
+`git pull` yerel değişiklik nedeniyle durursa reset/checkout yapmayın; önce
+değişikliği inceleyin. İlk yeni yedekte `backup_manifest.json` oluşur; Syncthing
+üzerinden bilgisayara bunun da gelmesi gerekir. `--backup-status` yalnız
+**tabletteki ara kopyayı** onaylar, bilgisayara teslimi onaylamaz.
+Yeni özel bildirim kuyruğu da yedek listesine dahildir; dosya sayısı artık 17'de
+sabit kalmaz. `.env` ve API anahtarları bu pakete dahil değildir.
+
+Pages CSV yayını istenirse `.env` içine `PUBLISH_QC_ENABLED=true` ekleyip botu
+yeniden başlatın. Diğer mevcut GitHub ayarları korunur. S2 top-position için
+gereken `BINANCE_MARKET_DATA_API_KEY` değerini yalnız bu yerel dosyaya girin;
+Telegram'a göndermeyin. Anahtar eksikliği mevcut S2 araştırma bildirimini kapatmaz.
+
+Yeni pano eski kayıtları “Doğrulanmadı” gösterebilir: bu, sinyalin başarısız
+olduğu değil, geçmiş Telegram teslim kanıtının bulunmadığı anlamına gelir.
+Eski performans cache'i v3 hesaplamalarıyla kademeli olarak yeniden ölçülür.

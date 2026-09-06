@@ -35,6 +35,7 @@ import argparse
 import base64
 import hashlib
 import html as _html
+import io
 import json
 import random
 import re
@@ -56,6 +57,8 @@ from pathlib import Path
 import requests
 
 import archive_backup as archive_backup_module
+from notification_delivery import DeliveryOutbox
+from signal_outcomes import hourly_outcome
 from derivatives_archive import (
     DEFAULT_STREAM_URL as DEFAULT_FORCE_ORDER_STREAM_URL,
     ForceOrderArchiveWorker,
@@ -253,6 +256,10 @@ RESEARCH_REPORT_SOURCE = _env(
 SCAN_INTERVAL_MINUTES = _env("SCAN_INTERVAL_MINUTES", 5)
 KLINE_LIMIT = _env("KLINE_LIMIT", 250)          # >= VOLUME_ZSCORE_WINDOW + 24 olmali
 SIGNAL_LOG = _env("SIGNAL_LOG", "signals.log")
+DELIVERY_OUTBOX = DeliveryOutbox(Path(__file__).parent / ".notification_outbox.json")
+_delivery_worker_lock = threading.Lock()
+PUBLISH_QC_ENABLED = _env("PUBLISH_QC_ENABLED", False, cast=_flag)
+_qc_candle_cache: dict = {}
 
 # Kullaniciya ozel fiyat-hedefi gozlem katmani. Sinyal kosullarini, guven
 # kademesini veya dogrulanmis zaman-cikisini DEGISTIRMEZ. Yalniz Telegram'a
@@ -675,6 +682,8 @@ LAST_SPOT_CLOSE: dict[str, float] = {}   # scan_symbol doldurur (arsiv/pano icin
 LAST_SPOT_AT: dict[str, float] = {}      # son mumun gercek kapanis epoch'u
 LAST_PERP_PRICE: dict[str, float] = {}   # archive ticker snapshot'i
 LAST_PERP_AT: dict[str, float] = {}      # futures ticker alinma epoch'u
+DISPLAY_PRICES: dict[tuple[str, str], tuple[float, float]] = {}
+_display_price_lock = threading.Lock()
 PRICE_STALE_AFTER_MINUTES = _env(
     "PRICE_STALE_AFTER_MINUTES", max(15.0, SCAN_INTERVAL_MINUTES * 3.0))
 # Canli karne icin yalnizca tek, acik bir round-trip maliyet varsayimi. Bu
@@ -1052,6 +1061,7 @@ def archive_backup_status() -> dict:
         "active": ARCHIVE_BACKUP_WORKER_ACTIVE,
         "interval_hours": ARCHIVE_BACKUP_INTERVAL_HOURS,
         "include_state": ARCHIVE_BACKUP_INCLUDE_STATE,
+        "verification_scope": "local_staging_only_not_pc_receipt",
         "directory": str(ARCHIVE_BACKUP_DIR),
         "directory_exists": ARCHIVE_BACKUP_DIR.is_dir(),
         "last_attempt_at": state.get("last_attempt_at"),
@@ -1104,9 +1114,10 @@ def _perform_archive_backup(now: datetime | None = None,
             ARCHIVE_DIR, ARCHIVE_BACKUP_DIR,
             include_state=ARCHIVE_BACKUP_INCLUDE_STATE,
             state_source=Path(__file__).parent)
-        if int(summary.get("files_total") or 0) <= 0:
+        if int(summary.get("archive_files") or 0) <= 0:
             raise RuntimeError("yedeklenecek araştırma arşivi bulunamadı")
         state.update({
+            "verification_scope": "local_staging_only_not_pc_receipt",
             "last_success_at": now.isoformat(), "last_error": None,
             "files_total": int(summary.get("files_total") or 0),
             "copied": int(summary.get("copied") or 0),
@@ -2262,6 +2273,10 @@ def _telegram_signal_text(sig: dict) -> str:
         f"💰 <b>{price_label}:</b> {_fmt_price(sig.get('price'))}",
         f"⏱️ <b>Beklenen ufuk:</b> ~{sig.get('horizon_hours', '?')} saat",
     ]
+    quote = sig.get("notification_quote")
+    if quote:
+        lines.append(f"📍 <b>Son ticker:</b> {_fmt_price(quote['price'])} "
+                     f"(yaş {quote['age_seconds']:.0f} sn; giriş garantisi değil)")
     for label, value in _signal_detail_rows(sig):
         icon = _TELEGRAM_DETAIL_ICONS.get(label, "•")
         lines.append(f"{icon} <b>{_html.escape(label)}:</b> "
@@ -2279,7 +2294,8 @@ def _telegram_signal_text(sig: dict) -> str:
         lines += [
             "", "<b>📌 Mekanik referanslar</b>",
             f"• Giriş ref: <b>{_fmt_price(ref.get('entry_ref'))}</b> "
-            "(sinyal mumu kapanışı)",
+            + ("(sinyaldeki perp fiyat referansı)" if strategy == "S2"
+             else "(sinyal mumu kapanışı)"),
             f"• Zaman çıkışı: <b>~{ref.get('time_exit_hours', '?')} saat</b>"
             + (f" · son { _html.escape(str(ref['exit_by']))}"
                if ref.get("exit_by") else ""),
@@ -2311,12 +2327,37 @@ def send_telegram_message(sig: dict) -> bool:
     """Telegram Bot API ile sinyal gonderir. Anahtar yoksa sessizce atlar;
     hata olursa uyarir ama tarama dongusunu ASLA durdurmaz."""
     if not ENABLE_TELEGRAM:
+        sig.update(delivery_confirmed=False, delivery_status="disabled")
         return False
-    text = _telegram_signal_text(sig)
-    delivered = False
-    for cid in TELEGRAM_SUBSCRIBERS:          # sahip + izinli arkadaslar
-        delivered = _telegram_send_text(text, chat_id=cid) or delivered
-    return delivered
+    try:
+        sig.setdefault("event_id", _signal_event_id(sig))
+        DELIVERY_OUTBOX.enqueue(sig, list(TELEGRAM_SUBSCRIBERS))
+        sig.update(DELIVERY_OUTBOX.deliver(
+            sig["event_id"], lambda cid, record: _telegram_send_text(
+                _telegram_signal_text(record), chat_id=cid)))
+        return sig["delivery_confirmed"]
+    except Exception as exc:
+        sig.update(delivery_confirmed=False, delivery_status="failed")
+        print(f"uyari: bildirim kuyrugu: {type(exc).__name__}",
+              file=sys.stderr, flush=True)
+        return False
+
+
+def _retry_signal_deliveries() -> None:
+    """Only unsent recipients; no new signal or cooldown is generated."""
+    if not ENABLE_TELEGRAM or not _delivery_worker_lock.acquire(blocking=False):
+        return
+    try:
+        for event_id in DELIVERY_OUTBOX.pending_ids():
+            DELIVERY_OUTBOX.deliver(event_id, lambda cid, record: (
+                cid in TELEGRAM_SUBSCRIBERS and _telegram_send_text(
+                    _telegram_signal_text(record), chat_id=cid)))
+        _backfill_price_targets_from_signal_log()
+    except Exception as exc:
+        print(f"uyari: bildirim tekrar denemesi: {type(exc).__name__}",
+              file=sys.stderr, flush=True)
+    finally:
+        _delivery_worker_lock.release()
 
 
 def _redact(text: str) -> str:
@@ -2399,9 +2440,12 @@ def _telegram_send_text(text: str, chat_id: str | None = None,
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
             json=payload, timeout=15)
         r.raise_for_status()
+        response_data = r.json()
+        if not isinstance(response_data, dict) or response_data.get("ok") is not True:
+            raise requests.RequestException("telegram_api_not_ok")
         _note_notify("telegram", True)
         return True
-    except requests.RequestException as e:
+    except (requests.RequestException, ValueError) as e:
         _note_notify("telegram", False, str(e))
         print(f"uyari: Telegram gonderilemedi: {_redact(str(e))}",
               file=sys.stderr, flush=True)
@@ -2557,6 +2601,7 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
                       "FAILED" if expired else "PENDING")
     return {
         "basis": "signal_notification_price",
+        "delivery_evidence": event.get("delivery_evidence", "legacy_unverified"),
         "entry_ref": event.get("entry_ref"),
         "started_at": event.get("started_at"),
         "expires_at": event.get("expires_at"),
@@ -2586,7 +2631,7 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
     try:
         entry = float(record["price"])
         horizon = float(record["horizon_hours"])
-        notified = _target_dt(record["notified_at"])
+        notified = _target_dt(record.get("delivered_at") or record["notified_at"])
     except (KeyError, TypeError, ValueError, OverflowError):
         return None
     direction = str(record.get("direction") or "").upper()
@@ -2632,6 +2677,8 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
                 "max_adverse_pct": 0.0,
                 "last_error": None,
                 "replay_silent_before_ms": start_ms,
+                "delivery_evidence": ("confirmed" if record.get("delivery_confirmed")
+                                      else "legacy_unverified"),
             }
             if persist:
                 events[event_id] = event
@@ -3028,30 +3075,32 @@ def _backfill_price_targets_from_signal_log() -> int:
     if not PRICE_TARGET_TRACKING_ENABLED:
         return 0
     path = Path(__file__).parent / SIGNAL_LOG
-    if not path.exists():
-        return 0
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(
         days=max(1, PRICE_TARGET_RETENTION_DAYS))
     now_closed_ms = (int(now.timestamp() * 1000) // 300_000) * 300_000
     added = 0
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     except OSError:
-        return 0
+        lines = []
+    # The private outbox is authoritative even if writing signals.log failed.
+    try:
+        lines.extend(json.dumps(r) for r in DELIVERY_OUTBOX.confirmed_records())
+    except (OSError, ValueError):
+        pass
     for line in lines:
         try:
             record = json.loads(line)
+            if not isinstance(record, dict):
+                continue
             notified = _target_dt(record.get("notified_at"))
         except (TypeError, ValueError):
             continue
         if (notified < cutoff or record.get("performance_excluded")
                 or str(record.get("strategy") or "").startswith("TEST")):
             continue
-        delivered = record.get("push_allowed")
-        if delivered is None:
-            delivered = not bool(record.get("suppressed"))
-        if not delivered:
+        if record.get("delivery_confirmed") is not True:
             continue
         event_id = _signal_event_id(record)
         with _price_target_lock:
@@ -3117,6 +3166,11 @@ def notify(sig: dict, push: bool = True) -> dict:
     Anti-spam UST AKISTA yapilir (ScanState.should_fire — kenar-tetikleme +
     strateji-basi cooldown): buraya ulasan her sinyal zaten tekillestirilmistir."""
     record = _delivery_record(sig, push)
+    market = record.get("performance_market") or ("um_perp" if record.get("strategy") == "S2" else "spot")
+    quote = DISPLAY_PRICES.get((market, record.get("performance_symbol") or record.get("symbol")))
+    if quote and 0 <= time.time() - quote[1] <= PRICE_STALE_AFTER_MINUTES * 60:
+        record["notification_quote"] = {"price": quote[0], "observed_at_epoch": quote[1],
+                                        "age_seconds": round(time.time() - quote[1], 1)}
     # Mesajda hedef fiyatlari gorunsun; kalici karneye ise ancak Telegram API'si
     # en az bir aboneye basariyla teslim ettikten sonra eklenir.
     target_profile = _register_price_targets(record, persist=False)
@@ -3137,6 +3191,15 @@ def notify(sig: dict, push: bool = True) -> dict:
             f"fiyat={_fmt_price(record['price'])} "
             f"~{record['horizon_hours']}h | {record['note']}" + tag)
     print(line, flush=True)
+    if record["suppressed"]:
+        record.update(delivery_confirmed=False, delivery_status="suppressed")
+    else:
+        delivered = send_telegram_message(record)
+        record["delivery_confirmed"] = bool(delivered)
+        record.setdefault("delivery_status", "delivered" if delivered else "failed")
+        if delivered:
+            record.setdefault("delivered_at", datetime.now(timezone.utc).isoformat())
+            _register_price_targets(record, persist=True)
     try:
         with open(Path(__file__).parent / SIGNAL_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -3145,10 +3208,6 @@ def notify(sig: dict, push: bool = True) -> dict:
         print(f"uyari: sinyal logu yazilamadi: {e}", file=sys.stderr, flush=True)
     with _recent_lock:
         RECENT_SIGNALS.appendleft(record)
-    if record["suppressed"]:
-        return record
-    if send_telegram_message(record):
-        _register_price_targets(record, persist=True)
     return record
 
 
@@ -3292,6 +3351,7 @@ def research_readiness_report() -> dict:
     # Dizin yolu yayımlanmaz; yalnız güvenli ortam etiketi çoklu süreçleri
     # (özellikle eski Render kopyası ile Termux) ayırt etmeyi sağlar.
     report["source_label"] = RESEARCH_REPORT_SOURCE or "tanımsız süreç"
+    report["s2_top_position_key_configured"] = bool(BINANCE_MARKET_DATA_API_KEY)
     return report
 
 
@@ -3872,10 +3932,11 @@ def _run_forever_locked(once: bool = False,
         except Exception as e:  # tek dongu hatasi 7/24 servisi dusurmemeli
             LAST_SCAN_FAILURE_AT = datetime.now(timezone.utc).isoformat()
             CONSECUTIVE_SCAN_FAILURES += 1
-            LAST_LOOP_ERROR = f"{type(e).__name__}: {e}"
-            print(f"hata: tarama dongusunde beklenmeyen hata: {e}",
+            LAST_LOOP_ERROR = f"{type(e).__name__}: {_redact(str(e))}"
+            print(f"hata: tarama dongusunde beklenmeyen hata: {_redact(str(e))}",
                    file=sys.stderr, flush=True)
-            traceback.print_exc(file=sys.stderr)
+            if once:
+                raise SystemExit(1) from None
         finally:
             LAST_SCAN_FINISHED_AT = datetime.now(timezone.utc).isoformat()
             LAST_LOOP_HEARTBEAT_AT = LAST_SCAN_FINISHED_AT
@@ -3884,6 +3945,11 @@ def _run_forever_locked(once: bool = False,
                 # Yedek tarama sonucuna bağlı değildir: mevcut arşiv, Binance
                 # taraması o turda hata verse bile vadesi geldiyse kopyalanır.
                 _start_archive_backup_worker()
+                threading.Thread(target=_retry_signal_deliveries,
+                                 name="telegram-retry", daemon=True).start()
+                if PUBLISH_ENABLED or DASHBOARD_ENABLED:
+                    threading.Thread(target=_refresh_display_prices,
+                                     name="display-prices", daemon=True).start()
         if once:
             break
         # bir sonraki bar kapanisindan ~90sn sonrasina hizalan
@@ -3980,7 +4046,7 @@ def run_check() -> int:
 # --------------------------------------------------------------------------
 PERF_CACHE_FILE = Path(__file__).parent / ".perf_cache.json"
 PERF_MAX_SIGNALS = _env("PERF_MAX_SIGNALS", 60)
-PERF_CACHE_SCHEMA_VERSION = 2
+PERF_CACHE_SCHEMA_VERSION = 3
 _performance_worker_lock = threading.Lock()
 _performance_data_lock = threading.RLock()
 PERFORMANCE_WORKER_ACTIVE = False
@@ -3991,7 +4057,9 @@ def _perf_key(sig: dict) -> str:
     market = sig.get("performance_market") or (
         "um_perp" if sig.get("strategy") == "S2" else "spot")
     return (f"v{PERF_CACHE_SCHEMA_VERSION}|{market}|{sig['bar_time']}|"
-            f"{sig['symbol']}|{sig['strategy']}")
+            f"{sig['symbol']}|{sig['strategy']}|{sig.get('performance_symbol') or sig['symbol']}|"
+            f"{sig.get('direction', 'LONG')}|{sig.get('horizon_hours')}|"
+            f"{sig.get('config_version', 'legacy')}")
 
 
 def _signal_universe(sig: dict) -> str:
@@ -4137,7 +4205,7 @@ def _realized_performance_unlocked(max_signals: int = None,
             sig = json.loads(line)
         except ValueError:
             continue
-        if sig.get("strategy", "").startswith("TEST"):
+        if not isinstance(sig, dict) or str(sig.get("strategy", "")).startswith("TEST"):
             continue
         if sig.get("performance_excluded"):
             continue
@@ -4156,9 +4224,11 @@ def _realized_performance_unlocked(max_signals: int = None,
             continue
         try:
             bar_t = datetime.fromisoformat(sig["bar_time"])
-        except (KeyError, ValueError):
+            if bar_t.tzinfo is None:
+                bar_t = bar_t.replace(tzinfo=timezone.utc)
+            h = int(sig.get("horizon_hours") or 0)
+        except (KeyError, ValueError, TypeError, OverflowError):
             continue
-        h = int(sig.get("horizon_hours") or 0)
         if h <= 0 or bar_t + timedelta(hours=h + 2) > now:
             continue                       # henuz olgunlasmadi
         key = _perf_key(sig)
@@ -4190,17 +4260,12 @@ def _realized_performance_unlocked(max_signals: int = None,
             try:
                 fetcher = (fetch_futures_klines_at
                            if market == "um_perp" else fetch_klines_at)
-                ks = fetcher(sig["symbol"],
+                ks = fetcher(sig.get("performance_symbol") or sig["symbol"],
                              int(bar_t.timestamp() * 1000), h + 2)
-                if len(ks) < h + 1:
-                    continue
-                ret = (ks[h]["close"] / ks[1]["open"] - 1) * 100
-                cache[key] = {
-                    "return_pct": ret,
-                    "entry": ks[1]["open"],
-                    "exit": ks[h]["close"],
-                    "market": market,
-                }
+                outcome = hourly_outcome(ks, int(bar_t.timestamp() * 1000),
+                                         h, sig.get("direction", "LONG"))
+                ret = outcome["return_pct"]
+                cache[key] = {**outcome, "market": market}
                 time.sleep(0.1)
             except (MarketRateLimitError, MarketTransientError):
                 raise
@@ -4681,9 +4746,12 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
     rows = []
     log_path = Path(__file__).parent / SIGNAL_LOG
     lines = []
+    total_log_lines = 0
     if log_path.exists():
         try:
-            lines = log_path.read_text(encoding="utf-8").splitlines()[-max_rows:]
+            lines = log_path.read_text(encoding="utf-8").splitlines()
+            total_log_lines = len(lines)
+            lines = lines[-max_rows:]
         except OSError:
             lines = []
     live_rets: dict[str, list[float]] = {}  # geriye uyumlu strateji toplami
@@ -4692,8 +4760,12 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
     for line in lines:
         try:
             sig = json.loads(line)
+            if not isinstance(sig, dict):
+                continue
             bar_t = datetime.fromisoformat(sig["bar_time"])
-        except (ValueError, KeyError):
+            if bar_t.tzinfo is None:
+                bar_t = bar_t.replace(tzinfo=timezone.utc)
+        except (ValueError, KeyError, TypeError):
             continue
         strat = sig.get("strategy", "?")
         if strat.startswith("TEST"):
@@ -4728,6 +4800,12 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         else:
             observed_at = LAST_SPOT_AT.get(symbol)
             observed_price = LAST_SPOT_CLOSE.get(symbol)
+        quote_symbol = sig.get("performance_symbol") or symbol
+        quote = DISPLAY_PRICES.get((performance_market, quote_symbol))
+        price_source = "cached_hourly_close" if performance_market == "spot" else "archive_ticker"
+        if quote:
+            observed_price, observed_at = quote
+            price_source = "display_ticker"
         price_age_s = (max(0.0, time.time() - observed_at)
                        if observed_at is not None else None)
         price_stale = (price_age_s is None
@@ -4735,7 +4813,8 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         cur = None if price_stale or not same_market else observed_price
         gross = None
         if not matured and cur and entry:
-            gross = round((cur / entry - 1) * 100, 4)
+            gross = round((cur / entry - 1) * 100 * (
+                -1 if sig.get("direction") == "SHORT" else 1), 4)
         elif matured and realized is not None:
             gross = float(realized)
         net = (round(gross - LIVE_ROUND_TRIP_COST_BPS / 100.0, 4)
@@ -4748,6 +4827,15 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
                     if stored_suppressed is not None else
                     CONF_RANK.get(conf, 2) < CONF_RANK.get(
                         NOTIFY_MIN_CONFIDENCE, 1))
+        try:
+            delivery = DELIVERY_OUTBOX.get_public(event_id)
+        except (OSError, ValueError):
+            delivery = {"delivery_status": "unknown", "delivery_confirmed": False}
+        if delivery["delivery_status"] == "unknown" and sig.get("delivery_status"):
+            delivery = {k: sig[k] for k in ("delivery_status", "delivery_confirmed", "delivered_at") if k in sig}
+        notification_status = ("SESSIZ" if silenced else {
+            "delivered": "GONDERILDI", "partial": "KISMI", "pending": "BEKLIYOR",
+            "failed": "BASARISIZ", "disabled": "KAPALI"}.get(delivery["delivery_status"], "DOGRULANMADI"))
         rows.append({
             "t": sig["bar_time"], "event_id": event_id,
             "strategy": strat, "symbol": sig.get("symbol"),
@@ -4756,6 +4844,13 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "universe": _signal_universe(sig),
             "config_version": sig.get("config_version") or "legacy",
             "entry": entry, "horizon_h": h,
+            "signal_price": sig.get("price"),
+            "signal_price_source": sig.get("price_source") or "signal_bar_close",
+            "notification_quote": sig.get("notification_quote"),
+            "notified_at": sig.get("notified_at"),
+            "delivered_at": delivery.get("delivered_at"),
+            "delivery_confirmed": delivery.get("delivery_confirmed", False),
+            "current_price_source": price_source,
             "entry_basis": ("next_bar_open" if matured
                             and isinstance(cached_perf, dict)
                             else "signal_time_provisional"),
@@ -4773,6 +4868,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "price_stale": price_stale,
             "pnl_unavailable_reason": (
                 "event_only_no_trade_outcome" if performance_excluded else
+                "matured_outcome_missing_or_recalculating" if matured and realized is None else
                 "entry_and_performance_market_mismatch"
                 if not matured and not same_market else
                 "market_price_stale_or_missing"
@@ -4793,7 +4889,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "market_regime_as_of": sig.get("market_regime_as_of"),
             "silenced": silenced,
             "push_allowed": sig.get("push_allowed", not silenced),
-            "notification_status": ("SESSIZ" if silenced else "GONDERILDI"),
+            "notification_status": notification_status,
             "suppression_reason": sig.get("suppression_reason"),
             "note": sig.get("note", ""),
             "why": _signal_why(sig),
@@ -4842,8 +4938,20 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
     backup.pop("directory", None)
     return {
         "now": now.isoformat(timespec="seconds"),
+        "history_scope": {"total_log_lines": total_log_lines, "window_log_lines": len(lines),
+                          "displayed_events": len(rows), "limit": max_rows,
+                          "truncated": total_log_lines > len(lines),
+                          "first_event_utc": min((r["t"] for r in rows), default=None),
+                          "last_event_utc": max((r["t"] for r in rows), default=None),
+                          "performance_scope": "displayed_events_only",
+                          "target_scope": "retained_price_target_state_including_legacy_unverified"},
         "status": {
             "scans": SCANS_COMPLETED, "last_scan": LAST_SCAN_AT,
+            "runtime_source": _default_research_report_source(),
+            "signal_timeframe": "1h",
+            "qc_enabled": PUBLISH_QC_ENABLED,
+            "s2_top_position_readiness": ("configured_collecting_not_validated"
+                if BINANCE_MARKET_DATA_API_KEY else "blocked_missing_BINANCE_MARKET_DATA_API_KEY"),
             "errors": LAST_SCAN_ERRORS, "symbols": len(SYMBOLS),
             "interval_min": SCAN_INTERVAL_MINUTES,
             "min_conf": NOTIFY_MIN_CONFIDENCE,
@@ -4880,204 +4988,38 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
     }
 
 
-_DASHBOARD_HTML_TEMPLATE_LEGACY = """<!doctype html><html lang="tr"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Signal Bot Panosu</title><style>
-:root{--bg:#0b1220;--card:#111a2e;--line:#22304f;--tx:#eaf0fb;--mut:#8aa0c6;
---up:#2ecc71;--dn:#e06c6c;--bl:#2c7be5}
-*{box-sizing:border-box;margin:0}body{background:var(--bg);color:var(--tx);
-font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;padding:14px;max-width:1100px;margin:0 auto}
-h1{font-size:20px;margin-bottom:4px}.sub{color:var(--mut);font-size:12px;margin-bottom:12px}
-.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
-.chip{background:var(--card);border:1px solid var(--line);border-radius:14px;
-padding:3px 10px;font-size:12px;color:var(--mut)}.chip b{color:var(--tx)}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:12px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;cursor:pointer;transition:border-color .15s}
-.card:hover{border-color:var(--bl)}.card h3{font-size:15px;display:flex;justify-content:space-between;align-items:center;gap:6px}
-.badge{font-size:10px;border-radius:8px;padding:2px 7px;font-weight:700;white-space:nowrap}
-.b3{background:#1d4ed8}.b2{background:#0e7490}.b1{background:#a16207}.b0{background:#7f1d1d}
-.bo{background:#4b5563}.cohort{border-top:1px solid var(--line);margin-top:7px;
-padding-top:6px;font-size:11px;color:var(--mut);line-height:1.45}.cohort b{color:var(--tx)}
-.card .row{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-top:5px}
-.card .row b{color:var(--tx)}.off{opacity:.55}.hint{color:var(--bl);font-size:11px;margin-top:7px}
-.doc{background:var(--card);border:1px solid var(--bl);border-radius:12px;padding:14px 16px;margin-bottom:14px}
-.doc h2{font-size:16px;margin-bottom:8px}.doc p{font-size:13px;margin:6px 0;color:#c7d3ea}
-.doc p b{color:var(--bl)}.doc .x{float:right;cursor:pointer;color:var(--mut)}
-.ctrl{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center;font-size:13px}
-select,input{background:var(--card);color:var(--tx);border:1px solid var(--line);
-border-radius:8px;padding:6px 8px;font-size:13px}
-.tablewrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:12px}
-table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:820px}
-th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
-th{color:var(--mut);font-weight:600;position:sticky;top:0;background:var(--card)}
-tr.sig{cursor:pointer}tr.sig:hover td{background:#16203a}
-.up{color:var(--up);font-weight:700}.dn{color:var(--dn);font-weight:700}
-.tag{font-size:10px;border:1px solid var(--line);border-radius:6px;padding:1px 5px;color:var(--mut)}
-.drawer td{background:#0d1526;white-space:normal}
-.why{font-size:13px;color:#c7d3ea;line-height:1.55;margin-bottom:8px}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font-size:12px;color:var(--mut);max-width:520px}
-.kv b{color:var(--tx)}
-.foot{color:#5b6b88;font-size:11px;margin-top:12px;line-height:1.6}
-@media(max-width:600px){body{padding:8px}}
-</style></head><body>
-<h1>📡 Signal Bot Panosu</h1>
-<div class="sub">Karta veya sinyal satırına tıkla → nasıl çalıştığını / neden geldiğini gösterir.</div>
-<div class="chips" id="chips">yükleniyor…</div>
-<div class="cards" id="cards"></div>
-<div id="docWrap"></div>
-<div class="ctrl">
- Strateji <select id="fStrat"><option value="">hepsi</option>
- <option>S1+S4</option><option>S1</option><option>S3</option><option>S2</option>
- <option>S5</option><option>S6</option></select>
- Durum <select id="fStat"><option value="">hepsi</option>
- <option>AKTIF</option><option>OLGUN</option></select>
- Pozisyon $ <input id="fNot" type="number" value="100" min="1" style="width:84px">
- <span class="chip" id="cnt"></span>
-</div>
-<div class="tablewrap"><table><thead><tr>
-<th>Zaman (UTC)</th><th>Strateji</th><th>Güven</th><th>Sembol</th><th>Giriş ref</th>
-<th>Son çıkış</th><th>Durum</th><th>TP2 / TP3</th><th>Net K/Z %</th><th>Net K/Z $</th><th>Not</th>
-</tr></thead><tbody id="rows"></tbody></table></div>
-<div class="foot" id="foot"></div>
-<script>
-const DATA_URL="{{DATA_URL}}";
-const B={3:"b3",2:"b2",1:"b1",0:"b0",[-1]:"bo"},R={"COK YUKSEK":3,"YUKSEK":2,"ORTA":1,"DUSUK":0,"GOZLEM":-1};
-const esc=s=>(s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const fp=x=>{if(x==null)return "—";x=Number(x);
- if(x>=1)return x.toPrecision(6).replace(/\\.?0+$/,"");
- return x.toFixed(10).replace(/0+$/,"").replace(/\\.$/,"")||"0"};
-const fpc=x=>x==null?'<span class="tag">ölçülüyor</span>':
- `<span class="${x>=0?'up':'dn'}">${x>=0?'+':''}${x.toFixed(2)}%</span>`;
-function tpCell(r){const p=r.price_target;if(!p)return '<span class="tag">izlenmiyor</span>';
- return (p.targets||[]).map(t=>{const mark=t.status==='HIT'?'✓':t.status==='MISSED'?'✕':'…';
-  const cls=t.status==='HIT'?'up':t.status==='MISSED'?'dn':'tag';
-  return `<span class="${cls}" title="hedef fiyat ${fp(t.price)}">TP${t.level_pct}${mark}</span>`}).join(' ');}
-let D=null,openDoc=null,openRow=null;
-function notifyChip(s){
- const h=s.notify_health||{},tg=h.telegram||{};
- const bad=(ch,on)=>on===false?"kapalı":(ch.last_error&&!ch.last_ok?"HATA":
-   (ch.fail&&ch.last_error?"son hata var":"çalışıyor"));
- const tgTxt=bad(tg,s.telegram_enabled);
- const warn=(t)=>t==="çalışıyor"?"":' style="border-color:#e06c6c;color:#e06c6c"';
- return `<span class="chip"${warn(tgTxt)}>Telegram <b>${tgTxt}</b>`+
-  `${tg.ok?` (${tg.ok} ok`:""}${tg.fail?`, ${tg.fail} hata`:""}${tg.ok?")":""}</span>`+
-  (tg.last_error?`<span class="chip" style="border-color:#e06c6c;color:#e06c6c">son TG hatası: ${esc(tg.last_error)}</span>`:"");}
-function toggleDoc(name){openDoc=openDoc===name?null:name;drawDoc();}
-function drawDoc(){const w=document.getElementById("docWrap");
- if(!openDoc||!D.docs||!D.docs[openDoc]){w.innerHTML="";return;}
- const d=D.docs[openDoc];
- w.innerHTML=`<div class="doc"><span class="x" onclick="toggleDoc(null)">✕ kapat</span>
-  <h2>${esc(d.title)}</h2>
-  <p><b>Nasıl çalışır:</b> ${esc(d.how)}</p>
-  <p><b>Giriş koşulu:</b> ${esc(d.entry)}</p>
-  <p><b>Çıkış:</b> ${esc(d.exit)}</p>
-  <p><b>Backtest:</b> ${esc(d.stats)}</p>
-  <p><b>Risk:</b> ${esc(d.risk)}</p></div>`;
- w.scrollIntoView({behavior:"smooth",block:"nearest"});}
-function drawer(r){const rf=r.ref||{};
- const touch=(rf.touch||[]).map(t=>`+${t[0]}% → %${t[1]}`).join(" · ");
- const stopt=(rf.stopt||[]).map(t=>`-${t[0]}% → %${t[1]}`).join(" · ");
- let ref="";
-  if(rf.median_price!=null)ref=`<div class="kv">
-   ${rf.stats_scope?`<span>Tarihsel kaynak</span><b>${esc(rf.stats_scope)}</b>`:""}
-   <span>Tarihsel medyan senaryo</span><b>${fp(rf.median_price)} (${rf.hist_median_pct>=0?'+':''}${rf.hist_median_pct}%)</b>
-  <span>Kötü %10 senaryo</span><b>${fp(rf.q10_price)} (${rf.hist_q10_pct}%)</b>
-  <span>İyi %10 senaryo</span><b>${fp(rf.q90_price)} (+${rf.hist_q90_pct}%)</b>
-  ${rf.sigma_h_pct!=null?`<span>Tipik dalgalanma (±1σ)</span><b>±${rf.sigma_h_pct}%</b>`:""}
-  ${touch?`<span>Hedefe dokunma olasılığı</span><b>${touch}</b>`:""}
-  ${stopt?`<span>Stop'a dokunma olasılığı</span><b>${stopt}</b>`:""}
- </div>`;
- const meta=[`Evren: <b>${esc(r.universe)}</b>`,`Config: <b>${esc(r.config_version)}</b>`,
-  `Round-trip maliyet: <b>${r.round_trip_cost_bps}bp</b>`,
-  r.funding_cost_status==="not_modeled"?"Funding maliyeti: <b>modellenmedi</b>":""].filter(Boolean).join(" · ");
- const det=(r.detail||[]).map(d=>`${esc(d[0])}: <b>${esc(d[1])}</b>`).join(" · ");
- const pt=r.price_target;
- const ptRows=pt?`<div class="kv" style="margin:8px 0">
-  <span>Fiyat-hedefi referansı</span><b>${fp(pt.entry_ref)} (bildirim fiyatı)</b>
-  ${(pt.targets||[]).map(t=>`<span>TP${t.level_pct} · ${fp(t.price)}</span><b>${esc(t.status)}${t.hit_at?' · '+esc(t.hit_at.slice(0,16)):''}</b>`).join('')}
-  <span>En iyi / en ters hareket</span><b>${pt.max_favorable_pct==null?'—':pt.max_favorable_pct.toFixed(2)+'%'} / ${pt.max_adverse_pct==null?'—':pt.max_adverse_pct.toFixed(2)+'%'}</b>
-  <span>İzleme aralığı</span><b>${esc((pt.started_at||'').slice(0,16))} → ${esc((pt.expires_at||'').slice(0,16))}</b>
- </div>`:'';
- return `<div class="why">🔍 <b>Neden geldi:</b> ${esc(r.why)}</div>
-  <div class="kv" style="margin-bottom:8px"><span>Ölçüm kohortu</span><b>${meta}</b></div>
-  ${det?`<div class="kv" style="margin-bottom:8px"><span>Ölçümler</span><b>${det}</b></div>`:""}
-  ${ptRows}
-  ${ref}
-  <div style="font-size:11px;color:var(--mut);margin-top:8px">TP2/TP3 coinin brüt fiyat değişimidir; ücret/slippage düşülmez ve kaldıraçlı ROE değildir. Bot emir vermez. Fiyat senaryoları 24 aylık dağılımdan; emir seviyesi değildir.</div>`;}
-function draw(){if(!D)return;const s=D.status;
- document.getElementById("chips").innerHTML=
-  `<span class="chip">⏱ tarama <b>${s.interval_min}dk</b></span>`+
-  `<span class="chip">son tarama <b>${(s.last_scan||"—").slice(11,16)}</b></span>`+
-  `<span class="chip">evren <b>${s.symbols}</b></span>`+
-  `<span class="chip">hata <b>${s.errors}</b></span>`+
-  `<span class="chip">push eşiği <b>${s.min_conf}+</b></span>`+
-  `<span class="chip">kapalı <b>${s.disabled.join(",")||"yok"}</b></span>`+
-   `<span class="chip">net maliyet <b>${s.round_trip_cost_bps}bp</b></span>`+
-   `<span class="chip">fiyat hedefi <b>${s.price_target_tracking_enabled?'TP '+s.price_target_levels_pct.join('/'):'kapalı'}</b></span>`+
-   `<span class="chip">S3 rejim <b>${esc((s.market_regime||{}).label||"UNKNOWN")}</b></span>`+
-  notifyChip(s);
- document.getElementById("cards").innerHTML=D.strategies.map(x=>{
-   const live=(x.live_cohorts||[]).length?(x.live_cohorts||[]).map(c=>{
-    const ci=c.net_winrate_ci95_low_pct==null?"—":`%${c.net_winrate_ci95_low_pct}–%${c.net_winrate_ci95_high_pct}`;
-    return `<div class="cohort"><b>${esc(c.universe)} · ${esc(c.confidence)} · ${esc(c.config_version)}</b><br>`+
-     `net med ${c.net_median_pct>=0?'+':''}${c.net_median_pct}% · isabet %${c.net_winrate_pct} `+
-     `(95% GA ${ci}) · q10 ${c.q10_net_return_pct}% · N=${c.n}`+
-     `${c.sample_warning?' · ⚠ küçük N':''}${c.funding_cost_status==='not_modeled'?' · funding yok':''}</div>`}).join(""):
-     '<div class="cohort">henüz olgun kohort yok</div>';
-   const bt=(x.bt_med==null)?"—":`${x.bt_med>=0?'+':''}${x.bt_med}% / %${x.bt_wr} (N=${x.bt_n})`;
-   const tails=(x.bt_q10==null||x.bt_q90==null)?"raporlanmadı":`${x.bt_q10}% / +${x.bt_q90}%`;
-   const tp=Object.entries(x.price_targets||{}).map(([level,t])=>
-    `TP${level}: ${t.hit_rate_pct==null?'—':'%'+t.hit_rate_pct} (${t.hit}/${t.resolved}, ${t.pending} bekliyor)`).join(' · ');
-   return `<div class="card ${x.pushed?'':'off'}" onclick="toggleDoc('${x.name}')"><h3>${x.name}
-    <span class="badge ${B[R[x.confidence]]}">${x.confidence}</span></h3>
-    <div class="row"><span>Tarihsel test (ham${x.bt_h?' · '+x.bt_h+'h':''})</span><b>${bt}</b></div>
-     <div class="row"><span>Tarihsel kötü %10 / iyi %10</span><b>${tails}</b></div>
-     ${live}
-     <div class="row"><span>Canlı fiyat-hedefi</span><b>${tp||'henüz kayıt yok'}</b></div>
-     <div class="row"><span>Push</span><b>${x.pushed?"açık":"SESSİZ"}</b></div>
-   <div class="hint">▸ nasıl çalışır (tıkla)</div></div>`}).join("");
- drawDoc();
- const fs=document.getElementById("fStrat").value,ft=document.getElementById("fStat").value,
- not=+document.getElementById("fNot").value||100;
- const rows=D.signals.filter(r=>(!fs||r.strategy===fs)&&(!ft||r.status===ft));
- document.getElementById("cnt").textContent=rows.length+" sinyal";
- document.getElementById("rows").innerHTML=rows.map((r,i)=>{
-  const usd=r.pnl_pct==null?"—":`<span class="${r.pnl_pct>=0?'up':'dn'}">${(r.pnl_pct*not/100).toFixed(2)}$</span>`;
-   const noPnl=r.pnl_unavailable_reason?
-    ` <span class="tag">${r.pnl_unavailable_reason==="entry_and_performance_market_mismatch"?"PİYASA UYUŞMUYOR":"FİYAT ESKİ/YOK"}</span>`:"";
-   const st=r.status==="AKTIF"?`AKTİF <span class="tag">${r.remaining_h}h kaldı</span>${noPnl}`:"OLGUN";
-  const main=`<tr class="sig" data-i="${i}"><td>${r.t.slice(0,16).replace("T"," ")}</td>
-   <td><b>${r.strategy}</b>${r.silenced?' <span class="tag">SESSİZ</span>':''}</td>
-   <td><span class="badge ${B[R[r.confidence]]}">${r.confidence}</span></td>
-   <td>${r.symbol}</td><td>${fp(r.entry)}</td><td>${r.exit_by}</td><td>${st}</td><td>${tpCell(r)}</td>
-   <td>${fpc(r.pnl_pct)}</td><td>${usd}</td>
-   <td style="white-space:normal;min-width:170px;color:var(--mut)">▸ ${esc(r.note)}</td></tr>`;
-   const dr=`<tr class="drawer" data-d="${i}" ${openRow===r.t+r.symbol?"":"hidden"}><td colspan="11">${drawer(r)}</td></tr>`;
-   return main+dr}).join("")
-   ||'<tr><td colspan="11" style="color:var(--mut)">kayıt yok</td></tr>';
- document.getElementById("foot").innerHTML=D.foot||FOOT;}
-const FOOT=`TP2/TP3: yalnız Telegram'a gerçekten gönderilmiş sinyallerde, bildirim fiyatından sonra coinin kaldıraçsız brüt fiyatının +%2/+%3 hedefe dokunmasını gösterir; ücret/slippage düşülmez, ROE değildir ve emir kapatmaz. K/Z tanımı: <b>AKTİF</b> satırlarda sinyal anındaki aynı piyasa fiyatı geçici giriş referansıdır; gerçek gözlem zamanı tazelik sınırını aşarsa veya giriş/performans piyasası uyuşmazsa K/Z gösterilmez. <b>OLGUN</b> satırlarda gerçekleşen sonuç giriş = sonraki bar açılışı, çıkış = ufuk kapanışıyla hesaplanır. Gösterilen K/Z, açıkça yazılan round-trip maliyet varsayımı düşülmüş NET değerdir; S2 funding maliyeti modellenmemiştir. S2 sonucu USD-M perpetual, diğerleri spot mumlarından ölçülür. "SESSİZ" = teslim politikası nedeniyle loglandı ama push edilmedi. S3 BULL/BEAR etiketi salt gözlemdir, sinyali filtrelemez. Bu bir izleme panosudur; yatırım tavsiyesi değildir.`;
-document.getElementById("rows").addEventListener("click",e=>{
- const tr=e.target.closest("tr.sig");if(!tr)return;
- const rows=D.signals.filter(r=>{const fs=document.getElementById("fStrat").value,
-  ft=document.getElementById("fStat").value;return(!fs||r.strategy===fs)&&(!ft||r.status===ft)});
- const r=rows[+tr.dataset.i];const key=r.t+r.symbol;openRow=openRow===key?null:key;draw();});
-async function load(){try{const sep=DATA_URL.includes("?")?"&":"?";
- const r=await fetch(DATA_URL+sep+"t="+Date.now(),{cache:"no-store"});D=await r.json();
- if(!D.foot)D.foot=FOOT;draw();}
- catch(e){document.getElementById("chips").innerHTML='<span class="chip">bağlantı hatası</span>';}}
-["fStrat","fStat","fNot"].forEach(id=>document.getElementById(id).addEventListener("input",draw));
-load();setInterval(load,60000);
-</script></body></html>"""
+def _refresh_display_prices():
+    """Two public ticker requests; NEVER changes candles, archive or strategy state."""
+    if not _display_price_lock.acquire(blocking=False):
+        return
+    try:
+        for market, getter, path in (("spot", _spot_get, "/api/v3/ticker/price"),
+                                     ("um_perp", _futures_get, "/fapi/v1/ticker/price")):
+            try:
+                payload = getter(path).json()
+                stamp = time.time()
+                for row in payload:
+                    price = float(row["price"])
+                    if math.isfinite(price) and price > 0:
+                        DISPLAY_PRICES[(market, row["symbol"])] = (price, stamp)
+            except Exception:
+                # Stale prices stay timestamped and are hidden by the UI gate.
+                continue
+    finally:
+        _display_price_lock.release()
+
+
+# Dashboard has one canonical template: dashboard.html.
 
 # Arayüz ayrı dosyada tutulur; GitHub Pages yayını yine tek index.html üretir.
-# Eski gömülü sürüm, paketleme hatasında yerel panonun tamamen kaybolmaması için
-# salt-okunur fallback'tir.
+# Do not silently display an obsolete performance UI after a packaging error.
 try:
     DASHBOARD_HTML_TEMPLATE = (Path(__file__).parent / "dashboard.html").read_text(
         encoding="utf-8")
 except OSError:
-    DASHBOARD_HTML_TEMPLATE = _DASHBOARD_HTML_TEMPLATE_LEGACY
+    DASHBOARD_HTML_TEMPLATE = ('<!doctype html><meta charset="utf-8">'
+                               '<h1>Pano şablonu eksik</h1>'
+                               '<p>dashboard.html dosyasını güncel repodan geri yükleyin.</p>')
 
 
 def dashboard_html(data_url: str = "/api/dashboard") -> str:
@@ -5092,7 +5034,7 @@ class _DashHandler(BaseHTTPRequestHandler):
                                   ensure_ascii=False).encode("utf-8")
                 ct = "application/json; charset=utf-8"
             except Exception as e:
-                body = json.dumps({"error": str(e)}).encode("utf-8")
+                body = json.dumps({"error": "dashboard_unavailable"}).encode("utf-8")
                 ct = "application/json; charset=utf-8"
         elif self.path in ("/", "/index.html"):
             body = dashboard_html().encode("utf-8")
@@ -5205,6 +5147,76 @@ def _github_data_url() -> str:
             f"{GITHUB_DATA_BRANCH}/data.json")
 
 
+def build_qc_export_package():
+    """In-memory export, with bounded network work on the publishing worker."""
+    from qc_export import build_package
+    usage = {"used": False, "requests": 0, "bytes_received": None,
+             "sources": [], "request_budget": 20}
+
+    def loader(market, symbol, bar_ms, limit):
+        key = (market, symbol, bar_ms, limit)
+        if key not in _qc_candle_cache:
+            if usage["requests"] >= usage["request_budget"]:
+                raise ValueError("qc_request_budget_exhausted")
+            usage["requests"] += 1
+            usage["used"] = True
+            if market not in usage["sources"]:
+                usage["sources"].append(market)
+            fetcher = fetch_futures_klines_at if market == "usd_m_perp" else fetch_klines_at
+            candles = fetcher(symbol, bar_ms, limit)
+            hourly_outcome(candles, bar_ms, limit - 2)
+            if len(_qc_candle_cache) >= 5000:
+                _qc_candle_cache.pop(next(iter(_qc_candle_cache)))
+            _qc_candle_cache[key] = candles
+        source = ("binance_usdm_perp_1h_klines;funding:not_modeled"
+                  if market == "usd_m_perp" else "binance_spot_1h_klines")
+        return _qc_candle_cache[key], source
+
+    path = Path(__file__).parent / SIGNAL_LOG
+    with (path.open(encoding="utf-8") if path.exists() else io.StringIO()) as stream:
+        return build_package(
+            stream, configured_symbols=SYMBOLS,
+            core_symbols=DEFAULT_SYMBOLS.split(","), extended_symbols=EXTENDED_SET,
+            config_version=SIGNAL_CONFIG_VERSION, confidence_rank=CONF_RANK,
+            min_confidence=NOTIFY_MIN_CONFIDENCE,
+            round_trip_cost_bps=LIVE_ROUND_TRIP_COST_BPS,
+            candle_loader=loader, network_usage=usage)
+
+
+def _qc_fingerprint(package) -> bytes:
+    manifest = json.loads(package.files["qc/manifest.json"])
+    return json.dumps({k: manifest[k] for k in (
+        "schema_version", "config_versions", "cost_assumption", "files")},
+        sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _publish_qc_package() -> bool:
+    package = build_qc_export_package()
+    checkpoint = "qc/.publication.json"
+    fingerprint = _qc_fingerprint(package)
+    checkpoint_sha = _gh_get_sha(checkpoint, GITHUB_PAGES_BRANCH)
+    incomplete = checkpoint_sha != _git_blob_sha(fingerprint)
+    changed = False
+    # Publish manifest LAST. A manifest alone is never evidence that all its
+    # files arrived: consumers can verify the included SHA-256 values.
+    for path in sorted(p for p in package.files if p.endswith(".csv")):
+        _, uploaded = _gh_put_if_changed(path, package.files[path],
+                                        "qc: signal events", GITHUB_PAGES_BRANCH)
+        changed = changed or uploaded
+    # Do not rewrite timestamps on a no-change scan (also after bot restart).
+    if (changed or incomplete or
+            _gh_get_sha("qc/manifest.json", GITHUB_PAGES_BRANCH) is None):
+        for path in ("qc/index.html", "qc/manifest.json"):
+            _gh_put_if_changed(path, package.files[path], "qc: manifest",
+                               GITHUB_PAGES_BRANCH)
+        changed = True
+        # Completion marker only after every CSV/index/manifest succeeded.
+        # A failed manifest upload is repaired on the next scan/restart.
+        _gh_put_if_changed(checkpoint, fingerprint, "qc: publication complete",
+                           GITHUB_PAGES_BRANCH, checkpoint_sha)
+    return changed
+
+
 def publish_to_github(force: bool = False) -> None:
     """Canli veriyi data branch'ine, statik panoyu Pages branch'ine yazar.
 
@@ -5232,8 +5244,10 @@ def publish_to_github(force: bool = False) -> None:
         page = dashboard_html(_github_data_url()).encode("utf-8")
         _gh_put_if_changed("index.html", page, "dashboard: index.html",
                            GITHUB_PAGES_BRANCH)
+        if PUBLISH_QC_ENABLED:
+            _publish_qc_package()
         PUBLISH_WORKER_LAST_ERROR = None
-    except requests.RequestException as e:
+    except Exception as e:
         PUBLISH_WORKER_LAST_ERROR = f"{type(e).__name__}: {_redact(str(e))}"
         _gh_sha = None                     # sha bayatlamis olabilir -> yeniden al
         code = getattr(getattr(e, "response", None), "status_code", 0)
@@ -5696,8 +5710,15 @@ def main() -> None:
                     help="gunluk yerel arsiv yedeginin durumunu yaz")
     ap.add_argument("--backup-now", action="store_true",
                     help="arsiv yedegini simdi calistir ve sonucu yaz")
+    ap.add_argument("--export-qc", metavar="DIRECTORY",
+                    help="QC paketini elle diske yaz (otomatik yayin bellektedir)")
     args = ap.parse_args()
-    if args.test_notify:
+    if args.export_qc:
+        from qc_export import write_package
+        package = build_qc_export_package()
+        write_package(package, args.export_qc)
+        print(f"QC: {package.accepted_count} olay, {package.rejected_count} red")
+    elif args.test_notify:
         run_test_notify()
     elif args.archive_status:
         print(json.dumps(summarize_derivatives_archive(ARCHIVE_DIR),

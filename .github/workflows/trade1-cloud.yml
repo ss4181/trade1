@@ -13,6 +13,11 @@ on:
         required: false
         default: false
         type: boolean
+      force_scan:
+        description: Run one silent diagnostic scan even if tablet is healthy
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -30,6 +35,8 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_BOT_ID }}
       TELEGRAM_COMMANDS: "false"
       DASHBOARD_ENABLED: "false"
+      PUBLISH_ENABLED: "false"
+      PUBLISH_QC_ENABLED: "false"
       DAILY_SUMMARY_HOUR_UTC: "-1"
       ARCHIVE_MARKET_DATA: "false"
       # Haftalık araştırma raporunun tek lideri kalıcı tablet sürecidir.
@@ -48,8 +55,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: "3.12"
           cache: pip
+
+      - name: Check tablet heartbeat (cloud standby)
+        id: standby
+        env:
+          FORCE_SCAN: ${{ inputs.force_scan }}
+        run: python cloud_standby.py
 
       - name: Restore edge-trigger and cooldown state
         uses: actions/cache@v4
@@ -60,6 +73,7 @@ jobs:
             .perf_cache.json
             .price_target_state.json
             .subscribers.json
+            .notification_outbox.json
           key: trade1-cloud-state-${{ github.run_id }}
           restore-keys: |
             trade1-cloud-state-
@@ -72,10 +86,16 @@ jobs:
         run: python signal_bot.py --test-notify
 
       - name: Scan the validated universe once
+        if: ${{ steps.standby.outputs.scan == 'true' }}
+        # Separate cooldown caches cannot guarantee cross-device deduplication.
+        # Tablet owns signal delivery; cloud diagnostics never send signals.
+        env:
+          TELEGRAM_BOT_TOKEN: ""
+          TELEGRAM_CHAT_ID: ""
         run: python signal_bot.py --once
 
       - name: Report successful scan to Serhan Lab
-        if: ${{ success() }}
+        if: ${{ success() && steps.standby.outputs.scan == 'true' }}
         run: python cloud_report.py
 
       - name: Report failed scan to Serhan Lab

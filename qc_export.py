@@ -429,7 +429,15 @@ def _outcome_for(
         return {**base, "outcome_status": "unavailable",
                 "outcome_source": source,
                 "unavailable_reason": "invalid_entry_or_exit_price"}
-    gross = (exit_price / entry_price - 1.0) * 100.0
+    # Timestamp validation is shared with the live performance cache.
+    from signal_outcomes import hourly_outcome
+    try:
+        outcome = hourly_outcome(candles, int(bar.timestamp() * 1000),
+                                 horizon, str(event["direction"]))
+    except (KeyError, TypeError, ValueError):
+        return {**base, "outcome_status": "unavailable", "outcome_source": source,
+                "unavailable_reason": "missing_or_invalid_candle_sequence"}
+    gross = outcome["return_pct"]
     net = gross - cost_bps / 100.0
     return {
         **base,

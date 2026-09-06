@@ -56,7 +56,7 @@ girmedi, tablette çalışan bot etkilenmedi.
 ## PR'ı inceleme (yeşil ışık / kırmızı ışık)
 
 1. **Testleri bekle.** PR sayfasının altında GitHub Actions sonucu çıkar
-   (~2-3 dk). ✅ yeşilse kod en azından derleniyor ve 40+ test geçiyor.
+   (~2-3 dk). ✅ yeşilse kod en azından derleniyor ve çevrimdışı testler geçiyor.
    ❌ kırmızıysa **birleştirme**; hatayı bana getir.
 2. **Değişikliğe bak.** PR'daki **Files changed** sekmesi neyin değiştiğini
    satır satır gösterir. Özellikle dikkat: `signal_bot.py` içindeki

@@ -588,7 +588,7 @@ def test_exact_strategy_performance_and_median(tmpdir):
     # Cache yokken S2 mutlaka USD-M perp fetcher'ini kullanmali.
     s2 = {
         "strategy": "S2", "symbol": "ADAUSDT", "direction": "LONG",
-        "bar_time": (now - bot.timedelta(hours=100)).isoformat(),
+        "bar_time": (now - bot.timedelta(hours=100)).replace(minute=0, second=0, microsecond=0).isoformat(),
         "horizon_hours": 72, "performance_market": "um_perp",
     }
     log.write_text(json.dumps(s2) + "\n", encoding="utf-8")
@@ -596,7 +596,8 @@ def test_exact_strategy_performance_and_median(tmpdir):
     bot.PERF_CACHE_FILE.write_text("{}", encoding="utf-8")
     old_spot, old_fut = bot.fetch_klines_at, bot.fetch_futures_klines_at
     called = []
-    bars = [{"open_time": i, "open": 100.0, "close": 101.0}
+    base_ms = int(bot.datetime.fromisoformat(s2["bar_time"]).timestamp() * 1000)
+    bars = [{"open_time": base_ms + i * 3600000, "open": 100.0, "close": 101.0}
             for i in range(74)]
     bot.fetch_klines_at = lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("S2 spot fetcher kullanmamalı"))
@@ -956,6 +957,7 @@ def test_buttons_and_callbacks(tmpdir):
 
         class R:
             def raise_for_status(self): pass
+            def json(self): return {"ok": True}
         bot._telegram_send_text = ORIG["tg_text"]
         bot.TELEGRAM_BOT_TOKEN = "T"
         bot.requests.post = (lambda url, json=None, timeout=None:
@@ -1002,6 +1004,7 @@ def test_notify_health_visibility():
         # basarili gonderimde ok sayaci ve last_ok dolar
         class Good:
             def raise_for_status(self): pass
+            def json(self): return {"ok": True}
         bot.requests.post = lambda url, json=None, timeout=None: Good()
         assert bot._telegram_send_text("y", chat_id="1") is True
         assert bot.NOTIFY_HEALTH["telegram"]["ok"] == 1
@@ -1223,7 +1226,7 @@ def test_observation_channel(tmpdir):
         log = Path(tmpdir) / "observe.log"
         old_log, old_cache = bot.SIGNAL_LOG, bot.PERF_CACHE_FILE
         bar = (bot.datetime.now(bot.timezone.utc)
-               - bot.timedelta(hours=48)).replace(microsecond=0)
+               - bot.timedelta(hours=48)).replace(minute=0, second=0, microsecond=0)
         try:
             bot.SIGNAL_LOG = str(log)
             bot.PERF_CACHE_FILE = Path(tmpdir) / ".observe_cache.json"
@@ -1238,8 +1241,9 @@ def test_observation_channel(tmpdir):
                 rows.append(json.dumps(r))
             log.write_text("\n".join(rows) + "\n", encoding="utf-8")
             bot.fetch_klines_at = lambda symbol, start_ms, limit: [
-                {"open": 100.0, "close": 100.0, "high": 100.0, "low": 100.0}
-                for _ in range(limit)]
+                {"open_time": start_ms + i * 3600000,
+                 "open": 100.0, "close": 100.0, "high": 100.0, "low": 100.0}
+                for i in range(limit)]
             perf = bot.realized_performance()
             assert "S6" in perf["strategies"], perf
             assert "S1" not in perf["strategies"], \

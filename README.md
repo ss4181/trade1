@@ -480,5 +480,69 @@ koy, PR aç, testlerin yeşilini bekle: adım adım [KATKI.md](KATKI.md).
 ```bash
 python -B tests/offline_tests.py
 python -B tests/server_tests.py
+python -B tests/test_archive_backup.py
+python -B tests/test_shadow_experiments.py
+python -B tests/test_derivatives_archive.py
 cd research && python -B -m unittest -v test_methodology.py
 ```
+# Kararlılık güncellemesi — 7 Eylül 2026
+
+Bu güncelleme strateji/eşik, 89 sembollük ana evren, S5/S6 gözlem kanalı,
+cooldown veya 5 dakikalık tarama / 1 saatlik sinyal mumunu değiştirmez.
+
+- Telegram sinyalleri özel `.notification_outbox.json` dosyasında alıcı bazında
+  izlenir. Başarısız alıcılar en fazla 4 deneme / 15 dakika içinde yeniden
+  denenir; başarılı alıcıya tekrar gönderilmez. Yeniden deneme tarama sonlarında
+  çalışır. Telegram zaman aşımında teslim belirsiz olabileceğinden mutlak
+  “tam bir kez teslim” garantisi yoktur. Günlük rapor/komut cevapları bu sinyal
+  kuyruğundan ayrı kalır. Telegram API onayı, kullanıcının mesajı okuduğunu göstermez.
+- Eski kayıtların `push_allowed=true` olması teslim kanıtı değildir. Bunlar
+  yeni hedef takibine otomatik eklenmez. Önceden saklanan hedef karnesi korunur,
+  ancak eski teslim kanıtı doğrulanmamıştır. Panoda bu ayrım belirtilir.
+- Performans önbelleği **v3**: giriş/çıkış dizi sırasıyla değil gerçek mum
+  zamanlarıyla seçilir; eksik mum dizisi ölçülmez. Önceki hesaplar yeniden
+  indirilerek hesaplanır; geçişte boş değer görmek normaldir. Emir/fill kaydı değildir.
+- GitHub cloud scanner artık **sessiz yedek**: tabletin yayımlanan son taraması
+  60 dakikadan yeniyse taramayı atlar. Bayat/bilinmeyen durumda sessiz kontrol
+  yapar. Tablet sinyal bildirimlerinin tek sahibidir; bu otomatik bildirim
+  failover'ı değildir. Watchdog uyarıları devam eder. `--once` tarama hatası artık
+  başarısız çıkış kodu verir. Veri branch commit'leri CI testlerini tetiklemez.
+- OI/funding/LS araştırmasının takvimi likidasyon gerektiren G1 araştırmasından
+  ayrı gösterilir. OOS kalite hesabına eğitim satırları katılmaz. S2 top-position
+  verisi için `BINANCE_MARKET_DATA_API_KEY` yalnız cihazdaki `.env` içine girilir;
+  eksikse açık hazırlık uyarısı gösterilir. Anahtarı sohbete veya Git'e koymayın.
+- Panoda sinyal fiyatı, kayıtlı ticker fiyatı, güncel ticker fiyatı ve fiyat yaşı
+  ayrıdır. Ticker worker'ı tarama sonunda iki ek toplu fiyat isteği yapar;
+  gösterge mumları ve arşiv fiyatları değişmez. Tablo/filtreler son 400 log
+  satırını kapsar; hedef karnesi saklanan hedef arşivini kapsar. “Kanıt sınıfı”
+  kalibre edilmiş başarı olasılığı değildir.
+
+## GitHub Pages kalite kontrol CSV
+
+`PUBLISH_QC_ENABLED=false` güvenli varsayılandır. Yerel `.env` içinde `true`
+yapılırsa mevcut `PUBLISH_ENABLED`, GitHub repo/branch ve yazma yetkisiyle
+`qc/index.html`, dört CSV ve `qc/manifest.json` yayımlanır. Ana panoda bağlantı
+görünür. Otomatik yayın bellektedir; tablette CSV dosyası oluşturmaz.
+
+QC kapsamı S1/S1+S4/S2/S3 sinyal olaylarıdır. Gözlem/test/bozuk/evren dışı
+kayıtların red gerekçeleri ayrı CSV'dedir; `signals.log` değiştirilmez. Olgun
+olaylarda mumlar eksikse fiyat uydurulmaz. Her yayında en fazla 20 yeni mum
+penceresi isteği yapılır; diğerleri sonraki yayında tamamlanabilir. Gerçek ağ
+alt-istek/byte sayısı ölçülmediği için manifestte byte sayısı `null` kalır.
+Funding modellenmez. Qty, gerçek dolar PnL veya emir kayıtları üretilmez.
+
+Değişmeyen CSV'ler tekrar gönderilmez. `qc/.publication.json` teknik tamamlanma
+işaretidir; yarım kalan yayın sonraki turda onarılır. Çok dosyalı GitHub yayını
+tek atomik commit değildir: indiren araçlar manifest SHA-256 değerlerini
+kontrol etmeli, uyumsuzlukta yayının tamamlanmasını beklemelidir.
+
+Yalnız elle dosya üretmek için:
+
+```bash
+python signal_bot.py --export-qc output/qc
+```
+
+Yedek bütünlüğü ve PC günlük kontrolü: [PC_BACKUP.md](PC_BACKUP.md).
+İzole testlerin tamamı: `python -B tests/run_isolated.py` (araştırma ve sunucu
+test bağımlılıkları kurulu olmalıdır). Gerçek `.env`, arşiv ve state kullanılmaz;
+ağ erişimi kapalıdır.

@@ -2,6 +2,7 @@ name: tests
 
 on:
   push:
+    branches-ignore: [gh-pages, trade1-data]
   pull_request:
 
 permissions:
@@ -10,7 +11,7 @@ permissions:
 jobs:
   offline:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Kodu al
@@ -33,6 +34,9 @@ jobs:
       - name: Python sözdizimi
         run: |
           python -m py_compile signal_bot.py server.py watchdog.py \
+            cloud_report.py qc_export.py research_monitor.py \
+            shadow_experiments.py derivatives_archive.py archive_backup.py \
+            notification_delivery.py signal_outcomes.py backup_verify.py cloud_standby.py \
             research/*.py tests/*.py
 
       - name: Bot çevrimdışı testleri
@@ -40,6 +44,14 @@ jobs:
           python -B tests/offline_tests.py
           python -B tests/test_cloud_report.py
           python -B tests/test_watchdog.py
+          python -B tests/test_archive_backup.py
+          python -B tests/test_shadow_experiments.py
+          python -B tests/test_derivatives_archive.py
+          python -B tests/test_price_target_analytics.py
+          python -B tests/test_research_weekly_delivery.py
+          python -B tests/test_forward_oi_periodic_report.py
+          python -B tests/test_research_monitor.py
+          python -B tests/test_reliability.py
 
       - name: Pano JavaScript sözdizimi
         run: |
@@ -53,6 +65,7 @@ jobs:
               script, encoding="utf-8")
           PY
           node --check "${{ runner.temp }}/dashboard.js"
+          node tests/test_dashboard.js
 
       - name: Sunucu readiness testleri
         run: python -B tests/server_tests.py
@@ -80,6 +93,13 @@ jobs:
       - name: Araştırma metodoloji testleri
         working-directory: research
         run: python -B -m unittest -v test_methodology.py
+
+      - name: Araştırma evreni / OI / gölge testleri
+        run: |
+          python -B tests/test_s2_long_short.py
+          python -B tests/test_forward_oi_explore.py
+          python -B tests/test_forward_oi_barriers.py
+          python -B tests/test_g1_liquidation_proxy.py
 
       - name: Termux betiği sözdizimi
         run: sh -n termux/boot-signal-bot.sh

@@ -88,7 +88,10 @@ class ResearchMonitorTests(unittest.TestCase):
             ready = monitor.build_research_readiness(
                 root, now=now, oos_start_utc=(now - timedelta(days=90)).isoformat())
         self.assertEqual(collecting["phase"], "OOS_COLLECTING")
-        self.assertEqual(ready["phase"], "FORMAL_REVIEW_DUE")
+        # Day 0 belongs to training: only 29 liquidation days remain in OOS.
+        self.assertEqual(ready["phase"], "OOS_QUALITY_BLOCKED")
+        self.assertEqual(ready["liquidations"]["event_days"], 29)
+        self.assertTrue(ready["hypotheses"]["oi_funding_ls"]["quality_ready"])
 
     def test_weekly_slot_waits_for_configured_instant(self):
         monday = datetime(2026, 8, 31, tzinfo=timezone.utc)

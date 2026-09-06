@@ -35,6 +35,13 @@ log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$BOT_LOG"
 }
 
+warn_python_pin() {
+  ver="$(python -c 'import sys; print(sys.version_info.major * 100 + sys.version_info.minor)' 2>/dev/null || echo 0)"
+  if [ "$ver" -ge 314 ]; then
+    log "DIKKAT: Python 3.14+ tespit edildi. pkg upgrade site-packages silebilir; TABLET.md 'Python surumunu sabitle' bolumune bak."
+  fi
+}
+
 # Termux "pkg upgrade" Python'u yukseltince site-packages surum klasoruyle
 # birlikte gorunmez olur ve TUM pip paketleri kaybolur. 2026-08-01'de tam
 # bunu yasadik: uvicorn kayboldu, sarmalayici 3 GUN boyunca 15 saniyede bir
@@ -72,6 +79,7 @@ have_server_stack() {
 # surer. Her yeniden baslatmada tekrarlamamak icin sonuc isaretlenir; isaret
 # requirements-server.txt'in imzasini tasir, dosya degisirse yeniden denenir.
 SERVER_FAIL_MARK=".server-stack-unavailable"
+warn_python_pin
 if ensure_core_deps && ! have_server_stack; then
   want="$(cksum requirements-server.txt 2>/dev/null || echo none)"
   seen="$(cat "$SERVER_FAIL_MARK" 2>/dev/null || echo "")"

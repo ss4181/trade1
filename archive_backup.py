@@ -19,11 +19,14 @@ ASLA kopyalanmaz: .env, GITHUB_TOKEN, herhangi bir gizli dosya.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+from datetime import datetime, timezone
 
 ARCHIVE_GLOBS = (
     "market_archive_*.jsonl",
@@ -40,6 +43,7 @@ STATE_NAMES = (
     ".research_monitor_state.json",
     ".subscribers.json",
     ".forward_oi_report_state.json",
+    ".notification_outbox.json",
     "signals.log",
 )
 
@@ -64,7 +68,8 @@ def collect_files(source: Path, include_state: bool) -> list[Path]:
     seen: set[Path] = set()
     for pattern in ARCHIVE_GLOBS:
         for path in sorted(source.glob(pattern)):
-            if not path.is_file() or path.name in FORBIDDEN_NAMES:
+            if (not path.is_file() or path.name in FORBIDDEN_NAMES
+                    or path.is_symlink() or path.resolve().parent != source.resolve()):
                 continue
             resolved = path.resolve()
             if resolved in seen:
@@ -74,7 +79,7 @@ def collect_files(source: Path, include_state: bool) -> list[Path]:
     if include_state:
         for name in STATE_NAMES:
             path = source / name
-            if path.is_file() and path.name not in FORBIDDEN_NAMES:
+            if path.is_file() and not path.is_symlink() and path.name not in FORBIDDEN_NAMES:
                 resolved = path.resolve()
                 if resolved not in seen:
                     seen.add(resolved)
@@ -86,7 +91,8 @@ def collect_state_files(source: Path) -> list[Path]:
     """Bot durum dosyalarını açık beyaz listeyle seç; `.env` asla seçilmez."""
     source = source.resolve()
     return [source / name for name in STATE_NAMES
-            if (source / name).is_file() and name not in FORBIDDEN_NAMES]
+            if (source / name).is_file() and not (source / name).is_symlink()
+            and name not in FORBIDDEN_NAMES]
 
 
 def _unchanged(source: Path, target: Path) -> bool:
@@ -106,15 +112,40 @@ def _atomic_copy(source: Path, target: Path) -> None:
     os.close(fd)
     temp_path = Path(temp_name)
     try:
-        # Kaynak kopyalama sırasında büyürse bir kez daha kopyala. İkinci
-        # snapshot da geçerli bir dosya önekidir; hedefe yalnız atomik geçer.
-        for _attempt in range(2):
+        # JSONL may be appended during copy. Trim an unfinished final line;
+        # state JSON must instead be a stable, parseable snapshot.
+        stable = False
+        for _attempt in range(3):
             before = source.stat()
             shutil.copy2(source, temp_path)
             after = source.stat()
             if (before.st_size, before.st_mtime_ns) == (
                     after.st_size, after.st_mtime_ns):
+                stable = True
                 break
+        if source.suffix == ".jsonl" or source.name == "signals.log":
+            with temp_path.open("r+b") as stream:
+                stream.seek(0, 2)
+                size = stream.tell()
+                if size:
+                    stream.seek(size - 1)
+                    if stream.read(1) != b"\n":
+                        pos = size
+                        while pos:
+                            start = max(0, pos - 65536)
+                            stream.seek(start)
+                            chunk = stream.read(pos - start)
+                            found = chunk.rfind(b"\n")
+                            if found >= 0:
+                                stream.truncate(start + found + 1)
+                                break
+                            pos = start
+                        else:
+                            stream.truncate(0)
+        elif source.suffix == ".json":
+            if not stable:
+                raise OSError("state_snapshot_not_stable")
+            json.loads(temp_path.read_text(encoding="utf-8"))
         os.replace(temp_path, target)
     finally:
         try:
@@ -135,6 +166,9 @@ def copy_files(files: list[Path], dest: Path, *, dry_run: bool) -> dict:
     skipped = 0
     if not dry_run:
         dest.mkdir(parents=True, exist_ok=True)
+        needed = sum(p.stat().st_size for p in files if not _unchanged(p, dest / p.name))
+        if shutil.disk_usage(dest).free < needed + 64 * 1024 * 1024:
+            raise OSError("backup_disk_space_insufficient")
     for src in files:
         target = dest / src.name
         size = src.stat().st_size
@@ -170,7 +204,25 @@ def backup_once(source: Path, dest: Path, *, include_state: bool = False,
         known = {item.resolve() for item in files}
         files.extend(path for path in collect_state_files(state_root)
                      if path.resolve() not in known)
-    return copy_files(files, dest, dry_run=dry_run)
+    result = copy_files(files, dest, dry_run=dry_run)
+    result["archive_files"] = sum(p.suffix == ".jsonl" for p in files)
+    result["verification_scope"] = "local_staging_only_not_pc_receipt"
+    if not dry_run and files:
+        root = dest.expanduser().resolve()
+        entries = {}
+        for path in files:
+            target = root / path.name
+            with target.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            entries[path.name] = {"bytes": target.stat().st_size, "sha256": digest}
+        manifest = {"schema_version": "trade1-backup-v1",
+                    "created_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "files": entries, "archive_files": result["archive_files"],
+                    "scope": "private_backup_no_credentials"}
+        temporary = root / ".backup_manifest.tmp"
+        temporary.write_text(json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8")
+        temporary.replace(root / "backup_manifest.json")
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:

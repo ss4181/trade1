@@ -70,18 +70,18 @@ def build_payload(
         "detail": (
             "Son GitHub Actions taraması hata verdi; ayrıntı için koşu kaydını açın."
             if failed else
-            "S1/S2/S3/S4 taraması bulutta tamamlandı; kenar-tetikleme ve cooldown durumu sonraki koşuya taşındı."
+            "Sessiz yedek taraması tamamlandı; Telegram sinyallerinin tek sahibi tablettir."
         ),
         "observedAtUtc": now.isoformat().replace("+00:00", "Z"),
         "component": "89 coin kripto tarayıcı",
-        "mode": "Uyarı · emir üretmez",
+        "mode": "Sessiz yedek · Telegram sinyali ve emir üretmez",
         "schedule": "GitHub schedule best-effort (*/5 hedefi; gecikebilir)",
         "runUrl": run_url,
         "facts": ["1 saatlik mum", "S1/S2/S3/S4", "Durum korumalı"],
         "metrics": [
             {"label": "İzlenen koşul", "value": str(len(state.get("prev_cond", {})))},
             {"label": "Son 24 saat", "value": f"{recent_24h} sinyal"},
-            {"label": "Telegram", "value": "Bağlı" if telegram_ready else "Gizli anahtar bekliyor"},
+            {"label": "Telegram", "value": "Sinyal gönderimi tablette"},
         ],
         "events": events,
     }

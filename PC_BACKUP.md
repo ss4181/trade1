@@ -68,3 +68,56 @@ Syncthing'de Windows klasör ayarları:
 Kaynak tablet kaybolursa Windows kopyasını değiştirmeden önce başka bir klasöre
 kopyala. Windows'taki `Revert Local Changes` veya tabletteki `Override Changes`
 düğmelerini ne yaptığından emin olmadan kullanma.
+# Günlük PC bütünlük kontrolü (7 Eylül 2026)
+
+Tablet `--backup-now` veya günlük yedek turunda `backup_manifest.json` üretir.
+Bu dosya arşiv/state dosyalarının SHA-256 ve boyutlarını içerir; sır içermez.
+Yedek dosyalarının kendileri kullanıcı/chat kimliği gibi **özel** veriler
+içerebilir: Syncthing klasörünü GitHub Pages'e veya herkese açık depoya koymayın.
+
+Bilgisayarda, proje klasöründen:
+
+```powershell
+.\.venv\Scripts\python.exe -B backup_verify.py 'C:\Users\serha\Documents\Trade1-Backup'
+```
+
+Bu kontrol manifest tarihini (en fazla 36 saat), her dosyanın hash/boyutunu,
+JSON/JSONL okunabilirliğini ve boş disk alanını denetler. `ok: true` yalnız
+**bu bilgisayarda doğrulanan bu snapshot** içindir. Eski yedeklerde manifest
+bulunmayabilir; tablet güncellendikten sonra yeniden yedek alıp eşitleyin.
+Eşitleme devam ederken hash uyuşmazlığı geçici olabilir; bitince tekrar kontrol
+edin. Mevcut bozuk JSON satırları silinmez, doğrulama başarısız gösterir.
+
+Günlük yerel kontrolü kurmak/güncellemek için:
+
+```powershell
+.\pc\register-backup-check.ps1
+```
+
+Windows görevi: **Trade1 PC Backup Verify**, her gün yerel saat **12:45**.
+Bilgisayar kapalıysa açılınca uygun ilk fırsatta çalışır; kullanıcı oturumu
+gerektirir. Botu başlatmaz, yedekleri değiştirmez. Sonuç özel
+`.pc_backup_status.json` dosyasına yazılır. Windows görev sonucu 0 başarı,
+1 müdahale gerektiren durumdur. Bu PC kontrolü Telegram uyarısı göndermez ve
+tablete “uzak teslim onayı” döndürmez; botun yerel yedek başarısıyla karıştırmayın.
+
+Geri yükleme provası (hedef klasör **önceden bulunmamalıdır**):
+
+```powershell
+.\.venv\Scripts\python.exe -B backup_verify.py 'C:\Users\serha\Documents\Trade1-Backup' --restore-to 'C:\Users\serha\Documents\Trade1-Restore-Rehearsal'
+```
+
+Kaynaklar silinmez/üzerine yazılmaz; yeni kopya tekrar doğrulanır, bot çalışmaz.
+Kaynak tabletin günlük snapshot'ı dosya bazında alınır, bütün dosyalar için
+tek işlemsel an garantisi yoktur. Aktif JSONL'nin tamamlanmamış son satırı yalnız
+**yedek kopyasında** kesilir; kaynak arşiv değişmez. Tam, tutarlı sistem geri
+dönüşü gerektiğinde ayrıca bot durdurularak son yedek alınmalıdır.
+
+## Syncthing: aynı dizine iki klasör tanımı olmamalı
+
+Önceki incelemede aynı Windows dizinine iki farklı Folder ID bağlıydı. İşleyen
+17 dosyalı tanımda **Receive Only + Staggered File Versioning / 365 days**
+olduğunu kontrol edin. Eski/boş tanımı önce **Pause** yapın. **Revert Local
+Changes** düğmesine basmayın: ikinci tanım dosyaları yerel ilave sanıp silebilir.
+Dosya sürümleme ayarı diğer Folder ID'de açık diye çalışan klasör korunmuş olmaz.
+Bu ayarların bilgisayarda yapıldığı ayrıca doğrulanmalıdır.

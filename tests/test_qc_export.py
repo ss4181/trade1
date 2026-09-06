@@ -237,7 +237,9 @@ class QCExportTests(unittest.TestCase):
         built = package(lines(event()), loader=loader_with_calls([]))
         puts = []
 
-        def sha(path):
+        def sha(path, branch=None):
+            if path == "qc/.publication.json":
+                return git_blob_sha(bot._qc_fingerprint(built))
             return git_blob_sha(built.files[path])
 
         with patch.object(bot, "build_qc_export_package",
@@ -254,7 +256,7 @@ class QCExportTests(unittest.TestCase):
         old_qc = bot.PUBLISH_QC_ENABLED
         old_last = bot._last_publish
         try:
-            bot.PUBLISH_ENABLED = False
+            bot.PUBLISH_ENABLED = True
             bot.PUBLISH_QC_ENABLED = True
             bot._last_publish = 0
             stderr = io.StringIO()
@@ -281,6 +283,26 @@ class QCExportTests(unittest.TestCase):
             bot._publish_qc_package()
         after = {path.resolve() for path in root.rglob("*.csv")}
         self.assertEqual(before, after)
+
+    def test_failed_manifest_is_repaired_even_when_csv_already_matches(self):
+        built = package(lines(event()), loader=loader_with_calls([]))
+        remote = {}
+        fail = [True]
+        def put(path, content, *args):
+            if path == "qc/manifest.json" and fail[0]:
+                fail[0] = False
+                raise requests.ConnectionError("synthetic failure")
+            remote[path] = git_blob_sha(content)
+            return remote[path]
+        with patch.object(bot, "build_qc_export_package", return_value=built), \
+                patch.object(bot, "_gh_get_sha", side_effect=lambda p, *a: remote.get(p)), \
+                patch.object(bot, "_gh_put_file", side_effect=put):
+            with self.assertRaises(requests.ConnectionError):
+                bot._publish_qc_package()
+            self.assertNotIn("qc/.publication.json", remote)
+            self.assertTrue(bot._publish_qc_package())
+            self.assertFalse(bot._publish_qc_package())
+            self.assertIn("qc/manifest.json", remote)
 
 
 if __name__ == "__main__":
