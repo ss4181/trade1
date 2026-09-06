@@ -112,7 +112,8 @@ class DeliveryOutbox:
             with self.lock:
                 recipient["status"] = "delivered" if delivered else "pending"
                 if delivered:
-                    stamp = now.isoformat()
+                    # Record API acknowledgement time, not request-start time.
+                    stamp = utcnow().isoformat()
                     recipient["delivered_at"] = stamp
                     item.setdefault("first_delivered_at", stamp)
                 self._save()

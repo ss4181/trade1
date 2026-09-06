@@ -1,0 +1,5 @@
+# PC/CI only. Do not install Arrow/pandas on the Termux runtime.
+-r requirements-server.txt
+numpy>=1.26,<3
+pandas>=2.2,<3
+pyarrow>=14,<26

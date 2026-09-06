@@ -105,6 +105,17 @@ class ArchiveBackupTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             backup.backup_once(self.root, self.root)
 
+    def test_same_size_and_mtime_corruption_is_recopied(self):
+        dest = self.root / "dest"
+        backup.backup_once(self.root, dest)
+        source = self.root / "shadow_events_2026-09.jsonl"
+        target = dest / source.name
+        target.write_bytes(b"[]\n")  # same length as original {}\n
+        os.utime(target, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns))
+        result = backup.backup_once(self.root, dest)
+        self.assertEqual(result["copied"], 1)
+        self.assertEqual(target.read_bytes(), source.read_bytes())
+
 
 class DailyBackupScheduleTests(unittest.TestCase):
     def setUp(self) -> None:

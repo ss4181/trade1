@@ -32,8 +32,7 @@ jobs:
           python -m pip install --upgrade pip
           # server_tests.py FastAPI'yi import ettigi icin CI'da sunucu katmani
           # da kurulur; tablet/bulut yalnizca requirements.txt ile calisir.
-          python -m pip install -r requirements-server.txt \
-            "numpy>=1.26,<3" "pandas>=2.2,<3"
+          python -m pip install -r requirements-test.txt
 
       - name: Python sözdizimi
         run: |

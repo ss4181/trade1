@@ -100,8 +100,11 @@ def _unchanged(source: Path, target: Path) -> bool:
         return False
     src_stat = source.stat()
     dst_stat = target.stat()
-    return (src_stat.st_size == dst_stat.st_size
-            and src_stat.st_mtime_ns == dst_stat.st_mtime_ns)
+    if (src_stat.st_size, src_stat.st_mtime_ns) != (dst_stat.st_size, dst_stat.st_mtime_ns):
+        return False
+    # Equal mtime/size is not integrity evidence (bit rot or a sync conflict).
+    with source.open("rb") as src, target.open("rb") as dst:
+        return hashlib.file_digest(src, "sha256").digest() == hashlib.file_digest(dst, "sha256").digest()
 
 
 def _atomic_copy(source: Path, target: Path) -> None:

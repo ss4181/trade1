@@ -14,7 +14,7 @@ from archive_backup import ARCHIVE_GLOBS, STATE_NAMES
 
 def allowed_name(name):
     return (isinstance(name, str) and Path(name).name == name
-            and "/" not in name and "\\" not in name
+            and "/" not in name and "\\" not in name and ":" not in name
             and (name in STATE_NAMES or any(fnmatch.fnmatchcase(name, p) for p in ARCHIVE_GLOBS)))
 
 

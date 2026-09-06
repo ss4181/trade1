@@ -2275,8 +2275,9 @@ def _telegram_signal_text(sig: dict) -> str:
     ]
     quote = sig.get("notification_quote")
     if quote:
+        quote_age = max(0, time.time() - quote["observed_at_epoch"])
         lines.append(f"📍 <b>Son ticker:</b> {_fmt_price(quote['price'])} "
-                     f"(yaş {quote['age_seconds']:.0f} sn; giriş garantisi değil)")
+                     f"(yaş {quote_age:.0f} sn; giriş garantisi değil)")
     for label, value in _signal_detail_rows(sig):
         icon = _TELEGRAM_DETAIL_ICONS.get(label, "•")
         lines.append(f"{icon} <b>{_html.escape(label)}:</b> "

@@ -546,3 +546,6 @@ Yedek bütünlüğü ve PC günlük kontrolü: [PC_BACKUP.md](PC_BACKUP.md).
 İzole testlerin tamamı: `python -B tests/run_isolated.py` (araştırma ve sunucu
 test bağımlılıkları kurulu olmalıdır). Gerçek `.env`, arşiv ve state kullanılmaz;
 ağ erişimi kapalıdır.
+PC/CI test bağımlılıkları `python -m pip install -r requirements-test.txt`
+ile kurulur. Bu liste Parquet motorunu da içerir; tabletteki hafif çalışma
+ortamı için yalnız `requirements.txt` kullanılmaya devam edilir.
