@@ -2,6 +2,7 @@ name: tests
 
 on:
   push:
+    branches-ignore: [gh-pages, trade1-data]
   pull_request:
 
 permissions:
