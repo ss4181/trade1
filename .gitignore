@@ -22,6 +22,7 @@ signals.log
 .notification_outbox.json.tmp
 backup_manifest.json
 .pc_backup_status.json
+.restore-rehearsals/
 market_archive_*.jsonl
 liquidation_archive_*.jsonl
 shadow_market_*.jsonl

@@ -55,6 +55,7 @@ jobs:
           python -B tests/test_forward_oi_periodic_report.py
           python -B tests/test_research_monitor.py
           python -B tests/test_reliability.py
+          python -B tests/test_hardening.py
 
       - name: Pano JavaScript sözdizimi
         run: |

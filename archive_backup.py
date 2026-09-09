@@ -13,7 +13,8 @@ Kopyalananlar (varsayilan):
   bot/deney/performance/hedef/arastirma durumlari, .subscribers.json,
   .forward_oi_report_state.json ve signals.log
 
-ASLA kopyalanmaz: .env, GITHUB_TOKEN, herhangi bir gizli dosya.
+ASLA kopyalanmaz: .env veya anahtar dosyaları. Yukarıdaki açık listedeki
+durum dosyaları özeldir; yedek klasörü herkese açık yayımlanmamalıdır.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -96,13 +98,16 @@ def collect_state_files(source: Path) -> list[Path]:
 
 
 def _unchanged(source: Path, target: Path) -> bool:
+    if target.is_symlink():
+        raise OSError("unsafe_backup_target_symlink")
     if not target.is_file():
         return False
     src_stat = source.stat()
     dst_stat = target.stat()
-    if (src_stat.st_size, src_stat.st_mtime_ns) != (dst_stat.st_size, dst_stat.st_mtime_ns):
+    if src_stat.st_size != dst_stat.st_size:
         return False
-    # Equal mtime/size is not integrity evidence (bit rot or a sync conflict).
+    # Staging timestamps deliberately differ from source timestamps so sync
+    # scanners notice repairs. Compare content, not mtime, to avoid recopy churn.
     with source.open("rb") as src, target.open("rb") as dst:
         return hashlib.file_digest(src, "sha256").digest() == hashlib.file_digest(dst, "sha256").digest()
 
@@ -110,6 +115,9 @@ def _unchanged(source: Path, target: Path) -> bool:
 def _atomic_copy(source: Path, target: Path) -> None:
     """Aktif JSONL büyürken yarım hedef bırakmadan kararlı bir snapshot al."""
     target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_symlink():
+        raise OSError("unsafe_backup_target_symlink")
+    previous_mtime = target.stat().st_mtime_ns if target.exists() else None
     fd, temp_name = tempfile.mkstemp(
         prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
     os.close(fd)
@@ -149,6 +157,13 @@ def _atomic_copy(source: Path, target: Path) -> None:
             if not stable:
                 raise OSError("state_snapshot_not_stable")
             json.loads(temp_path.read_text(encoding="utf-8"))
+        # copy2 preserves source mtime. A same-size repair with that same mtime
+        # can be invisible to Syncthing even though the new manifest is valid.
+        # Change ONLY the staging copy's time, including on coarse filesystems.
+        changed_at = time.time_ns()
+        if previous_mtime is not None:
+            changed_at = max(changed_at, previous_mtime + 2_000_000_000)
+        os.utime(temp_path, ns=(changed_at, changed_at))
         os.replace(temp_path, target)
     finally:
         try:
@@ -222,9 +237,16 @@ def backup_once(source: Path, dest: Path, *, include_state: bool = False,
                     "created_at_utc": datetime.now(timezone.utc).isoformat(),
                     "files": entries, "archive_files": result["archive_files"],
                     "scope": "private_backup_no_credentials"}
-        temporary = root / ".backup_manifest.tmp"
-        temporary.write_text(json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8")
-        temporary.replace(root / "backup_manifest.json")
+        fd, temporary_name = tempfile.mkstemp(prefix=".backup_manifest.", suffix=".tmp", dir=root)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(manifest, stream, sort_keys=True, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.replace(root / "backup_manifest.json")
+        finally:
+            temporary.unlink(missing_ok=True)
     return result
 
 

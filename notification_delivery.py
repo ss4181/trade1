@@ -11,6 +11,46 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
+def _aware_time(value):
+    stamp = datetime.fromisoformat(value)
+    if stamp.tzinfo is None:
+        raise ValueError("invalid_delivery_state")
+    return stamp
+
+
+def _validate_events(data):
+    """Fail closed; never erase a corrupt queue and resend its known events."""
+    try:
+        if (not isinstance(data, dict) or type(data.get("schema_version")) is not int
+                or data["schema_version"] != 1
+                or not isinstance(data.get("events"), dict)):
+            raise ValueError("invalid_delivery_state")
+        for key, item in data["events"].items():
+            if (not isinstance(key, str) or not key or not isinstance(item, dict)
+                    or not isinstance(item.get("record"), dict)
+                    or item["record"].get("event_id") != key
+                    or not isinstance(item.get("recipients"), dict)):
+                raise ValueError("invalid_delivery_state")
+            _aware_time(item["created_at"])
+            if "first_delivered_at" in item:
+                _aware_time(item["first_delivered_at"])
+            for cid, recipient in item["recipients"].items():
+                if (not isinstance(cid, str) or not cid or not isinstance(recipient, dict)
+                        or recipient.get("status") not in ("pending", "sending", "delivered", "failed")
+                        or type(recipient.get("attempts")) is not int or recipient["attempts"] < 0):
+                    raise ValueError("invalid_delivery_state")
+                for field in ("delivered_at", "next_attempt_at"):
+                    if field in recipient:
+                        _aware_time(recipient[field])
+            has_delivery = any(r["status"] == "delivered" for r in item["recipients"].values())
+            if has_delivery != ("first_delivered_at" in item):
+                raise ValueError("invalid_delivery_state")
+    except (KeyError, TypeError, ValueError):
+        # No payload, chat ID, exception value or secret in this error.
+        raise ValueError("invalid_delivery_state") from None
+    return data["events"]
+
+
 def public_delivery(item: dict | None) -> dict:
     if not item:
         return {"delivery_confirmed": False, "delivery_status": "unknown"}
@@ -34,6 +74,7 @@ class DeliveryOutbox:
         self.ttl_minutes = ttl_minutes
         self.lock = threading.RLock()
         self.items = None
+        self._inflight = set()
 
     def _load(self):
         if self.items is None:
@@ -41,9 +82,7 @@ class DeliveryOutbox:
                 self.items = {}
             else:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
-                if not isinstance(data, dict) or not isinstance(data.get("events"), dict):
-                    raise ValueError("invalid_delivery_state")
-                self.items = data["events"]
+                self.items = _validate_events(data)
         return self.items
 
     def _save(self):
@@ -88,8 +127,13 @@ class DeliveryOutbox:
             item = self._load()[event_id]
             recipients = list(item["recipients"])
         for cid in recipients:
+            claim = (event_id, cid)
             with self.lock:
                 recipient = item["recipients"][cid]
+                # The retry time is not a lock: an HTTP request can outlive it.
+                # A concurrent manual/background delivery must not send again.
+                if claim in self._inflight:
+                    continue
                 if recipient["status"] not in ("pending", "sending"):
                     continue
                 age = now - datetime.fromisoformat(item["created_at"])
@@ -105,16 +149,23 @@ class DeliveryOutbox:
                 recipient["next_attempt_at"] = (now + timedelta(
                     seconds=min(600, 60 * 2 ** (recipient["attempts"] - 1)))).isoformat()
                 self._save()
+                self._inflight.add(claim)
             try:
-                delivered = bool(sender(cid, dict(item["record"])))
-            except Exception:
-                delivered = False
-            with self.lock:
-                recipient["status"] = "delivered" if delivered else "pending"
-                if delivered:
-                    # Record API acknowledgement time, not request-start time.
-                    stamp = utcnow().isoformat()
-                    recipient["delivered_at"] = stamp
-                    item.setdefault("first_delivered_at", stamp)
-                self._save()
-        return public_delivery(item)
+                try:
+                    delivered = bool(sender(cid, dict(item["record"])))
+                except Exception:
+                    delivered = False
+                with self.lock:
+                    recipient["status"] = ("delivered" if delivered else
+                                           "failed" if recipient["attempts"] >= self.max_attempts else "pending")
+                    if delivered:
+                        # Record API acknowledgement time, not request-start time.
+                        stamp = utcnow().isoformat()
+                        recipient["delivered_at"] = stamp
+                        item.setdefault("first_delivered_at", stamp)
+                    self._save()
+            finally:
+                with self.lock:
+                    self._inflight.discard(claim)
+        with self.lock:
+            return public_delivery(item)

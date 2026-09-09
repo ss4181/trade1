@@ -487,6 +487,11 @@ cd research && python -B -m unittest -v test_methodology.py
 ```
 # Kararlılık güncellemesi — 7 Eylül 2026
 
+10 Eylül devamı: [tamamlanan işler ve bekleyen adımlar](IMPROVEMENTS.md).
+Yedek eşitleme tarih düzeltmesi, daha sıkı PC bütünlük doğrulaması, gerçek
+dosya geri yükleme provası ve eşzamanlı Telegram gönderim koruması eklendi.
+Stratejiler, eşikler, evren, cooldown ve tarama sıklığı değişmedi.
+
 Bu güncelleme strateji/eşik, 89 sembollük ana evren, S5/S6 gözlem kanalı,
 cooldown veya 5 dakikalık tarama / 1 saatlik sinyal mumunu değiştirmez.
 

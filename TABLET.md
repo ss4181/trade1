@@ -617,7 +617,7 @@ bekleyen likidasyon haritası değildir.
 
 - Ev interneti/elektrik kesilirse bot da durur (dönünce elle başlat).
 - Bu bir uyarı botudur; işlem açmaz. Yatırım tavsiyesi değildir.
-# 7 Eylül 2026 güncellemesini uygulama
+# Kararlılık güncellemesini uygulama (10 Eylül 2026)
 
 Önce mevcut botu güvenli durdurun; `.env` ve arşivleri silmeyin:
 
@@ -625,7 +625,14 @@ bekleyen likidasyon haritası değildir.
 cd ~/trade1
 touch .stop-signal-bot
 pkill -f "python signal_bot.py" 2>/dev/null || true
+pkill -f "uvicorn server:app" 2>/dev/null || true
 git pull --ff-only origin main
+```
+
+`git pull` hatasız tamamlandıysa devam edin; hata varsa sonraki komutları
+çalıştırmayın, çıktıyı paylaşın. Arşivleri veya `.env` dosyasını silmeyin.
+
+```bash
 pip install -r requirements.txt
 python signal_bot.py --backup-now
 python signal_bot.py --backup-status
@@ -648,3 +655,10 @@ Telegram'a göndermeyin. Anahtar eksikliği mevcut S2 araştırma bildirimini ka
 Yeni pano eski kayıtları “Doğrulanmadı” gösterebilir: bu, sinyalin başarısız
 olduğu değil, geçmiş Telegram teslim kanıtının bulunmadığı anlamına gelir.
 Eski performans cache'i v3 hesaplamalarıyla kademeli olarak yeniden ölçülür.
+
+10 Eylül ekleri: eşitleyicinin aynı boyutlu değişikliği atlamaması için değişen
+yedek dosyasına yeni tarih verilir. İçerik aynıysa tekrar kopyalanmaz. Telegram
+kuyruğunda aynı alıcıya devam eden istek bitmeden ikinci gönderim başlatılmaz;
+bozuk kuyruk sessizce silinmez. Strateji/eşik/evren/cooldown değişikliği yoktur.
+Bilgisayardaki doğrulama ve geri yükleme provası [PC_BACKUP.md](PC_BACKUP.md)
+içinde, tamamlanan/bekleyen adımlar [IMPROVEMENTS.md](IMPROVEMENTS.md) içindedir.

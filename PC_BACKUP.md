@@ -34,7 +34,9 @@ seç. Uygulamaya dosya erişim izni ver ve tercihen yalnız Wi-Fi'da çalıştı
 5. Windows'ta `Trade1 Research Backup` klasörünü düzenle, `Sharing` bölümünde
    tableti seç ve kaydet.
 6. Tablette gelen klasör paylaşımını kabul et:
-   - Folder ID: `trade1-backup`
+   - Folder ID: bilgisayarın paylaştığı mevcut kimliği aynen kullan.
+     Bu kurulumda çalışan kimlik **`713d0-vxz8s`**; `trade1-backup` adlı eski
+     ikinci tanım duraklatılmıştır. Aynı dizine yeni/ikinci tanım oluşturma.
    - Folder path: `/storage/emulated/0/trade1-backup`
    - Folder type: `Send Only`
 7. İlk eşitleme bitince iki tarafta da `Up to Date` görünmelidir.
@@ -120,4 +122,34 @@ dönüşü gerektiğinde ayrıca bot durdurularak son yedek alınmalıdır.
 olduğunu kontrol edin. Eski/boş tanımı önce **Pause** yapın. **Revert Local
 Changes** düğmesine basmayın: ikinci tanım dosyaları yerel ilave sanıp silebilir.
 Dosya sürümleme ayarı diğer Folder ID'de açık diye çalışan klasör korunmuş olmaz.
-Bu ayarların bilgisayarda yapıldığı ayrıca doğrulanmalıdır.
+Bu kurulumda çalışan `713d0-vxz8s` tanımında Yalnızca Al ve 365 günlük aşamalı
+sürümleme doğrulandı. Eski `trade1-backup` tanımı duraklatıldı; **Tümüne Devam**
+düğmesi bu eski tanımı da açacağından kullanılmamalı.
+
+## 10 Eylül 2026: eşitleme onarımı ve gerçek geri yükleme provası
+
+9 Eylül'de `.research_monitor_state.json` tablette doğru olduğu halde PC'de
+eski içerikle kaldı. Yedeklerde kaynak dosyanın tarihini korumak, aynı boyutlu
+içerik değişikliğinin eşitleyici tarafından fark edilmemesine yol açabilir.
+Yeni sürüm değişen **yedek kopyasına** yeni mtime verir. Kaynak dosyanın içeriği
+ve tarihi değişmez. İçerik aynıysa SHA-256 karşılaştırması sayesinde tekrar
+kopyalanmaz; normal kullanımda elle `touch` gerekmez. Başka bir aktarım hatası
+olursa bütünlük kontrolü yine başarısız kalır; bu her eşitleme hatasını onarmaz.
+
+Doğrulayıcı bozuk/tekrarlanan manifest alanlarını, geçersiz JSON'u, eksik veya
+kontrol sırasında değişen dosyayı reddeder. Hash ve JSON aynı okuma üzerinden
+denetlenir. Sonuç dosyası yedek klasörünün içine yazılarak kaynakların üzerine
+geçilemez. `ok: true` kurtarma girişiminin değil doğrulanan dosyaların sonucudur.
+
+Gerçek prova 10 Eylül'de Git dışında tutulan
+`C:\Users\serha\Downloads\trade1\.restore-rehearsals\2026-09-10` klasöründe
+tamamlandı: **17 dosya / 408.858.101 bayt**, hash ve JSON kontrolleri başarılı.
+Kaynak, 9 Eylül 19:37 Türkiye saati snapshot'ıdır. Bot, emir veya bildirim
+başlatılmadı; `.env` taşınmadı. Bu dosya geri yükleme provasıdır; yeni bir
+cihazda bağımlılık ve anahtarlarla tam servis kurtarmasının kanıtı değildir.
+
+Prova klasörü özel durum kayıtları içerir, paylaşmayın; `.gitignore` ile
+korunur. Otomatik silinmez. Yeni prova için **farklı ve henüz bulunmayan** bir
+hedef seçin. Başarısız/yarım prova klasörü de inceleme için korunur, üzerine
+yazılmaz. Syncthing “Güncel” yazsa bile doğrulayıcı `ok: false` diyorsa yedek
+sağlam kabul edilmez.
