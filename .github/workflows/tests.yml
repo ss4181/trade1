@@ -40,6 +40,7 @@ jobs:
             cloud_report.py qc_export.py research_monitor.py \
             shadow_experiments.py derivatives_archive.py archive_backup.py \
             notification_delivery.py signal_outcomes.py backup_verify.py cloud_standby.py \
+            strategy_engine.py paper_execution.py \
             research/*.py tests/*.py
 
       - name: Bot çevrimdışı testleri
@@ -56,6 +57,10 @@ jobs:
           python -B tests/test_research_monitor.py
           python -B tests/test_reliability.py
           python -B tests/test_hardening.py
+          python -B tests/test_strategy_engine.py
+          python -B tests/test_paper_execution.py
+          python -B tests/test_evidence_summary.py
+          python -B tests/test_paper_report.py
 
       - name: Pano JavaScript sözdizimi
         run: |

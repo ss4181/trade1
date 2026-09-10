@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import math
 
+from paper_execution import simple_return_pct
+
 HOUR_MS = 3_600_000
 
 
@@ -25,8 +27,7 @@ def hourly_outcome(candles, bar_ms: int, horizon: int, direction: str = "LONG") 
         raise ValueError("invalid_outcome_price")
     if direction not in ("LONG", "SHORT"):
         raise ValueError("invalid_direction")
-    sign = 1 if direction == "LONG" else -1
     return {"entry": entry, "exit": exit_price,
             "entry_time_ms": expected[0],
             "exit_time_ms": expected[-1] + HOUR_MS,
-            "return_pct": sign * (exit_price / entry - 1) * 100}
+            "return_pct": simple_return_pct(entry, exit_price, direction)}

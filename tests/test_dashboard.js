@@ -15,4 +15,8 @@ assert.equal(price(Infinity), '—');
 assert.equal(price(NaN), '—');
 assert.ok(html.includes('Kalite Kontrol CSV'));
 assert.ok(html.includes('Kısmi teslim'));
+assert.ok(html.includes('measurementNote'), 'dashboard must render measurement note');
+assert.ok(html.includes('fMarket'), 'dashboard must expose market filter');
+assert.ok(html.includes('fUniverse'), 'dashboard must expose universe filter');
+assert.ok(html.includes('TP dokunması'), 'dashboard must explain target touch measurement');
 console.log('PASS dashboard syntax, price precision, delivery/QC controls');

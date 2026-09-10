@@ -444,6 +444,24 @@ reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
 - E-posta/Resend kanalı ve Expo mobil istemcisi 2026-08-06'da kullanıcı isteğiyle
   kaldırıldı. Telefon erişimi Telegram ve public GitHub Pages panosuyla sağlanır.
 
+### Ölçüm sözlüğü ve eski kayıtlar
+
+Pano ve Telegram iki sonucu özellikle ayrı gösterir:
+
+- `TP dokunması`: bildirimdeki referans fiyattan sonra kapanmış 5 dakikalık
+  mumlarda coin fiyatının +%2/+%3/+%5/+%10 hedefine değmesi. Bu net kâr, gerçek
+  dolum veya kaldıraçlı ROI değildir; aynı mumda hedef/stop sırası bilinmez.
+- `Net zaman çıkışı`: araştırma protokolündeki sonraki saatlik mum açılışı ile
+  strateji ufku sonundaki kapanış arasındaki getiri eksi varsayılan 12 bp maliyet.
+  S2 funding nakit akışı `not_modeled` kalır.
+
+`N`, `pending`, `UNKNOWN`, piyasa, evren, config ve ölçüm sürümü ayrı görünür.
+Eski kayıtlarda teslim kanıtı veya motor hash'i yoksa bu kayıtlar güncel başarı
+oranına sessizce eklenmez; `legacy_unknown`/`UNKNOWN` olarak kalır. Ayrıntılı
+kurallar ve manuel, salt-okunur rapor protokolü [CORE_EXECUTION_PROTOCOL.md](research/CORE_EXECUTION_PROTOCOL.md)
+dosyasındadır. Bu dosya yeni strateji, otomatik emir veya yatırım tavsiyesi
+anlamına gelmez.
+
 ## Dışarıdan gelen değişiklikler (başka bir AI / kişi)
 
 Doğrudan `main`'e uygulama — `main` tablette çalışan canlı bot. Önce bir dala

@@ -57,6 +57,7 @@ from pathlib import Path
 import requests
 
 import archive_backup as archive_backup_module
+import strategy_engine as core_engine
 from notification_delivery import DeliveryOutbox
 from signal_outcomes import hourly_outcome
 from derivatives_archive import (
@@ -1221,48 +1222,40 @@ UNIVERSE_LAST_ERROR: str | None = None
 # gostergeler
 # --------------------------------------------------------------------------
 
+def core_rules_for_research() -> core_engine.CoreRules:
+    """Explicit effective settings; no env dump, keys or notification data."""
+    return core_engine.CoreRules(
+        kline_limit=KLINE_LIMIT, rsi_period=RSI_PERIOD, oversold=RSI_OVERSOLD,
+        divergence_lookback=DIVERGENCE_LOOKBACK, divergence_gap=DIVERGENCE_GAP,
+        volume_window=VOLUME_ZSCORE_WINDOW, volume_threshold=VOLUME_ZSCORE_THRESHOLD,
+        confluence_hours=CONFLUENCE_LOOKBACK_HOURS,
+        funding_threshold_pct=FUNDING_SQUEEZE_THRESHOLD_PCT,
+        funding_persistence=FUNDING_PERSISTENCE,
+        s1_cooldown_hours=S1_COOLDOWN_HOURS, s2_cooldown_hours=S2_COOLDOWN_HOURS,
+        s3_cooldown_hours=S3_COOLDOWN_HOURS)
+
+
+def _core_engine_provenance(strategy: str) -> dict:
+    if strategy not in {"S1", "S1+S4", "S2", "S3", "S5", "S6"}:
+        return {}
+    try:
+        digest = core_rules_for_research().fingerprint()
+    except (TypeError, ValueError, OverflowError):
+        # Research metadata must never suppress an existing notification.
+        digest = None
+    return {"engine_version": core_engine.ENGINE_VERSION, "engine_config_hash": digest}
+
+
 def calc_rsi(closes: list[float], period: int = RSI_PERIOD) -> list[float]:
     """Wilder RSI serisi (ilk `period` eleman NaN)."""
-    n = len(closes)
-    rsi = [math.nan] * n
-    if n <= period:
-        return rsi
-    gains = losses = 0.0
-    for i in range(1, period + 1):
-        d = closes[i] - closes[i - 1]
-        gains += max(d, 0.0)
-        losses += max(-d, 0.0)
-    avg_g, avg_l = gains / period, losses / period
-    rsi[period] = 100.0 if avg_l == 0 else 100 - 100 / (1 + avg_g / avg_l)
-    for i in range(period + 1, n):
-        d = closes[i] - closes[i - 1]
-        avg_g = (avg_g * (period - 1) + max(d, 0.0)) / period
-        avg_l = (avg_l * (period - 1) + max(-d, 0.0)) / period
-        rsi[i] = 100.0 if avg_l == 0 else 100 - 100 / (1 + avg_g / avg_l)
-    return rsi
+    return core_engine.wilder_rsi(closes, period)
 
 
 def calc_volume_zscore(volumes: list[float], window: int = VOLUME_ZSCORE_WINDOW) -> list[float]:
     """LOG-hacim Z-skoru serisi. Ham hacim yerine log1p(hacim) kullanilir:
     saatlik hacim asiri kalin kuyruklu; ham z=3 'anomali' degildi (arastirmada
     ayda sembol basina ~10 sinyal ve zayif edge uretti)."""
-    logs = [math.log1p(v) for v in volumes]
-    n = len(logs)
-    z = [math.nan] * n
-    half = window // 2
-    for i in range(n):
-        lo = max(0, i - window + 1)
-        w = logs[lo:i + 1]
-        if len(w) < half:
-            continue
-        mu = sum(w) / len(w)
-        squared_diffs = [(x - mu) ** 2 for x in w]
-        var = (sum(squared_diffs) / (len(w) - 1)
-               if len(w) > 1 else 0.0)
-        sd = math.sqrt(var)
-        if sd > 0:
-            z[i] = (logs[i] - mu) / sd
-    return z
+    return core_engine.log_volume_zscore(volumes, window)
 
 
 # --------------------------------------------------------------------------
@@ -1420,14 +1413,8 @@ def bullish_divergence(closes, lows, rsi, i: int) -> bool:
     """Bar i icin: fiyat onceki dipten dusuk AMA RSI o dipten yuksek mi?
     Onceki dip: son DIVERGENCE_GAP bar haric tutulup ondan onceki
     DIVERGENCE_LOOKBACK barin min low'u ([i-gap-lookback+1, i-gap])."""
-    hi = i - DIVERGENCE_GAP
-    lo = hi - DIVERGENCE_LOOKBACK + 1
-    if lo < 0 or hi <= lo:
-        return False
-    window = lows[lo:hi + 1]
-    pmin = min(window)
-    pidx = lo + window.index(pmin)
-    return (lows[i] < pmin and not math.isnan(rsi[pidx]) and rsi[i] > rsi[pidx])
+    return core_engine.bullish_divergence(
+        lows, rsi, i, DIVERGENCE_LOOKBACK, DIVERGENCE_GAP)
 
 # --------------------------------------------------------------------------
 # veri cekme (halka acik uclar, anahtar gerekmez)
@@ -1769,20 +1756,8 @@ class ScanState:
 
     def should_fire(self, strategy: str, symbol: str, cond: bool,
                     cooldown_hours: float, now_s: float) -> bool:
-        key = (strategy, symbol)
-        prev = self.prev_cond.get(key)
-        self.prev_cond[key] = cond
-        if not cond:
-            return False
-        if prev is None:          # ilk taramada streak ortasinda ates etme
-            return False
-        if prev:                  # kosul zaten dogruydu -> kenar degil
-            return False
-        last = self.last_fire.get(key, 0.0)
-        if now_s - last < cooldown_hours * 3600:
-            return False
-        self.last_fire[key] = now_s
-        return True
+        return core_engine.should_fire(self.prev_cond, self.last_fire,
+                                       strategy, symbol, cond, cooldown_hours, now_s)
 
 
 def scan_symbol(symbol: str, state: ScanState,
@@ -1825,13 +1800,12 @@ def scan_symbol(symbol: str, state: ScanState,
 
     # ---- S1: oversold bullish divergence (long) ----
     s1_cond = ("S1" not in DISABLED_STRATEGIES
-               and not math.isnan(rsi[i]) and rsi[i] <= RSI_OVERSOLD
+               and core_engine.oversold(rsi[i], RSI_OVERSOLD)
                and bullish_divergence(closes, lows, rsi, i))
     if "S1" not in DISABLED_STRATEGIES and include("S1", s1_cond,
                                                    S1_COOLDOWN_HOURS):
-        recent_spike = any(
-            (not math.isnan(z)) and z >= VOLUME_ZSCORE_THRESHOLD
-            for z in zs[max(0, i - CONFLUENCE_LOOKBACK_HOURS):i + 1])
+        recent_spike = core_engine.recent_volume_spike(
+            zs, i, CONFLUENCE_LOOKBACK_HOURS, VOLUME_ZSCORE_THRESHOLD)
         _base = "S1" + ("+S4" if recent_spike else "")
         signals.append({
             "strategy": OBSERVE_STRATEGY_NAMES[_base] if observe else _base,
@@ -1849,7 +1823,7 @@ def scan_symbol(symbol: str, state: ScanState,
     # ---- S3: hacim anomalisi, yukari-bar (long momentum) ----
     # Kenar-tetikleme yon gozetmeksizin hacim patlamasi uzerinde calisir
     # (arastirmada dogrulanan kompozisyon); yon filtresi SONRA uygulanir.
-    s3_spike = (not math.isnan(zs[i]) and zs[i] >= VOLUME_ZSCORE_THRESHOLD)
+    s3_spike = core_engine.volume_spike(zs[i], VOLUME_ZSCORE_THRESHOLD)
     if (not extended and "S3" not in DISABLED_STRATEGIES
             and include("S3", s3_spike, S3_COOLDOWN_HOURS)
             and closes[i] > opens[i]):
@@ -1878,7 +1852,6 @@ def scan_symbol(symbol: str, state: ScanState,
         except requests.RequestException:
             fr = []                            # perp yoksa/ulasilamazsa atla
     if len(fr) >= FUNDING_PERSISTENCE:
-        thr = FUNDING_SQUEEZE_THRESHOLD_PCT / 100.0
         last_n = fr[-FUNDING_PERSISTENCE:]
         intervals = [
             (fr[j]["time"] - fr[j - 1]["time"]) / 3_600_000
@@ -1887,7 +1860,8 @@ def scan_symbol(symbol: str, state: ScanState,
         ]
         funding_interval_h = (statistics.median(intervals)
                               if intervals else None)
-        s2_cond = all(x["rate"] <= thr for x in last_n)
+        s2_cond = core_engine.funding_squeeze(
+            last_n, FUNDING_SQUEEZE_THRESHOLD_PCT, FUNDING_PERSISTENCE)
         if include("S2", s2_cond, S2_COOLDOWN_HOURS):
             contract = perp_symbol(symbol)
             multiplier = contract[:-len(symbol)] if contract.endswith(symbol) \
@@ -2170,6 +2144,16 @@ def _display_confidence(confidence: str | None) -> str:
     }.get(str(confidence or ""), str(confidence or "—"))
 
 
+def _measurement_display(sig: dict) -> str:
+    """Short, user-facing label; does not alter the measurement itself."""
+    value = str(sig.get("measurement_version") or "legacy_unknown")
+    return {
+        "signal-reference-touch-v1": "hedef dokunması · bildirim referansı",
+        "paper-barriers-v1": "TP/SL fiyat yolu · varsayımsal",
+        "legacy_unknown": "eski kayıt · ölçüm sürümü bilinmiyor",
+    }.get(value, value)
+
+
 def _telegram_reason(sig: dict) -> str:
     """Sinyalin matematiksel tetigini tek, jargon-aciklayici cumleye indir."""
     strategy = str(sig.get("strategy") or "")
@@ -2247,6 +2231,13 @@ def _telegram_evidence_lines(sig: dict) -> list[str]:
         lines.append(
             f"📡 <b>Canlı kişisel TP{USER_SUCCESS_TARGET_PCT:g}:</b> "
             f"%{live['hit_rate_pct']:g} ({live['hit']}/{live['resolved']}{small})")
+    engine_version = sig.get("engine_version") or "UNKNOWN"
+    engine_hash = str(sig.get("engine_config_hash") or "UNKNOWN")
+    hash_display = engine_hash[:12] if engine_hash not in ("UNKNOWN", "None") else engine_hash
+    lines.append(f"🧾 <b>Ölçüm kaydı:</b> {_measurement_display(sig)}")
+    lines.append(f"🏷️ <b>Evren / config:</b> {sig.get('universe') or 'UNKNOWN'} / "
+                 f"{sig.get('config_version') or 'UNKNOWN'}")
+    lines.append(f"⚙️ <b>Motor:</b> {engine_version} · {hash_display}")
     return lines
 
 
@@ -2272,6 +2263,9 @@ def _telegram_signal_text(sig: dict) -> str:
         "",
         f"💰 <b>{price_label}:</b> {_fmt_price(sig.get('price'))}",
         f"⏱️ <b>Beklenen ufuk:</b> ~{sig.get('horizon_hours', '?')} saat",
+        f"🏦 <b>Performans piyasası:</b> "
+        f"{_html.escape(str(sig.get('performance_market') or ('um_perp' if strategy == 'S2' else 'spot')))}",
+        f"🧭 <b>Evren:</b> {_html.escape(str(sig.get('universe') or 'UNKNOWN'))}",
     ]
     quote = sig.get("notification_quote")
     if quote:
@@ -2602,6 +2596,12 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
                       "FAILED" if expired else "PENDING")
     return {
         "basis": "signal_notification_price",
+        "measurement_version": event.get("measurement_version", "legacy_unknown"),
+        "entry_definition": event.get("entry_definition", "signal_reference_not_executed_price"),
+        "universe": event.get("universe", "UNKNOWN"),
+        "config_version": event.get("config_version", "UNKNOWN"),
+        "engine_version": event.get("engine_version", "UNKNOWN"),
+        "engine_config_hash": event.get("engine_config_hash", "UNKNOWN"),
         "delivery_evidence": event.get("delivery_evidence", "legacy_unverified"),
         "entry_ref": event.get("entry_ref"),
         "started_at": event.get("started_at"),
@@ -2664,6 +2664,12 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
             event = {
                 "event_id": event_id,
                 "strategy": strategy,
+                "measurement_version": "signal-reference-touch-v1",
+                "entry_definition": "signal_reference_not_executed_price",
+                "universe": record.get("universe") or "UNKNOWN",
+                "config_version": record.get("config_version") or "UNKNOWN",
+                "engine_version": record.get("engine_version") or "UNKNOWN",
+                "engine_config_hash": record.get("engine_config_hash") or "UNKNOWN",
                 "symbol": str(record.get("symbol") or ""),
                 "direction": direction,
                 "market": market,
@@ -3150,6 +3156,7 @@ def _delivery_record(sig: dict, push: bool) -> dict:
     suppressed = bool(reasons)
     return {
         **sig,
+        **_core_engine_provenance(strategy),
         "schema_version": SIGNAL_SCHEMA_VERSION,
         "config_version": sig.get("config_version", SIGNAL_CONFIG_VERSION),
         "event_id": _signal_event_id(sig),
@@ -4398,7 +4405,7 @@ def _format_daily_summary(*, day: str, signal_counts: dict[str, int],
     push_total = sum(push_counts.values())
     silent_total = sum(silent_counts.values())
     lines = [
-        "☀️ <b>Gunluk ozet</b>",
+        "☀️ <b>GÜNLÜK ÖZET</b> <i>(Gunluk ozet)</i>",
         f"<i>{_html.escape(day)} · son 24 saat</i>",
         "",
         "🔔 <b>Sinyal olayları</b>",
@@ -4425,9 +4432,13 @@ def _format_daily_summary(*, day: str, signal_counts: dict[str, int],
     lines += ["", "ℹ️ <b>Hızlı erişim</b>",
               "• /check — şu an aktif koşullar (bildirim göndermez)",
               "• /performans — ayrıntılı canlı karne ve hedef dokunmaları",
+              "", "🧭 <b>Ölçüm sözlüğü</b>",
+              "• 🎯 TP dokunması: bildirim referansından coin fiyatının hedefe değmesi; net kâr değildir.",
+              f"• 📐 Net sonuç: next-bar-open → ufuk kapanışı − {LIVE_ROUND_TRIP_COST_BPS:g}bp varsayımı.",
+              "• UNKNOWN / küçük N: geçmiş kayıt veya örneklem güvenilirlik kanıtı değildir.",
               "<i>Bu özet olayları ve ölçümleri gösterir; emir açmaz. "
               "Yatırım tavsiyesi değildir.</i>"]
-    return "\n".join(lines)
+    return _telegram_fit_report("\n".join(lines), "Günlük özet")
 
 
 def _telegram_fit_report(text: str, label: str) -> str:
@@ -4466,8 +4477,10 @@ def _format_performance(perf: dict) -> str:
         lines += _format_price_target_summary(perf.get("price_targets") or {})
         return _telegram_fit_report("\n".join(lines), "Performans raporu")
     lines = ["📊 <b>CANLI PERFORMANS</b>",
-             f"<i>Son {perf['n_total']} olgun sinyal · giriş/çıkış tanımı "
-             "backtest ile aynı</i>", "", "✅ <b>DOĞRULANMIŞ KOHORTLAR</b>"]
+             f"<i>Son {perf['n_total']} olgun sinyal · net zaman çıkışı "
+             "ayrı, TP dokunması ayrı ölçülür</i>",
+             "", "✅ <b>NET ZAMAN-ÇIKIŞI KOHORTLARI</b>",
+             "<i>Giriş: sonraki saatlik açılış · çıkış: ufuk kapanışı</i>"]
     observe_lines: list[str] = []
     validated_lines: list[str] = []
     cohorts = perf.get("cohorts") or []
@@ -4518,7 +4531,7 @@ def _format_performance(perf: dict) -> str:
         lines.append(f"⚠️ {perf['fetch_errors']} sinyal veri hatası nedeniyle ölçülemedi.")
     if excl_note:
         lines.append(excl_note.strip())
-    lines.append(f"\n<i>Net = ham getiri − {LIVE_ROUND_TRIP_COST_BPS:g}bp round-trip "
+    lines.append(f"\n<i>Net zaman çıkışı = ham getiri − {LIVE_ROUND_TRIP_COST_BPS:g}bp round-trip "
                  "maliyet varsayımı. S2 funding maliyeti modellenmedi. Küçük N'de "
                  "medyan/isabet çok oynaktır; 30+ sinyalden önce hüküm verme. "
                  "Yatırım tavsiyesi değildir.</i>")
@@ -4844,6 +4857,11 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "confidence": conf, "strength": sig.get("strength"),
             "universe": _signal_universe(sig),
             "config_version": sig.get("config_version") or "legacy",
+            "engine_version": sig.get("engine_version") or "UNKNOWN",
+            "engine_config_hash": sig.get("engine_config_hash") or "UNKNOWN",
+            "measurement_version": sig.get("measurement_version") or (
+                (price_target_for_event(event_id) or {}).get("measurement_version")
+                if price_target_for_event(event_id) else None) or "legacy_unknown",
             "entry": entry, "horizon_h": h,
             "signal_price": sig.get("price"),
             "signal_price_source": sig.get("price_source") or "signal_bar_close",
@@ -4961,6 +4979,9 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "started": STARTED_AT,
             "round_trip_cost_bps": LIVE_ROUND_TRIP_COST_BPS,
             "funding_cost_status": "not_modeled",
+            "engine_version": core_engine.ENGINE_VERSION,
+            "measurement_versions": ["signal-reference-touch-v1",
+                                      "paper-barriers-v1", "legacy_unknown"],
             "price_target_tracking_enabled": PRICE_TARGET_TRACKING_ENABLED,
             "price_target_levels_pct": list(PRICE_TARGET_LEVELS_PCT),
             "price_target_notify_levels_pct": list(

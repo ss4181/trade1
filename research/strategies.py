@@ -1,7 +1,9 @@
-"""Uc stratejinin parametrik sinyal uretimi (arastirma tarafi).
+"""Legacy vectorized research model; retained to reproduce published reports.
 
-Botun canli mantigiyla birebir ayni kosullar; tek fark burada tum tarih
-uzerinde vektorize calisiyor olmalari.
+NOT identical to live: EWM RSI seed, full-history rather than rolling API
+windows, strict S3 threshold and doji handling differ. Do not use historical
+success rates as calibrated live probabilities. New parity research uses
+replay_live_engine.py and the root strategy_engine.py; no old OOS is reopened.
 """
 
 import numpy as np

@@ -144,6 +144,24 @@ Telegram raporları artık ortak, okunabilir kart düzenindedir:
 Bu raporlar gözlem ve ölçüm içindir; bot emir açmaz ve yatırım tavsiyesi
 değildir.
 
+### Pano ve Telegram ölçümlerini okuma
+
+Mesajlarda ve panoda iki farklı sonuç göreceksin: `TP dokunması`, bildirim
+referansından sonra coin fiyatının hedefe değmesidir; `Net zaman çıkışı` ise
+sonraki saatlik açılıştan ufuk kapanışına kadar olan fiyat değişiminden
+varsayılan 12 bp maliyetin düşülmesidir. Birincisi senin “%2–3 görünce
+kapatırım” gözlemin için, ikincisi stratejilerin sabit zaman karşılaştırması
+içindir; aynı başarı oranı değildir.
+
+Pano tablosunda piyasa/evren ve ölçüm sürümü filtreleri bulunur. `UNKNOWN`,
+`legacy_unknown`, `pending` ve `küçük N` değerleri veri eksikliği veya yetersiz
+örneklem uyarısıdır; başarısız işlem olarak sayılmaz. S2 için funding nakit
+akışı modellenmediğinden net sonuç yerine `not_modeled` görmen normaldir.
+
+Yöntem kararlarının tam kaydı: [research/CORE_EXECUTION_PROTOCOL.md](research/CORE_EXECUTION_PROTOCOL.md).
+Bu pano emir açmaz; hedefe dokunma verisi gerçek dolum veya garanti edilmiş
+getiri anlamına gelmez.
+
 Güvenlik: bot yalnızca **senin** ve **onayladığın** chat'lerden gelen
 komutlara cevap verir; botu bulan bir yabancı yalnızca `/myid` ve `/katil`
 kullanabilir (ikisi de hiçbir yetki vermez). Yönetim komutları
