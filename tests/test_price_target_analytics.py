@@ -133,6 +133,22 @@ class PriceTargetAnalyticsTests(unittest.TestCase):
             self.assertIn(marker, page)
         self.assertNotIn("{{DATA_URL}}", page)
 
+    def test_legacy_target_state_is_excluded_from_current_summary(self):
+        record = self.record()
+        profile = bot._register_price_targets(record)
+        self.assertEqual(
+            bot._measurement_display({"price_target": profile}),
+            "hedef dokunması · bildirim referansı",
+        )
+        event = bot.PRICE_TARGET_STATE["events"][record["event_id"]]
+        event.pop("measurement_version")
+        event["status"] = "expired"
+
+        summary = bot.price_target_summary()
+        self.assertNotIn("S3", summary)
+        self.assertEqual(summary["_meta"]["legacy_unverified_events"], 1)
+        self.assertEqual(summary["_meta"]["legacy_unverified_matured"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

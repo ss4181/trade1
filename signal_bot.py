@@ -2146,7 +2146,12 @@ def _display_confidence(confidence: str | None) -> str:
 
 def _measurement_display(sig: dict) -> str:
     """Short, user-facing label; does not alter the measurement itself."""
-    value = str(sig.get("measurement_version") or "legacy_unknown")
+    value = sig.get("measurement_version")
+    if not value:
+        profile = sig.get("price_target")
+        if isinstance(profile, dict):
+            value = profile.get("measurement_version")
+    value = str(value or "legacy_unknown")
     return {
         "signal-reference-touch-v1": "hedef dokunması · bildirim referansı",
         "paper-barriers-v1": "TP/SL fiyat yolu · varsayımsal",
@@ -2523,6 +2528,9 @@ def _signal_event_id(sig: dict) -> str:
 
 PRICE_TARGET_STATE_FILE = Path(__file__).parent / ".price_target_state.json"
 PRICE_TARGET_STATE_SCHEMA_VERSION = 2
+PRICE_TARGET_MEASUREMENT_VERSIONS = frozenset({
+    "signal-reference-touch-v1", "paper-barriers-v1",
+})
 _price_target_lock = threading.RLock()
 
 
@@ -2895,10 +2903,18 @@ def price_target_summary() -> dict:
     kalır. Satır bazında anlık HIT yine görünür.
     """
     grouped: dict[str, dict[str, dict]] = {}
+    legacy_events = legacy_matured = legacy_pending = 0
     with _price_target_lock:
         events = list(PRICE_TARGET_STATE.get("events", {}).values())
     for event in events:
         if not isinstance(event, dict):
+            continue
+        if event.get("measurement_version") not in PRICE_TARGET_MEASUREMENT_VERSIONS:
+            legacy_events += 1
+            if event.get("status") == "expired":
+                legacy_matured += 1
+            elif event.get("status") == "active":
+                legacy_pending += 1
             continue
         strategy = str(event.get("strategy") or "?")
         status = event.get("status")
@@ -2948,6 +2964,12 @@ def price_target_summary() -> dict:
                     round(statistics.median(minutes), 1) if minutes else None),
                 "sample_warning": "small_sample" if resolved < 30 else None,
             }
+    out["_meta"] = {
+        "measurement_scope": sorted(PRICE_TARGET_MEASUREMENT_VERSIONS),
+        "legacy_unverified_events": legacy_events,
+        "legacy_unverified_matured": legacy_matured,
+        "legacy_unverified_pending": legacy_pending,
+    }
     return out
 
 
@@ -2958,6 +2980,8 @@ def price_path_summary() -> dict:
         events = list(PRICE_TARGET_STATE.get("events", {}).values())
     for event in events:
         if not isinstance(event, dict):
+            continue
+        if event.get("measurement_version") not in PRICE_TARGET_MEASUREMENT_VERSIONS:
             continue
         strategy = str(event.get("strategy") or "?")
         row = grouped.setdefault(strategy, {"mfe": [], "mae": [],
@@ -4351,6 +4375,8 @@ def _format_price_target_summary(summary: dict) -> list[str]:
              "<i>Bildirim fiyatından sonraki kapanmış 5dk mumlar · "
              "kaldıraçsız coin fiyatı</i>"]
     for strategy, levels in sorted(summary.items()):
+        if not isinstance(levels, dict) or str(strategy).startswith("_"):
+            continue
         for level, row in sorted(levels.items(), key=lambda item: float(item[0])):
             rate = (f"%{row['hit_rate_pct']:g}"
                     if row.get("hit_rate_pct") is not None else "—")
@@ -4850,6 +4876,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         notification_status = ("SESSIZ" if silenced else {
             "delivered": "GONDERILDI", "partial": "KISMI", "pending": "BEKLIYOR",
             "failed": "BASARISIZ", "disabled": "KAPALI"}.get(delivery["delivery_status"], "DOGRULANMADI"))
+        target_profile = price_target_for_event(event_id)
         rows.append({
             "t": sig["bar_time"], "event_id": event_id,
             "strategy": strat, "symbol": sig.get("symbol"),
@@ -4860,8 +4887,8 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "engine_version": sig.get("engine_version") or "UNKNOWN",
             "engine_config_hash": sig.get("engine_config_hash") or "UNKNOWN",
             "measurement_version": sig.get("measurement_version") or (
-                (price_target_for_event(event_id) or {}).get("measurement_version")
-                if price_target_for_event(event_id) else None) or "legacy_unknown",
+                (target_profile or {}).get("measurement_version")
+                if target_profile else None) or "legacy_unknown",
             "entry": entry, "horizon_h": h,
             "signal_price": sig.get("price"),
             "signal_price_source": sig.get("price_source") or "signal_bar_close",
@@ -4913,7 +4940,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "note": sig.get("note", ""),
             "why": _signal_why(sig),
             "detail": _signal_detail_rows(sig),      # (etiket, deger) ciftleri
-            "price_target": price_target_for_event(event_id),
+            "price_target": target_profile,
             "ref": {k: ref.get(k) for k in
                     ("median_price", "q10_price", "q90_price", "sigma_h_pct",
                       "hist_median_pct", "hist_q10_pct", "hist_q90_pct",
@@ -4963,7 +4990,8 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
                           "first_event_utc": min((r["t"] for r in rows), default=None),
                           "last_event_utc": max((r["t"] for r in rows), default=None),
                           "performance_scope": "displayed_events_only",
-                          "target_scope": "retained_price_target_state_including_legacy_unverified"},
+                           "target_scope": "current_measurement_versions_only",
+                           "legacy_target_events": target_summary.get("_meta", {})},
         "status": {
             "scans": SCANS_COMPLETED, "last_scan": LAST_SCAN_AT,
             "runtime_source": _default_research_report_source(),
