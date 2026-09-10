@@ -2,7 +2,7 @@
 
 Bu araç canlı stratejiyi değiştirmez. Binance ``!forceOrder@arr`` arşivi bir
 gelecek liquidation heatmap'i değildir; yalnız gerçekleşmiş ve 1000 ms içinde
-sembol başına en büyük force-order snapshot'larını içerir. Ayrıntılı ön kayıt:
+sembol başına en son force-order snapshot'larını içerir. Ayrıntılı ön kayıt:
 ``research/PREREG_G1_LIQUIDATION_PROXY.md``.
 """
 

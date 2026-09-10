@@ -662,3 +662,74 @@ kuyruğunda aynı alıcıya devam eden istek bitmeden ikinci gönderim başlatı
 bozuk kuyruk sessizce silinmez. Strateji/eşik/evren/cooldown değişikliği yoktur.
 Bilgisayardaki doğrulama ve geri yükleme provası [PC_BACKUP.md](PC_BACKUP.md)
 içinde, tamamlanan/bekleyen adımlar [IMPROVEMENTS.md](IMPROVEMENTS.md) içindedir.
+
+## Araştırma verisini tamamlama (10 Eylül 2026)
+
+PC'de eksik olay verileri hazırlandı; tablette büyük tarihsel indirme veya
+ikinci bot çalıştırma. Canlı arşivleme ve günlük PC yedeği devam etmeli.
+
+**1. Termux'ta güncelle.** Kod bloklarını kopyala; başına `~/trade1 $` ekleme.
+
+```bash
+cd ~/trade1
+git status --short
+touch .stop-signal-bot
+pkill -f "python signal_bot.py" 2>/dev/null || true
+pkill -f "uvicorn server:app" 2>/dev/null || true
+git pull --ff-only origin main
+```
+
+`git pull` hata verirse ilerleme; çıktıyı gönder. Yerel değişiklikleri silme,
+`reset --hard` kullanma. Hatasız güncellenince:
+
+```bash
+pip install -r requirements.txt
+git --no-pager log -1 --oneline
+```
+
+**2. S2 araştırmasının veri anahtarını kontrol et.** `nano .env` aç. Yalnız
+`BINANCE_MARKET_DATA_API_KEY` satırını bul; yoksa ekle. Değer, kendi Binance
+hesabındaki okuma/veri erişimi için kullanılan API anahtarıdır. Değeri sadece
+tablette yaz; sohbete, Telegram'a, ekran görüntüsüne veya Git'e koyma. Bot bu
+uç nokta için API secret istemez. İşlem ve para çekme yetkilerini **açma**.
+Anahtar edinme/izin adımlarını kendin tamamlamalısın; buradaki tarihsel
+indirmeler anahtar olmadan yapılmıştır. Anahtar erişim sağlamazsa bildirimdeki
+yalnız hata türünü paylaş; daha geniş hesap yetkileri verme.
+
+Nano'da kaydet: **Ctrl+O → Enter → Ctrl+X**. Satır zaten doğruysa ikinci kez
+ekleme. Bu ayar yeni S2 olayındaki büyük yatırımcı pozisyon oranını toplamak
+içindir; kâr garantisi veya canlı strateji filtresi değildir.
+
+**3. Yedek al ve tek botu başlat.**
+
+```bash
+python signal_bot.py --backup-now
+python signal_bot.py --backup-status
+rm -f .stop-signal-bot
+nohup ./termux/boot-signal-bot.sh >/dev/null 2>&1 &
+```
+
+**4. Çalıştığını kontrol et.**
+
+```bash
+pgrep -af "uvicorn server:app|python signal_bot.py"
+python signal_bot.py --research-status
+python signal_bot.py --archive-status
+```
+
+Beklenen: tek ana bot/servis; arşivde son kayıtlar güncel ve sayılar zamanla
+artıyor. `DISCOVERY_COLLECTING` normaldir. S2 “OI tam” sayısı yeni uygun olay
+gelmeden artmayabilir; geçmişte PC'de tamamlanan üç kayıt bu sayıya eklenmez.
+
+**5. PC'ye ulaştığını doğrula.** İki cihazda Syncthing açıkken çalışan yedek
+klasörünün **Güncel** olmasını bekle. Eski/duraklatılmış klasörü açma. Tabletin
+`last_success_at` değeri yalnız tabletteki ara kopyayı gösterir. Windows'ta
+proje klasöründen aşağıdaki kontrol `ok: true` dönmeli:
+
+```powershell
+.\.venv\Scripts\python.exe -B backup_verify.py 'C:\Users\serha\Documents\Trade1-Backup'
+```
+
+Son commit satırını, `--backup-status` ve `--research-status` çıktılarını
+paylaşabilirsin; `.env` içeriğini paylaşma. Günlük aktarım PC kapalıyken
+tamamlanamaz; iki cihaz yeniden çevrimiçi olunca eşitlenir.

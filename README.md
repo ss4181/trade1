@@ -522,6 +522,16 @@ cooldown veya 5 dakikalık tarama / 1 saatlik sinyal mumunu değiştirmez.
   satırını kapsar; hedef karnesi saklanan hedef arşivini kapsar. “Kanıt sınıfı”
   kalibre edilmiş başarı olasılığı değildir.
 
+## Araştırma verisi hazırlığı
+
+Araştırma hazırlığının güncel kontrolü: [10 Eylül raporu](research/ARCHIVE_PREPARATION_2026-09-10.md).
+37 G1 + 3 S2 için mum pencereleri ve eksik S2 top-position alanları ayrı,
+özel araştırma dosyalarında hazırlandı. Bu çalışma canlı başarı oranı üretmez,
+strateji kurallarını veya ileri-dönem arşivini değiştirmez. Telegram hazırlık
+raporu artık dönem satırı ile beş temel alanı gerçekten tam satırı ayırır.
+Tablet güncellemesi ve yalnız cihazda girilecek veri anahtarı için
+[TABLET.md](TABLET.md#araştırma-verisini-tamamlama-10-eylül-2026).
+
 ## GitHub Pages kalite kontrol CSV
 
 `PUBLISH_QC_ENABLED=false` güvenli varsayılandır. Yerel `.env` içinde `true`

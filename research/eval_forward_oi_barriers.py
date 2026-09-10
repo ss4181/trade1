@@ -139,7 +139,7 @@ class VisionKlineStore:
             expected = (digest_path.read_text(encoding="ascii").strip().lower()
                         if digest_path.exists() else "")
             actual = hashlib.sha256(raw).hexdigest()
-            if expected and expected != actual:
+            if len(expected) != 64 or expected != actual:
                 raw = b""  # corrupt cache is replaced, never analyzed
             if raw:
                 try:

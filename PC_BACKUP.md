@@ -153,3 +153,20 @@ korunur. Otomatik silinmez. Yeni prova için **farklı ve henüz bulunmayan** bi
 hedef seçin. Başarısız/yarım prova klasörü de inceleme için korunur, üzerine
 yazılmaz. Syncthing “Güncel” yazsa bile doğrulayıcı `ok: false` diyorsa yedek
 sağlam kabul edilmez.
+
+## 10 Eylül sabahı: “Güncel” ile bütünlük kontrolü farklı sonuç verdi
+
+09:47 Türkiye saati kontrolünde eşitlenen PC klasöründeki altı dosya manifest
+hash'iyle uyuşmadı. Syncthing bağlantısı açık, `needFiles=0`, `pullErrors=0`
+ve yerel değişiklik sayısı sıfırdı; yani o anda aktarım kuyruğunun boş olması
+paketin tutarlı olduğunu kanıtlamadı. Kaynak tablette mi yoksa eşitlenen
+kopyada mı eski içerik kaldığı, tablet kontrolü olmadan kesinleştirilemez.
+
+Araştırmada kullanılan ayrı 9 Eylül geri yükleme snapshot'ı korunmuştur;
+araştırma verisine bu karışık paket alınmadı. Dosyalar silinmedi, Syncthing'de
+Revert/Override uygulanmadı.
+
+Yapılacak: [TABLET.md](TABLET.md#araştırma-verisini-tamamlama-10-eylül-2026)
+adımlarıyla kodu güncelle, bot duruyorken `--backup-now` çalıştır, sonra botu
+yeniden başlat. İki cihazda eşitleme bitince PC doğrulayıcısını tekrar çalıştır.
+`ok: false` sürüyorsa çıktıyı paylaş; “Güncel” yazdığı için hatayı yok sayma.

@@ -53,7 +53,8 @@ eşik seçimi veya sonuç penceresine tekrar bakarak aday seçimi yapılmadı.
 | Ölçü | Sonuç |
 |---|---|
 | Piyasa satırı / sembol | 108.689 / 135 |
-| Tam alanlı satır / süre | 64.792 / 33,9 gün |
+| Araştırma dönemi satırı / süre | 64.792 / 33,9 gün |
+| Beş temel alanı gerçekten tam satır | 64.077 |
 | Saat kapsaması | %88,0 |
 | OI / funding / long-short doluluğu | %98,9 / %100,0 / %99,9 |
 | Likidasyon olayı / olay günü | 316.253 / 10 |
@@ -85,3 +86,21 @@ ayarları bu çalışma tarafından değiştirilmedi.
   PC'den Telegram'a yeni bir gönderici veya tablete teslim onayı eklenmedi.
 - **Araştırma:** arşivleme ve ön-kayıtlı takvim sürer. Yeni strateji/eşik,
   başarı etiketi ve canlı emir ancak ayrı doğrulama ve açık onayla ele alınır.
+
+## 10 Eylül: eksik araştırma girdileri tamamlandı
+
+- İzole `research/prepare_archive_data.py`: özel yedeğin saat/alan denetimi,
+  resmî SHA-256 doğrulamalı ZIP, açık kaynak etiketli son-gün REST tamamlaması.
+  Kaynak dosyalar değişmez; sırlar ve ham veriler Git'e girmez.
+- 37 G1 + 3 S2 olayının **40/40** fiyat penceresi hazır; üç S2 top-position
+  eksikliği tarihsel arşivden ayrı bir araştırma tablosuna tamamlandı.
+- Bu üç kayıt ileri-dönem gözlemi sayılmadı. Telegram raporundaki “tam alanlı”
+  sayaç adı düzeltildi; kalite kapıları ve canlı stratejiler değişmedi.
+- Önceki 5m araştırma önbelleğinde checksum dosyası yoksa ZIP'in kabul edilmesi
+  engellendi. 15 yeni çevrimdışı test ve CI entegrasyonu eklendi.
+- Henüz hazır olmayan süre/örneklem kapıları, 99 boş saat ve kaynak ayrımları:
+  [Araştırma hazırlık raporu](research/ARCHIVE_PREPARATION_2026-09-10.md).
+- **Yeni cihaz adımı:** 10 Eylül sabahı eşitlenen PC klasöründeki altı dosya
+  manifestle uyuşmadı; Syncthing kuyruğu boştu. Sabit araştırma kopyası ayrı
+  tutuldu. Tablet güncellemesi ardından durdurulmuş botla yeni yedek ve PC'de
+  tekrar hash kontrolü gerekir; ayrıntılar [PC_BACKUP.md](PC_BACKUP.md).

@@ -103,7 +103,7 @@ def build_research_readiness(
     def finite_field(row, name):
         value = row.get(name)
         return isinstance(value, (float, int)) and not isinstance(value, bool) and math.isfinite(value)
-    market_rows = research_rows = malformed = 0
+    market_rows = research_rows = complete_research_rows = malformed = 0
     market_times: list[datetime] = []
     hours: set[str] = set()
     research_first = research_last = None
@@ -142,6 +142,7 @@ def build_research_readiness(
             research_first = stamp
         if research_first is not None and stamp >= research_first:
             research_rows += 1
+            complete_research_rows += int(core_complete)
             research_last = stamp if research_last is None else max(
                 research_last, stamp)
             research_hours.add(hour)
@@ -327,6 +328,7 @@ def build_research_readiness(
             "rows": market_rows, "symbols": len(symbols),
             "first_utc": _iso(first), "last_utc": _iso(last),
             "research_rows": research_rows,
+            "complete_research_rows": complete_research_rows,
             "research_ready_first_utc": _iso(research_first),
             "research_ready_last_utc": _iso(research_last),
             "span_days": span_days, "unique_hours": len(research_hours),
@@ -422,7 +424,8 @@ def format_research_readiness(report: dict) -> str:
         f"{_html.escape(str(report.get('source_label') or 'belirtilmedi'))}\n"
         f"🧭 <b>Aşama:</b> {phase}\n"
         f"📦 <b>OI arşivi</b>\n"
-        f"• {market['rows']} toplam · {market['research_rows']} tam-alanlı satır\n"
+        f"• {market['rows']} toplam · {market['research_rows']} dönem satırı\n"
+        f"• Temel alanları tam: {market.get('complete_research_rows', '—')} satır\n"
         f"• {market['symbols']} sembol · {market['span_days']} gün\n"
         f"• Saat kapsaması: %{shown(market['hour_coverage_pct'])}\n\n"
         "🧩 <b>Alan doluluğu</b>\n"

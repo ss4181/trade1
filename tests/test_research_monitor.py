@@ -78,6 +78,11 @@ class ResearchMonitorTests(unittest.TestCase):
         self.assertFalse(report["quality_ready"])
         self.assertFalse(
             report["quality_checks"]["funding_completeness_80pct"])
+        self.assertGreater(report["market"]["research_rows"], 1)
+        self.assertEqual(report["market"]["complete_research_rows"], 1)
+        message = monitor.format_research_readiness(report)
+        self.assertIn("Temel alanları tam: 1 satır", message)
+        self.assertNotIn("tam-alanlı satır", message)
 
     def test_declared_oos_start_controls_formal_review(self):
         with tempfile.TemporaryDirectory() as tmp:

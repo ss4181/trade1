@@ -104,6 +104,7 @@ jobs:
           python -B tests/test_forward_oi_explore.py
           python -B tests/test_forward_oi_barriers.py
           python -B tests/test_g1_liquidation_proxy.py
+          python -B tests/test_archive_preparation.py
 
       - name: Termux betiği sözdizimi
         run: sh -n termux/boot-signal-bot.sh
