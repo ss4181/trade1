@@ -174,3 +174,15 @@ aynı çevrimdışı testleri çalıştırmalı, ayrıca izin olmadan push/deplo
 Tam otomatik yeni raporun canlı panoya bağlanması bu yamada açılmadı. Güvenilir
 5m veri/teslim kapsamıyla ilk gerçek ölçüm ve maliyet/OOS denetimi, sunum işinden
 ayrı yüksek-muhakeme işi olarak geri dönülecek.
+
+### 2026-09-11 uygulama durumu
+
+Sunum devri tamamlandı: Telegram/pano ölçüm etiketleri, piyasa/evren filtreleri,
+legacy ölçüm ayrımı ve QC kanonik olay tekilleştirmesi uygulandı. Retry sonrası
+Telegram teslimleri özel outbox'tan QC girdisine yalnız bellek içinde birleştirilir;
+`signals.log` değiştirilmez. 24 Python suite ve iki dashboard kontrolü geçti.
+
+Henüz yapılmayanlar bilinçli kapsam sınırıdır: gerçek funding nakit akışının tam
+modellenmesi, yeni dondurulmuş OOS penceresi ve borsaya gerçek emir gönderimi.
+Bunlar ayrı veri/operasyon onayı gerektirir; mevcut paper/research motoru emir
+göndermez.

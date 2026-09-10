@@ -673,6 +673,9 @@ Telegram'a göndermeyin. Anahtar eksikliği mevcut S2 araştırma bildirimini ka
 Yeni pano eski kayıtları “Doğrulanmadı” gösterebilir: bu, sinyalin başarısız
 olduğu değil, geçmiş Telegram teslim kanıtının bulunmadığı anlamına gelir.
 Eski performans cache'i v3 hesaplamalarıyla kademeli olarak yeniden ölçülür.
+QC dışa aktarımı aynı olayı farklı kimliklerle tekrar saymaz; retry sonradan
+başarılı olduysa özel bildirim kuyruğundaki teslim durumu bellekte QC satırına
+eklenir. `signals.log` değiştirilmez ve gizli alıcı bilgileri yayımlanmaz.
 
 10 Eylül ekleri: eşitleyicinin aynı boyutlu değişikliği atlamaması için değişen
 yedek dosyasına yeni tarih verilir. İçerik aynıysa tekrar kopyalanmaz. Telegram

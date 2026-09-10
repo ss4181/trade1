@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -98,6 +99,16 @@ class QCExportTests(unittest.TestCase):
         self.assertEqual(rejected[0]["rejection_reason"],
                          "duplicate_event_id")
 
+    def test_different_ids_for_same_canonical_event_are_one_event(self):
+        first = event(event_id="a" * 32)
+        second = event(event_id="b" * 32)
+        built = package(lines(first, second))
+        accepted = csv_rows(built.files["qc/signal_events.csv"])
+        rejected = csv_rows(built.files["qc/rejected_records.csv"])
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(rejected[0]["rejection_reason"],
+                         "duplicate_canonical_event")
+
     def test_test_and_out_of_universe_are_rejected(self):
         built = package(lines(
             event(strategy="TEST"),
@@ -141,6 +152,25 @@ class QCExportTests(unittest.TestCase):
         self.assertIn("funding:not_modeled",
                       next(row["outcome_source"] for row in outcomes
                            if row["strategy"] == "S2"))
+
+    def test_confirmed_retry_is_merged_into_qc_source(self):
+        record = event(event_id="a" * 32)
+
+        class FakeOutbox:
+            def confirmed_records(self):
+                return [{**record, "delivery_confirmed": True,
+                         "delivery_status": "delivered",
+                         "delivered_at": "2026-07-20T00:01:00+00:00"}]
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "signals.log"
+            path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+            with patch.object(bot, "DELIVERY_OUTBOX", FakeOutbox()):
+                merged = bot._qc_signal_lines_with_delivery(path)
+        self.assertEqual(len(merged), 1)
+        public = json.loads(merged[0])
+        self.assertTrue(public["delivery_confirmed"])
+        self.assertEqual(public["delivery_status"], "delivered")
 
     def test_entry_and_exit_timing(self):
         calls = []

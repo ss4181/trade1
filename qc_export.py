@@ -219,6 +219,7 @@ def _parse_events(
     accepted: list[dict[str, object]] = []
     rejected: list[dict[str, object]] = []
     seen: set[str] = set()
+    seen_canonical: set[str] = set()
     min_rank = confidence_rank.get(min_confidence, 1)
 
     for number, raw_line in enumerate(lines, start=1):
@@ -286,6 +287,11 @@ def _parse_events(
             _reject(rejected, number, "duplicate_event_id", raw, record)
             continue
         seen.add(event_id)
+        canonical_id = canonical_event_id(record)
+        if canonical_id in seen_canonical:
+            _reject(rejected, number, "duplicate_canonical_event", raw, record)
+            continue
+        seen_canonical.add(canonical_id)
 
         raw_confidence = str(
             record.get("confidence") or "YUKSEK").strip().upper()

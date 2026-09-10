@@ -564,6 +564,10 @@ penceresi isteği yapılır; diğerleri sonraki yayında tamamlanabilir. Gerçek
 alt-istek/byte sayısı ölçülmediği için manifestte byte sayısı `null` kalır.
 Funding modellenmez. Qty, gerçek dolar PnL veya emir kayıtları üretilmez.
 
+QC olayları hem `event_id` hem de strateji/sembol/yön/bar/ufuk kanonik kimliğiyle
+tekilleştirilir. Telegram retry daha sonra başarıyla teslim edilmişse özel outbox
+durumu QC girdisine bellekte birleştirilir; `signals.log` geriye dönük değiştirilmez.
+
 Değişmeyen CSV'ler tekrar gönderilmez. `qc/.publication.json` teknik tamamlanma
 işaretidir; yarım kalan yayın sonraki turda onarılır. Çok dosyalı GitHub yayını
 tek atomik commit değildir: indiren araçlar manifest SHA-256 değerlerini

@@ -5197,6 +5197,59 @@ def _github_data_url() -> str:
             f"{GITHUB_DATA_BRANCH}/data.json")
 
 
+def _qc_signal_lines_with_delivery(path: Path) -> list[str]:
+    """QC girdisini log + doğrulanmış outbox teslimleriyle bellekte birleştir.
+
+    Retry sonrası teslim durumu signals.log'a geriye dönük yazılmaz. Outbox
+    doğrulaması varsa aynı kanonik olayın log satırına yalnız güvenli teslim
+    alanlarını ekler; olayın fiyatı, zamanı ve strateji alanlarını değiştirmez.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    except OSError:
+        lines = []
+    parsed: dict[str, dict] = {}
+    positions: dict[str, int] = {}
+    for index, raw in enumerate(lines):
+        try:
+            record = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        try:
+            event_id = _signal_event_id(record)
+        except (TypeError, ValueError):
+            continue
+        if event_id not in positions:
+            positions[event_id] = index
+            parsed[event_id] = record
+    try:
+        confirmed = DELIVERY_OUTBOX.confirmed_records()
+    except (OSError, ValueError, TypeError):
+        confirmed = []
+    for delivery in confirmed:
+        if not isinstance(delivery, dict):
+            continue
+        try:
+            event_id = _signal_event_id(delivery)
+        except (TypeError, ValueError):
+            continue
+        overlay = {
+            key: delivery[key] for key in
+            ("delivery_confirmed", "delivery_status", "delivered_at",
+             "delivery_sent_count", "delivery_pending_count",
+             "delivery_failed_count") if key in delivery
+        }
+        if event_id in parsed:
+            parsed[event_id].update(overlay)
+            lines[positions[event_id]] = json.dumps(
+                parsed[event_id], ensure_ascii=False)
+        else:
+            lines.append(json.dumps({**delivery, **overlay}, ensure_ascii=False))
+    return lines
+
+
 def build_qc_export_package():
     """In-memory export, with bounded network work on the publishing worker."""
     from qc_export import build_package
@@ -5223,14 +5276,13 @@ def build_qc_export_package():
         return _qc_candle_cache[key], source
 
     path = Path(__file__).parent / SIGNAL_LOG
-    with (path.open(encoding="utf-8") if path.exists() else io.StringIO()) as stream:
-        return build_package(
-            stream, configured_symbols=SYMBOLS,
-            core_symbols=DEFAULT_SYMBOLS.split(","), extended_symbols=EXTENDED_SET,
-            config_version=SIGNAL_CONFIG_VERSION, confidence_rank=CONF_RANK,
-            min_confidence=NOTIFY_MIN_CONFIDENCE,
-            round_trip_cost_bps=LIVE_ROUND_TRIP_COST_BPS,
-            candle_loader=loader, network_usage=usage)
+    return build_package(
+        _qc_signal_lines_with_delivery(path), configured_symbols=SYMBOLS,
+        core_symbols=DEFAULT_SYMBOLS.split(","), extended_symbols=EXTENDED_SET,
+        config_version=SIGNAL_CONFIG_VERSION, confidence_rank=CONF_RANK,
+        min_confidence=NOTIFY_MIN_CONFIDENCE,
+        round_trip_cost_bps=LIVE_ROUND_TRIP_COST_BPS,
+        candle_loader=loader, network_usage=usage)
 
 
 def _qc_fingerprint(package) -> bytes:
