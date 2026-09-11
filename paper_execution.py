@@ -96,15 +96,20 @@ def evaluate_path(candles, *, delivered_at_ms, delivery_confirmed, market,
     entry_at = ((delivered_at_ms + spec.latency_ms) // FIVE_MIN_MS + 1) * FIVE_MIN_MS
     result["entry_time_ms"] = entry_at
     expiry = entry_at + spec.horizon_hours * 3_600_000
-    by_time = {}
+    by_time, invalid_times, conflicts = {}, set(), set()
     for bar in candles:
+        if not isinstance(bar, dict):
+            return fail("invalid_candle_timestamp")
         stamp = bar.get("open_time")
-        if type(stamp) is not int or stamp % FIVE_MIN_MS:
+        if type(stamp) is not int:
             return fail("invalid_candle_timestamp")
         if not entry_at <= stamp < expiry or stamp + FIVE_MIN_MS > as_of_ms:
             continue
+        if stamp % FIVE_MIN_MS:
+            invalid_times.add(stamp // FIVE_MIN_MS * FIVE_MIN_MS)
+            continue
         if stamp in by_time and bar != by_time[stamp]:
-            return fail("conflicting_candle")
+            conflicts.add(stamp)
         by_time[stamp] = bar
     sign = 1 if direction == "LONG" else -1
     entry = target = stop = None
@@ -112,6 +117,12 @@ def evaluate_path(candles, *, delivered_at_ms, delivery_confirmed, market,
         if stamp + FIVE_MIN_MS > as_of_ms:
             result["status"], result["reason"] = "pending", "awaiting_closed_bar"
             return result
+        # Only data needed before the first exit can invalidate this event.
+        # The input manifest reports quality problems elsewhere separately.
+        if stamp in invalid_times:
+            return fail("invalid_candle_timestamp")
+        if stamp in conflicts:
+            return fail("conflicting_candle")
         bar = by_time.get(stamp)
         if bar is None:
             return fail("missing_required_candle")

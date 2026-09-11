@@ -1,5 +1,9 @@
 # Samsung tablette 7/24 çalıştırma (Termux) — önerilen ücretsiz yol
 
+**11 Eylül güncellemesi:** Telegram gecikme düzeltmesi ve kalan sunum/ölçüm
+işlerini birlikte alma adımları [TELEGRAM_LATENCY.md](TELEGRAM_LATENCY.md)
+içindedir. Paket yayımlanmadan `git pull` yeni kodu getirmez.
+
 Evde prize takılı bir Android tablet, bu bot için **ücretsiz bulutlardan daha
 iyi** bir sunucudur: ev internetinin IP'si temizdir (Binance bulut paylaşımlı
 IP'lerini yasaklıyor — Render'ın bu yüzden öldüğünü gördük), aylık ücret yok,
@@ -156,7 +160,19 @@ içindir; aynı başarı oranı değildir.
 Pano tablosunda piyasa/evren ve ölçüm sürümü filtreleri bulunur. `UNKNOWN`,
 `legacy_unknown`, `pending` ve `küçük N` değerleri veri eksikliği veya yetersiz
 örneklem uyarısıdır; başarısız işlem olarak sayılmaz. S2 için funding nakit
-akışı modellenmediğinden net sonuç yerine `not_modeled` görmen normaldir.
+akışı modellenmediğinden mevcut K/Z sayısı **funding hariçtir**; yanında
+`not_modeled` bilgisi bulunur. Aktif satır geçici referanstan hesaplanan tahmin,
+olgun satır zaman çıkışı ölçümüdür. Mevcut toplu arşivde eski/yeni motor ve
+teslim kayıtları birlikte olabilir. Ölçüm sürümü bilinmeyen eski olaylar
+hedef/MFE oranlarına katılmaz; ayrıca sayılır.
+
+Yeni TP/SL deneyi için PC'de hazırlanmış JSON'u panodaki “Paper raporu seç”
+alanından açabilirsin. Dosya yalnız tarayıcıda okunur; botun verisine eklenmez.
+Rapor yoksa “Yeni yöntemle değerlendirilmedi” görünür. “Raporu kaldır” ve
+sayfayı yenileme yerel görünümü temizler. Her kohortun N/ölçülen/pending/eksik
+sayıları, motor ve deney ayarları ayrı gösterilir; USD-M tam net hesaplanmaz.
+Ham signals.log veya özel outbox dosyasını bu alanda açma; yalnız üretilmiş
+paper raporu JSON'unu seç. Veri hazırlama PC işidir, tablet taramasına eklenmez.
 
 Yöntem kararlarının tam kaydı: [research/CORE_EXECUTION_PROTOCOL.md](research/CORE_EXECUTION_PROTOCOL.md).
 Bu pano emir açmaz; hedefe dokunma verisi gerçek dolum veya garanti edilmiş

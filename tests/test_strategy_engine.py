@@ -54,6 +54,52 @@ class EngineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "do_not_reopen"):
             audit("nonexistent", ["BTCUSDT"], "2026-01-01", "2026-01-08")
 
+    def test_new_measurement_profile_and_html_metadata_are_display_only(self):
+        sig = {"strategy": "S3", "engine_version": "v<1>", "engine_config_hash": "h&1",
+               "config_version": "v<2>", "universe": "core&30",
+               "price_target": {"measurement_version": "signal-reference-touch-v1"}}
+        self.assertIn("hedef dokunması", bot._measurement_display(sig))
+        with patch.object(bot, "price_target_summary", return_value={}):
+            text = "\n".join(bot._telegram_evidence_lines(sig))
+        self.assertIn("v&lt;2&gt;", text)
+        self.assertIn("core&amp;30", text)
+        self.assertNotIn("v<1>", text)
+        self.assertIn("eski kayıt", bot._measurement_display({}))
+        self.assertIn("TP/SL", bot._measurement_display(dict(sig, measurement_version="paper-barriers-v1")))
+
+    def test_full_scan_mapped_proxy_snapshot_and_observe_exact_parity(self):
+        bars = history(249)
+        funding = [{"time": BASE, "rate": -.001}, {"time": BASE+8*H+9, "rate": -.001}]
+        def unavailable(*args):
+            raise bot.requests.RequestException("synthetic_no_ticker")
+        for snapshot, observe, proxy in ((False, False, False), (False, False, True),
+                                          (True, False, False), (False, True, False)):
+            with self.subTest(snapshot=snapshot, observe=observe, proxy=proxy):
+                old = oracle()
+                settings = {"DISABLED_STRATEGIES": set(), "EXTENDED_SET": set(),
+                            "S2_DERIVATIVES_SHADOW_ENABLED": False,
+                            "fetch_klines": lambda *a, **k: bars,
+                            "fetch_funding": lambda *a, **k: funding,
+                            "fetch_futures_price": unavailable if proxy else lambda *a: 100.,
+                            "perp_symbol": lambda *a: "1000PEPEUSDT",
+                            "market_regime_snapshot": lambda: {"label": "UNKNOWN"}}
+                old.update(settings)
+                state = bot.ScanState()
+                state.prev_cond = {(s, "PEPEUSDT"): False for s in ("S1", "S2", "S3")}
+                reference = types.SimpleNamespace(prev_cond=dict(state.prev_cond), last_fire={})
+                reference.should_fire = types.MethodType(old["should_fire"], reference)
+                with patch.multiple(bot, **settings), patch.object(bot.time, "time", return_value=(BASE+20*H)/1000):
+                    before = old["scan_symbol"]("PEPEUSDT", reference, snapshot=snapshot, observe=observe)
+                    after = bot.scan_symbol("PEPEUSDT", state, snapshot=snapshot, observe=observe)
+                self.assertEqual(before, after)
+                self.assertEqual((reference.prev_cond, reference.last_fire), (state.prev_cond, state.last_fire))
+                if not observe:
+                    s2 = next(s for s in after if s["strategy"] == "S2")
+                    self.assertIn("— perp kontrati", s2["note"])
+                    self.assertEqual(s2["price_source"], "spot_scaled_proxy" if proxy else "futures_ticker")
+                if snapshot:
+                    self.assertFalse(state.last_fire)
+
     def test_random_and_flat_indicator_exact_legacy_parity(self):
         old = oracle()
         bars = history()

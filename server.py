@@ -224,6 +224,7 @@ def health(response: Response) -> dict:
         "last_scan_at": bot.LAST_SCAN_AT,
         "last_scan_started_at": getattr(bot, "LAST_SCAN_STARTED_AT", None),
         "last_scan_finished_at": getattr(bot, "LAST_SCAN_FINISHED_AT", None),
+        "notification_delivery": bot.notification_delivery_status(),
         "last_scan_success_at": getattr(bot, "LAST_SCAN_SUCCESS_AT", None),
         "last_scan_failure_at": getattr(bot, "LAST_SCAN_FAILURE_AT", None),
         "last_loop_heartbeat_at": getattr(

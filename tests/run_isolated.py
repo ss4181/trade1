@@ -8,6 +8,9 @@ import tempfile
 
 
 def main():
+    # Windows consoles must not hide a failing suite behind an encoding error.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="trade1-tests-") as directory:
         copy = Path(directory)

@@ -194,7 +194,7 @@ def scan_symbol(symbol: str, state: ScanState,
                     round(funding_interval_h * len(last_n), 2)
                     if funding_interval_h else None),
                 "note": ("negatif funding yiginlanmasi (short squeeze adayi)"
-                         + (f" � perp kontrati {contract}"
+                         + (f" — perp kontrati {contract}"
                             if contract != symbol else "")),
                 "horizon_hours": 72,
             })
@@ -272,4 +272,3 @@ def should_fire(self, strategy: str, symbol: str, cond: bool,
             return False
         self.last_fire[key] = now_s
         return True
-

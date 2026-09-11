@@ -58,7 +58,7 @@ import requests
 
 import archive_backup as archive_backup_module
 import strategy_engine as core_engine
-from notification_delivery import DeliveryOutbox
+from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
 from derivatives_archive import (
     DEFAULT_STREAM_URL as DEFAULT_FORCE_ORDER_STREAM_URL,
@@ -255,10 +255,13 @@ RESEARCH_REPORT_SOURCE = _env(
 # zamani "fiyat gozlemi" gibi gosterilmez. "Scalping sinyali" DEGILDIR —
 # 15m/5m ufuklarinda edge olmadigi olculdu (research/REPORT.md Ek A/B).
 SCAN_INTERVAL_MINUTES = _env("SCAN_INTERVAL_MINUTES", 5)
+# Closed candles are still used; only the intentional post-boundary delay changes.
+SCAN_CLOSE_DELAY_SECONDS = max(1, min(90, _env("SCAN_CLOSE_DELAY_SECONDS", 10)))
 KLINE_LIMIT = _env("KLINE_LIMIT", 250)          # >= VOLUME_ZSCORE_WINDOW + 24 olmali
 SIGNAL_LOG = _env("SIGNAL_LOG", "signals.log")
 DELIVERY_OUTBOX = DeliveryOutbox(Path(__file__).parent / ".notification_outbox.json")
 _delivery_worker_lock = threading.Lock()
+_delivery_retry_worker: DeliveryRetryWorker | None = None
 PUBLISH_QC_ENABLED = _env("PUBLISH_QC_ENABLED", False, cast=_flag)
 _qc_candle_cache: dict = {}
 
@@ -2146,12 +2149,9 @@ def _display_confidence(confidence: str | None) -> str:
 
 def _measurement_display(sig: dict) -> str:
     """Short, user-facing label; does not alter the measurement itself."""
-    value = sig.get("measurement_version")
-    if not value:
-        profile = sig.get("price_target")
-        if isinstance(profile, dict):
-            value = profile.get("measurement_version")
-    value = str(value or "legacy_unknown")
+    profile = sig.get("price_target")
+    profile = profile if isinstance(profile, dict) else {}
+    value = str(sig.get("measurement_version") or profile.get("measurement_version") or "legacy_unknown")
     return {
         "signal-reference-touch-v1": "hedef dokunması · bildirim referansı",
         "paper-barriers-v1": "TP/SL fiyat yolu · varsayımsal",
@@ -2234,15 +2234,16 @@ def _telegram_evidence_lines(sig: dict) -> list[str]:
     if live.get("resolved"):
         small = " · küçük N" if live.get("sample_warning") else ""
         lines.append(
-            f"📡 <b>Canlı kişisel TP{USER_SUCCESS_TARGET_PCT:g}:</b> "
+            f"📡 <b>Toplu hedef arşivi TP{USER_SUCCESS_TARGET_PCT:g}:</b> "
             f"%{live['hit_rate_pct']:g} ({live['hit']}/{live['resolved']}{small})")
+        lines.append("<i>Ölçüm sürümü bilinmeyen eski kayıtlar hariçtir; motor/teslim kohortları ayrılmaz. Paper TP/SL oranı değildir.</i>")
     engine_version = sig.get("engine_version") or "UNKNOWN"
     engine_hash = str(sig.get("engine_config_hash") or "UNKNOWN")
     hash_display = engine_hash[:12] if engine_hash not in ("UNKNOWN", "None") else engine_hash
-    lines.append(f"🧾 <b>Ölçüm kaydı:</b> {_measurement_display(sig)}")
-    lines.append(f"🏷️ <b>Evren / config:</b> {sig.get('universe') or 'UNKNOWN'} / "
-                 f"{sig.get('config_version') or 'UNKNOWN'}")
-    lines.append(f"⚙️ <b>Motor:</b> {engine_version} · {hash_display}")
+    lines.append(f"🧾 <b>Ölçüm kaydı:</b> {_html.escape(_measurement_display(sig))}")
+    lines.append(f"🏷️ <b>Evren / config:</b> {_html.escape(str(sig.get('universe') or 'UNKNOWN'))} / "
+                 f"{_html.escape(str(sig.get('config_version') or 'UNKNOWN'))}")
+    lines.append(f"⚙️ <b>Motor:</b> {_html.escape(str(engine_version))} · {_html.escape(hash_display)}")
     return lines
 
 
@@ -2320,6 +2321,14 @@ def _telegram_signal_text(sig: dict) -> str:
         "Bot emir açmaz veya kapatmaz.",
         f"🕒 <i>Sinyal mumu: {_html.escape(stamp)}</i>",
     ]
+    if sig.get("signal_reference_at") and sig.get("detected_at"):
+        try:
+            reference = _target_dt(sig["signal_reference_at"]).strftime("%Y-%m-%d %H:%M:%S UTC")
+            detected = _target_dt(sig["detected_at"]).strftime("%H:%M:%S UTC")
+            label = "Funding zamanı" if strategy == "S2" else "Mum kapanışı"
+            lines.append(f"⏱️ <i>{label}: {reference} · Tespit: {detected}</i>")
+        except (TypeError, ValueError):
+            pass
     return "\n".join(lines)
 
 
@@ -2343,21 +2352,38 @@ def send_telegram_message(sig: dict) -> bool:
         return False
 
 
-def _retry_signal_deliveries() -> None:
+def _retry_signal_deliveries(stop_event=None) -> None:
     """Only unsent recipients; no new signal or cooldown is generated."""
     if not ENABLE_TELEGRAM or not _delivery_worker_lock.acquire(blocking=False):
         return
     try:
-        for event_id in DELIVERY_OUTBOX.pending_ids():
-            DELIVERY_OUTBOX.deliver(event_id, lambda cid, record: (
+        delivered_any = False
+        for event_id in DELIVERY_OUTBOX.pending_ids(due_only=True):
+            if stop_event is not None and stop_event.is_set():
+                break
+            result = DELIVERY_OUTBOX.deliver(event_id, lambda cid, record: (
                 cid in TELEGRAM_SUBSCRIBERS and _telegram_send_text(
-                    _telegram_signal_text(record), chat_id=cid)))
-        _backfill_price_targets_from_signal_log()
+                    _telegram_signal_text(record), chat_id=cid)), stop_event=stop_event)
+            delivered_any = delivered_any or result["delivery_confirmed"]
+        if delivered_any:
+            _backfill_price_targets_from_signal_log()
     except Exception as exc:
         print(f"uyari: bildirim tekrar denemesi: {type(exc).__name__}",
               file=sys.stderr, flush=True)
     finally:
         _delivery_worker_lock.release()
+
+
+def notification_delivery_status() -> dict:
+    worker = _delivery_retry_worker
+    report = {"scan_close_delay_seconds": SCAN_CLOSE_DELAY_SECONDS,
+              "retry_poll_seconds": 5,
+              "retry_worker_alive": bool(worker and worker.thread.is_alive())}
+    try:
+        report.update(DELIVERY_OUTBOX.diagnostics())
+    except (OSError, ValueError, TypeError):
+        report["error"] = "delivery_state_unreadable"
+    return report
 
 
 def _redact(text: str) -> str:
@@ -3279,12 +3305,13 @@ def scan_all(state: ScanState) -> int:
     global LAST_SCAN_ERRORS, LAST_SCAN_ATTEMPTED
     global LAST_SCAN_SUCCEEDED_SYMBOLS, LAST_SCAN_ERROR_RATIO
     errors = 0
+    scan_started_at = datetime.now(timezone.utc).isoformat()
     collected: list[dict] = []
     market_error: MarketRateLimitError | MarketTransientError | None = None
     attempted = len(SYMBOLS)
     for index, sym in enumerate(SYMBOLS):
         try:
-            collected += scan_symbol(sym, state)
+            collected += _stamp_signal_detection(scan_symbol(sym, state), scan_started_at)
         except (MarketRateLimitError, MarketTransientError) as e:
             # Ayni ortak API kapisina kalan tum sembollerle yuklenme. Onceki
             # sembollerde bulunan gecerli sinyaller yine teslim edilir.
@@ -3306,25 +3333,7 @@ def scan_all(state: ScanState) -> int:
     if errors:
         print(f"uyari: taramada {errors}/{len(SYMBOLS)} sembol hata verdi",
               file=sys.stderr, flush=True)
-    # GOZLEM KANALI — dogrulanmis taramadan SONRA, AYRI hata muhasebesiyle.
-    # Buradaki hatalar LAST_SCAN_* saglik olcumlerine KARISMAZ: bu kanal
-    # dogrulanmamis ve her zaman en iyi cabadir, /health'i bozmamali.
-    observed: list[dict] = []
-    if OBSERVE_ENABLED and market_error is None:
-        for sym in OBSERVE_SYMBOLS:
-            try:
-                observed += scan_symbol(sym, state, observe=True)
-            except (MarketRateLimitError, MarketTransientError) as e:
-                print(f"uyari: gozlem taramasi {sym} sonrasi kesildi: {e}",
-                      file=sys.stderr, flush=True)
-                break
-            except Exception as e:
-                print(f"uyari: gozlem sembolu {sym} taranamadi: {e}",
-                      file=sys.stderr, flush=True)
-            time.sleep(0.25)
-
     collected.sort(key=lambda s: (_priority(s), s["symbol"]))
-    observed.sort(key=lambda s: (_priority(s), s["symbol"]))
     overflow = []
     pushed = 0
     for sig in collected:
@@ -3339,6 +3348,25 @@ def scan_all(state: ScanState) -> int:
             notify(sig)
             if policy_push:
                 pushed += 1
+    if overflow:
+        _send_overflow_summary(overflow)
+    # Core delivery no longer waits for unrelated observation API calls.
+    # Keep the global core priority/cap decision and separate observation budget.
+    observed: list[dict] = []
+    if OBSERVE_ENABLED and market_error is None:
+        for sym in OBSERVE_SYMBOLS:
+            try:
+                observed += _stamp_signal_detection(
+                    scan_symbol(sym, state, observe=True), scan_started_at)
+            except (MarketRateLimitError, MarketTransientError) as e:
+                print(f"uyari: gozlem taramasi {sym} sonrasi kesildi: {e}",
+                      file=sys.stderr, flush=True)
+                break
+            except Exception as e:
+                print(f"uyari: gozlem sembolu {sym} taranamadi: {e}",
+                      file=sys.stderr, flush=True)
+            time.sleep(0.25)
+    observed.sort(key=lambda s: (_priority(s), s["symbol"]))
     # Gozlem sinyalleri kendi push tavanina tabidir; dogrulanmis sinyallerin
     # MAX_PUSH_PER_SCAN butcesini TUKETMEZ (onlarin onune de gecemez).
     observe_pushed = 0
@@ -3347,8 +3375,6 @@ def scan_all(state: ScanState) -> int:
         notify(sig, push=allow)
         if allow:
             observe_pushed += 1
-    if overflow:
-        _send_overflow_summary(overflow)
     state.save()                  # restart'ta cooldown/tampon kaybolmasin
     threshold = min(1.0, max(0.01, float(SCAN_FAILURE_ERROR_RATIO)))
     if market_error is not None:
@@ -3360,6 +3386,24 @@ def scan_all(state: ScanState) -> int:
             f"(hata orani %{LAST_SCAN_ERROR_RATIO * 100:.1f}, "
             f"esik %{threshold * 100:.1f})")
     return len(collected)
+
+
+def _stamp_signal_detection(signals: list[dict], scan_started_at: str) -> list[dict]:
+    detected_at = datetime.now(timezone.utc).isoformat()
+    for sig in signals:
+        sig["detected_at"] = detected_at
+        sig["scan_started_at"] = scan_started_at
+        strategy = sig.get("strategy")
+        # bar_time is the OPEN time for 1h signals, but settlement time for S2.
+        if strategy in ("S1", "S1+S4", "S3", "S5", "S6", "S2"):
+            try:
+                stamp = _target_dt(sig["bar_time"])
+                if strategy != "S2":
+                    stamp += timedelta(hours=1)
+                sig["signal_reference_at"] = stamp.isoformat()
+            except (KeyError, TypeError, ValueError):
+                pass
+    return signals
 
 
 # Gunluk yasam sinyali: her gun bu UTC saatinden sonraki ilk taramada tek
@@ -3816,7 +3860,7 @@ def _release_instance_file_lock(handle) -> None:
 
 def run_forever(once: bool = False, state: ScanState | None = None) -> None:
     """Tek lider garantili tarama giris noktasi."""
-    global INSTANCE_LOCK_HELD, LAST_LOOP_ERROR
+    global INSTANCE_LOCK_HELD, LAST_LOOP_ERROR, _delivery_retry_worker
     if not _run_guard.acquire(blocking=False):
         LAST_LOOP_ERROR = "bu proseste baska bir tarama dongusu zaten calisiyor"
         raise RuntimeError(LAST_LOOP_ERROR)
@@ -3834,12 +3878,19 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             raise RuntimeError(LAST_LOOP_ERROR)
         INSTANCE_LOCK_HELD = True
         LAST_LOOP_ERROR = None
+        if ENABLE_TELEGRAM and not once:
+            worker = DeliveryRetryWorker(_retry_signal_deliveries)
+            worker.start()
+            _delivery_retry_worker = worker
         _run_forever_locked(once=once, state=state)
     except Exception as e:
         if not LAST_LOOP_ERROR:
             LAST_LOOP_ERROR = f"{type(e).__name__}: {e}"
         raise
     finally:
+        if _delivery_retry_worker is not None:
+            _delivery_retry_worker.stop()
+            _delivery_retry_worker = None
         INSTANCE_LOCK_HELD = False
         _release_instance_file_lock(handle)
         _run_guard.release()
@@ -3977,17 +4028,19 @@ def _run_forever_locked(once: bool = False,
                 # Yedek tarama sonucuna bağlı değildir: mevcut arşiv, Binance
                 # taraması o turda hata verse bile vadesi geldiyse kopyalanır.
                 _start_archive_backup_worker()
-                threading.Thread(target=_retry_signal_deliveries,
-                                 name="telegram-retry", daemon=True).start()
                 if PUBLISH_ENABLED or DASHBOARD_ENABLED:
                     threading.Thread(target=_refresh_display_prices,
                                      name="display-prices", daemon=True).start()
         if once:
             break
-        # bir sonraki bar kapanisindan ~90sn sonrasina hizalan
-        period = SCAN_INTERVAL_MINUTES * 60
-        now = time.time()
-        time.sleep(period - (now % period) + 90)
+        time.sleep(_seconds_until_next_scan(time.time()))
+
+
+def _seconds_until_next_scan(now: float) -> float:
+    """Next 5m-grid slot plus close delay, including this boundary's pending slot."""
+    period = SCAN_INTERVAL_MINUTES * 60
+    delay = min(SCAN_CLOSE_DELAY_SECONDS, period - 1)
+    return period - ((now - delay) % period)
 
 
 def _priority(sig: dict) -> int:
@@ -4373,7 +4426,11 @@ def _format_price_target_summary(summary: dict) -> list[str]:
         return []
     lines = ["\n🎯 <b>KİŞİSEL FİYAT HEDEFİ KARNESİ</b>",
              "<i>Bildirim fiyatından sonraki kapanmış 5dk mumlar · "
-             "kaldıraçsız coin fiyatı</i>"]
+             "kaldıraçsız coin fiyatı · toplu arşiv</i>",
+             "<i>Ölçüm sürümü bilinmeyen eski kayıtlar hariçtir; motor/teslim kohortları ayrılmaz. Paper TP/SL sonucu değildir.</i>"]
+    legacy = (summary.get("_meta") or {}).get("legacy_unverified_events", 0)
+    if legacy:
+        lines.append(f"• Ölçüm sürümü bilinmeyen {legacy} eski olay oranlara katılmadı.")
     for strategy, levels in sorted(summary.items()):
         if not isinstance(levels, dict) or str(strategy).startswith("_"):
             continue
@@ -4453,7 +4510,8 @@ def _format_daily_summary(*, day: str, signal_counts: dict[str, int],
               f"• Tamamlanan tur: {SCANS_COMPLETED}",
               f"• Evren: {len(SYMBOLS)} sembol",
               f"• Son tarama hatası: {LAST_SCAN_ERRORS}",
-              "", "📊 <b>Olgun canlı sonuçlar / karne</b>"]
+              "", "📊 <b>Olgun canlı sonuçlar / mevcut karne</b>",
+              "<i>Eski gruplama: motor hash'i/teslim kanıtı ayrımı yok. Paper TP/SL raporu ayrıdır.</i>"]
     lines += _format_daily_performance(perf or {})
     lines += ["", "ℹ️ <b>Hızlı erişim</b>",
               "• /check — şu an aktif koşullar (bildirim göndermez)",
@@ -4461,6 +4519,7 @@ def _format_daily_summary(*, day: str, signal_counts: dict[str, int],
               "", "🧭 <b>Ölçüm sözlüğü</b>",
               "• 🎯 TP dokunması: bildirim referansından coin fiyatının hedefe değmesi; net kâr değildir.",
               f"• 📐 Net sonuç: next-bar-open → ufuk kapanışı − {LIVE_ROUND_TRIP_COST_BPS:g}bp varsayımı.",
+              "• USD-M sayıları funding hariçtir; tam net getiri hesaplanmadı.",
               "• UNKNOWN / küçük N: geçmiş kayıt veya örneklem güvenilirlik kanıtı değildir.",
               "<i>Bu özet olayları ve ölçümleri gösterir; emir açmaz. "
               "Yatırım tavsiyesi değildir.</i>"]
@@ -4505,7 +4564,8 @@ def _format_performance(perf: dict) -> str:
     lines = ["📊 <b>CANLI PERFORMANS</b>",
              f"<i>Son {perf['n_total']} olgun sinyal · net zaman çıkışı "
              "ayrı, TP dokunması ayrı ölçülür</i>",
-             "", "✅ <b>NET ZAMAN-ÇIKIŞI KOHORTLARI</b>",
+             "", "📐 <b>MEVCUT ZAMAN-ÇIKIŞI KOHORTLARI</b>",
+             "<i>Motor hash'i/teslim kanıtı bu eski gruplamada ayrılmıyor. Paper TP/SL raporu ayrıdır.</i>",
              "<i>Giriş: sonraki saatlik açılış · çıkış: ufuk kapanışı</i>"]
     observe_lines: list[str] = []
     validated_lines: list[str] = []
@@ -4518,7 +4578,7 @@ def _format_performance(perf: dict) -> str:
             lo, hi = d.get("net_winrate_ci95_low_pct"), d.get(
                 "net_winrate_ci95_high_pct")
             ci = f"%{lo:g}–%{hi:g}" if lo is not None and hi is not None else "—"
-            warning = " · ⚠ 작은 N" if d.get("sample_warning") else ""
+            warning = " · ⚠ küçük N" if d.get("sample_warning") else ""
             bt = STRATEGY_TEST_STATS.get(s) if s not in OBSERVE_STRATEGIES else None
             bt_text = (f" · backtest medyan {bt['med']:+.2f}% · "
                        f"isabet %{bt['wr']}" if bt else "")
@@ -4526,11 +4586,11 @@ def _format_performance(perf: dict) -> str:
                    f"net medyan {d['net_median_pct']:+.2f}% · "
                    f"net isabet %{d['net_winrate_pct']:g} · 95% GA {ci}"
                    f"{bt_text}\n"
-                   f"  {d['universe']} · {d['confidence']} · "
-                   f"{d['config_version']} · ort {d['net_mean_pct']:+.2f}% · "
+                   f"  {_html.escape(str(d['universe']))} · {_html.escape(str(d['confidence']))} · "
+                   f"{_html.escape(str(d['config_version']))} · ort {d['net_mean_pct']:+.2f}% · "
                    f"q10/q90 {d['q10_net_return_pct']:+.2f}% / "
                    f"{d['q90_net_return_pct']:+.2f}% · "
-                   f"{market}{warning}")
+                   f"{market}{' · funding hariç' if d.get('performance_market') == 'um_perp' else ''}{warning}")
             # Gozlem kovasi AYRI blokta: dogrulanmis satirlarla ayni listede
             # gorunmesi "ayni statude" izlenimi verirdi.
             (observe_lines if s in OBSERVE_STRATEGIES else validated_lines).append(row)
@@ -5029,6 +5089,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "telegram_enabled": ENABLE_TELEGRAM,
             "telegram_identity": TELEGRAM_IDENTITY,
             "notify_health": NOTIFY_HEALTH,
+            "notification_delivery": notification_delivery_status(),
         },
         "strategies": strategies,
         "price_targets": target_summary,
@@ -5444,6 +5505,10 @@ def _format_status_for_telegram() -> str:
     observe = (f"{len(OBSERVE_SYMBOLS)} doğrulanmamış sembol · bildirim "
                f"{'AÇIK' if OBSERVE_PUSH else 'sessiz'}"
                if OBSERVE_ENABLED else "kapalı")
+    delivery = notification_delivery_status()
+    latency = delivery.get("latest_ack_latency_seconds") or {}
+    elapsed = latency.get("reference_to_ack")
+    delivery_note = f"{elapsed:g} sn" if elapsed is not None else "henüz ölçülmedi"
     return (
         "ℹ️ <b>BOT DURUMU</b>\n"
         "<i>Çalışma, bildirim ve araştırma özeti</i>\n\n"
@@ -5452,6 +5517,9 @@ def _format_status_for_telegram() -> str:
         f"• Tamamlanan tur: {SCANS_COMPLETED}\n"
         f"• Son tarama: {_html.escape(str(LAST_SCAN_AT or '(henüz yok)'))}\n"
         f"• Son tarama hatası: {LAST_SCAN_ERRORS}\n\n"
+        f"• Kapanış payı: {SCAN_CLOSE_DELAY_SECONDS} sn · tekrar kontrolü: 5 sn\n"
+        f"• Bekleyen bildirim: {delivery.get('pending_events', 'bilinmiyor')}\n"
+        f"• Son sinyal referansı → Telegram API kabulü: {delivery_note}\n\n"
         "🔔 <b>Bildirim kapısı</b>\n"
         f"• Genel eşik: {_html.escape(str(NOTIFY_MIN_CONFIDENCE))}+\n"
         f"• Sessiz stratejiler: {_html.escape(disabled)}\n"

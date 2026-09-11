@@ -45,6 +45,9 @@ class EvidenceTests(unittest.TestCase):
         self.assertIsNone(perp["net_win_rate_pct"])
         self.assertEqual(perp["n_full_net"], 0)
         self.assertEqual(perp["mean_net_ex_funding_pct"], 1.88)
+        self.assertEqual(perp["median_net_ex_funding_pct"], 1.88)
+        self.assertEqual(perp["q10_net_ex_funding_pct"], 1.88)
+        self.assertEqual(perp["q90_net_ex_funding_pct"], 1.88)
 
     def test_pending_unknown_and_small_sample_remain_visible(self):
         r = row()

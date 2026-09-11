@@ -1,4 +1,4 @@
-# Canlı kural eşliği ve fiyat-yolu deney sözleşmesi — 2026-09-10
+# Canlı kural eşliği ve fiyat-yolu deney sözleşmesi — 2026-09-11 güncellemesi
 
 Bu dosya yöntem kararlarını ve model devrini kaydeder. Yeni strateji onayı,
 yatırım tavsiyesi, otomatik emir veya kârlılık kanıtı değildir. Canlı eşikler,
@@ -17,6 +17,9 @@ Bu değişiklikler henüz tablete/buluta dağıtılmadı.
 - `paper_execution.py`: bildirim sonrası ayrı, varsayımsal TP/SL ölçümü.
 - `research/evaluate_paper_signals.py`: doğrulanmış bildirim kayıtlarını ve
   piyasa/kontrat etiketli kapalı 5m mumlarını bu ölçüme bağlayan çevrimdışı CLI.
+- `research/paper_inputs.py`: özel outbox kopyasından ilk doğrulanmış teslimi
+  okur; 5m JSONL için kaynak beyanı, checksum ve seri bazında veri boşluklarını
+  kaydeden manifest üretir/doğrular. Ağ veya canlı state yazımı yapmaz.
 - `research/evidence_summary.py`: strateji, yön, piyasa, evren, config,
   motor parametre hash'i, kanıt kaynağı ve deney tanımına göre ayrı özetler.
   Gün blokları aynı zamandaki coinleri birlikte tutar; bağımlı olaylar bağımsız
@@ -64,6 +67,10 @@ Emir, qty, notional, dolar PnL, kaldıraç ROI veya trade-journal üretilmez.
 - Mum içi çıkış için sahte saniye verilmez: 5m zaman aralığı raporlanır.
 - Eksik gerekli mum `unavailable`; henüz kapanmamış gerekli mum `pending`.
   Çıkıştan sonraki eksiklik sonucu bozmaz. Eksik veriler kayıp/kazanç sayılmaz.
+  2026-09-11 girdi politikası: çıkıştan sonraki çatışan/hizasız mum da bitmiş
+  olayı bozmaz; gerekli aralıktaki çatışma/hizasızlık sonucu engeller. Zamanı
+  belirlenemeyen bozuk satır güvenle aralığa yerleştirilemediğinden reddedilir.
+  Manifest doğrulaması ise tüm dosyayı denetler ve bozuk/çatışan veriyi reddeder.
 - Basit fiyat getirisi: LONG `(exit/entry-1)*100`, SHORT bunun negatifidir.
   Eski log getiriyi yüzde gibi sunma; dönüşüm ham `log(exit/entry)` üzerinden
   `expm1` ile yapılır. Önceden yön işareti verilmiş log değerleri körlemesine çevirme.
@@ -122,7 +129,10 @@ python -B research/audit_live_parity.py --output research/data/parity_audit.json
 Sabit kontrol: 2025-12-01 dahil / 2025-12-08 hariç, BTC/ETH/1INCH. Sonuç:
 BTC 1, ETH 2, 1INCH 2 olay; legacy ve yeni replay'de 5/5 eşleşti. Bu küçük
 kontrol tüm tarihte fark yok demek değildir. Eşik sınırı/doji/seed farkları
-sentetik testlerde ayrıca kapsanır. TEST getirileri açılmadı, parametre seçilmedi.
+sentetik testlerde ayrıca kapsanır. TEST getirileri hesaplanmadı, parametre seçilmedi.
+Parity aracı tüm parquet kolonlarını okuyup hesap öncesi TRAIN dilimini ayırır;
+`historical_test_evaluated=false` analiz yapılmadığını belirtir, dosyanın TEST
+satırlarına fiziksel erişim olmadığı iddiası değildir.
 `tests/fixtures/live_math_v0.py` 17a346d commitindeki canlı kodun test referansıdır;
 üretim kodu değildir. Tam `scan_symbol` + durum eşliği de karşılaştırılır.
 
@@ -135,16 +145,27 @@ bildirim gitmedi demek değil; yeni teslim-zamanı ölçümü için bu yedekte k
 İlk gerçek yeni cohort, güncelleme tablete uygulanıp doğrulanmış teslim ve uygun
 5m fiyat verisi toplandıktan sonra oluşabilecek.
 
-Yeni manuel fiyat-yolu raporu:
+Yeni manuel fiyat-yolu raporu, PC'de özel ve salt okunur girdi kopyalarıyla:
 
 ```sh
+python -B research/paper_inputs.py --candles-jsonl /PRIVATE/closed_5m.jsonl \
+  --source mixed_binance_klines --captured-at 2026-09-11T00:00:00Z \
+  --output /PRIVATE/closed_5m.manifest.json
+
 python -B research/evaluate_paper_signals.py --signals-log /PRIVATE/signals.log \
-  --candles-jsonl /PRIVATE/closed_5m.jsonl --as-of 2026-09-10T00:00:00Z \
+  --delivery-outbox /PRIVATE/notification_outbox.json \
+  --candles-jsonl /PRIVATE/closed_5m.jsonl \
+  --candles-manifest /PRIVATE/closed_5m.manifest.json --as-of 2026-09-11T00:00:00Z \
   --target-pct 2 --cost-bps 12 --latency-ms 0 \
   --output research/data/paper_signals.json
 ```
 
-`--as-of` değerlendirme kesimidir, örnekteki tarihi güncel veri kesimine göre seç.
+`--as-of` değerlendirme kesimidir; `--captured-at` dosyanın alınma kesimidir.
+Örnek tarihleri gerçek girdi kesimlerine göre seç. Kaynak tek piyasaysa
+`binance_spot_klines` / `binance_um_klines`, test verisiyse `synthetic` yaz.
+Manifest oluşturulurken son mumun kapanmış olması gerekir. Manifest hash'i veya
+seri envanteri uyuşmazsa rapor oluşturulmaz. Checksum kaynak beyanını bağımsız
+doğrulamaz; yalnız beyan ve dosya içeriğinin bağını, aradaki boşlukları gösterir.
 Mum JSONL satırı örneği (sentetik):
 
 ```json
@@ -156,10 +177,22 @@ aracı/cache kaynağı ve checksum doğrulaması korunmalı. CLI kendi kendine a
 veri çekmez. Çıktı yalnız whitelist alanlar içerir; ham log, token, chat ID ve
 env değerleri taşınmaz. Aynı olaydaki çoklu teslimlerden ilk doğrulanmış teslim
 seçilir; çelişen kimlik/ayar kayıtları karantinaya alınır. Girdi logu değiştirilmez.
+Sağlanan olay ID'si ortak kanonik ID'yle uyuşmuyorsa satır reddedilir; hatalı
+ID'den yeni olay türetilmez. Kimlik/config çatışmalarındaki bütün satırlar,
+girdi sırasından bağımsız aynı karantina sayacına girer. Bozuk alan tipleri
+geçerli satırları düşürmez. Eski kayda bugünkü motor ayarı eklenmez.
 
-## 5. Luna Max'e devredilecek daha düşük karmaşıklıklı işler
+Outbox seçeneği, ilk gönderimi başarısız fakat sonradan teslim edilmiş olayları
+ve log yazımı başarısız olan doğrulanmış olayları kapsar. Kısmi teslimde ilk
+başarılı alıcı zamanı kullanılır; kesimden sonraki teslimler bu kesime alınmaz.
+Bu dosyanın bütün geçmişi içerdiği varsayılmaz. Outbox verilmezse raporda
+`log_only_retry_coverage_unknown`, manifest verilmezse `unverified` görünür.
+Dosya yolları, alıcı kimlikleri, token ve mesaj metinleri rapora aktarılmaz.
 
-Modeli kullanıcı değiştirecek. Bundan sonra şu sunum işleri Luna Max ile yapılabilir:
+## 5. Luna Max'e devredilecek işler — yerel uygulama tamamlandı
+
+2026-09-11'de kullanıcı tüm yerel işleri tamamlama talimatı verdi. Bu bölümdeki
+uygulama işleri mevcut görevde tamamlandı; model değiştirildiği iddia edilmiyor.
 
 - Telegram/daily/performans metinlerinin başlık, satır ve sayı düzeni.
 - Panoda mevcut ölçümün adı, piyasa, evren, sürüm, N, pending ve UNKNOWN
@@ -169,20 +202,45 @@ Modeli kullanıcı değiştirecek. Bundan sonra şu sunum işleri Luna Max ile y
   otomatik yeniden eğitim, funding hesabı veya canlıya filtre ekleme bu iş değil.
 - README/TABLET kısa kullanıcı talimatları ve biçim düzeni; bu protokolü bağlantılamak.
 
-Luna strateji/ölçüm matematiğini tekrar yazmamalı; mevcut değişiklikleri korumalı,
-aynı çevrimdışı testleri çalıştırmalı, ayrıca izin olmadan push/deploy yapmamalı.
-Tam otomatik yeni raporun canlı panoya bağlanması bu yamada açılmadı. Güvenilir
-5m veri/teslim kapsamıyla ilk gerçek ölçüm ve maliyet/OOS denetimi, sunum işinden
-ayrı yüksek-muhakeme işi olarak geri dönülecek.
+Pano “Paper raporu seç” ile yalnız üretilmiş yerel JSON'u tarayıcı belleğinde
+okur. Otomatik rapor hesaplamaz, dosyayı göndermez, saklamaz veya eski karnelere
+katmaz. Rapor seçilmezse/bozuksa açık değerlendirilmedi durumu gösterilir.
+Her paper kohortunda motor/config/hash, kanıt kaynağı, TP/SL/ufuk/maliyet/gecikme,
+N/ölçülen/gün/pending/eksik ve net veya funding-hariç dağılım ayrı görünür.
 
-### 2026-09-11 uygulama durumu
+Mevcut hedef arşivi ve zaman çıkışı gruplaması korunmuştur; bunlar motor hash'i
+ve teslim kanıtını ayırmadığından eski/yeni kayıtlar birlikte olabilir. Bu
+sınır Telegram/daily/performans/panoda yazılır. USD-M eski K/Z sayıları funding
+hariç; aktif satır geçici referansa göre tahmindir. Motor hash'i artık açılan
+satırda da okunabilir, yalnız fare tooltip'ine bağlı değildir.
 
-Sunum devri tamamlandı: Telegram/pano ölçüm etiketleri, piyasa/evren filtreleri,
-legacy ölçüm ayrımı ve QC kanonik olay tekilleştirmesi uygulandı. Retry sonrası
-Telegram teslimleri özel outbox'tan QC girdisine yalnız bellek içinde birleştirilir;
-`signals.log` değiştirilmez. 24 Python suite ve iki dashboard kontrolü geçti.
+Son ana dal düzeltmeleri (`b97b0a6`) bu pakete birleştirildi: ölçüm sürümü
+bilinmeyen eski olaylar hedef/MFE oranlarına katılmaz, `_meta` içinde ayrıca
+sayılır. QC kanonik olayları tekilleştirir ve retry teslimlerini özel outbox'tan
+bellekte birleştirir. Önceki paragraftaki toplu gruplama, bu sürüm kapısından
+geçen olaylar için geçerlidir.
 
-Henüz yapılmayanlar bilinçli kapsam sınırıdır: gerçek funding nakit akışının tam
-modellenmesi, yeni dondurulmuş OOS penceresi ve borsaya gerçek emir gönderimi.
-Bunlar ayrı veri/operasyon onayı gerektirir; mevcut paper/research motoru emir
-göndermez.
+Strateji eşikleri, canlı 5dk tarama, evren, cooldown, veri erişimi ve bildirim
+izinleri değişmedi. Push/deploy yapılmadı. Tam otomatik canlı rapor, funding
+modeli, yeni strateji filtresi veya OOS onayı açılmadı.
+
+## 6. Gerçek veri gerektiren açık kapılar
+
+Yerel yazılımın tamamlanması aşağıdaki kanıtların oluştuğu anlamına gelmez:
+
+| Kapı | Gerekli somut girdi / kabul koşulu | Bu sürüm |
+|---|---|---|
+| Gerçek teslim | Aynı dönemin log/outbox kopyaları; kayıp/retention ve kısmi teslim sayımı | Hazırlama aracı/testi hazır; gerçek dönem değerlendirilmedi |
+| 5m kapsamı | Kaynağı ayrıca doğrulanmış spot/USD-M kontrat verisi, checksum, eksik olay sayıları | Manifest aracı hazır; gerçek cohort verisi yüklenmedi |
+| Zamanında bilinen evren | Dönem üyeliği, delist/kontrat eşlemesi, yeniden başlatma durumları | Bugünkü evrenle geçmiş üyelik uydurulmaz |
+| Funding | Her settlement için doğrulanmış kontrat/oran/mark price, ödeme aralığı ve çıkış-zamanı belirsizliği politikası | `not_modeled`; tam net boş, sıfır funding varsayılmaz |
+| Forward/OOS | Veri görülmeden zaman aralığı/deney kolları dondurma; en uzun ufuk (72h) kadar purge; tüm denenmiş hipotezleri kaydetme | Başlatıldı veya tamamlandı iddiası yok |
+| Karşılaştırma | Aynı olaylarda sabit zaman çıkışı, maliyet/gecikme duyarlılığı; rejim/coin yoğunlaşması ve çoklu karşılaştırma denetimi | Gerçek sonuç olmadan üstünlük seçilmez |
+| Portföy | Çakışan pozisyon, sermaye, marjin/tasfiye kısıtları | Olay ortalaması portföy getirisi diye sunulmaz |
+
+Funding eklemek yeni ölçüm sürümü gerektirir; mevcut `paper-barriers-v1`
+matematiği sessizce değiştirilmez. Yeni OOS tarihi, gerçekten dokunulmamış
+veri ve gözlem başlangıcı doğrulanmadan geçmişe dönük seçilmez.
+
+Denetim bulgularının kapanışı ve doğrulama sınırları:
+[CORE_EXECUTION_COMPLETION_2026-09-11.md](CORE_EXECUTION_COMPLETION_2026-09-11.md).

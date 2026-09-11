@@ -40,7 +40,8 @@ def audit(data_dir, symbols, start="2025-12-01", end="2025-12-08"):
               "start_utc": start.isoformat(), "end_utc_exclusive": end.isoformat(),
               "scan_model": "hourly_at_close_72h_state_warmup_no_latency",
               "selection": "fixed_symbols_and_dates_no_optimization",
-              "results": [], "return_evaluation": False, "historical_test_opened": False,
+              "results": [], "return_evaluation": False, "historical_test_evaluated": False,
+              "input_read_scope": "full_parquet_columns_filtered_before_signal_calculation",
               "limitations": ["S1_S3_only_funding_not_audited_here",
                               "historical_membership_not_reconstructed",
                               "parity_is_not_profitability_or_OOS_validation"]}
@@ -101,7 +102,7 @@ def main():
               f"matched={result['matched_events']} "
               f"legacy_only={result['legacy_only_events']} "
               f"canonical_only={result['canonical_only_events']}")
-    print("TRAIN-only event audit; thresholds unchanged, TEST unopened.")
+    print("TRAIN-only event audit; thresholds unchanged, TEST not evaluated.")
 
 
 if __name__ == "__main__":

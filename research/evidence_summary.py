@@ -12,7 +12,7 @@ import random
 import statistics
 
 COHORT_FIELDS = ("strategy", "direction", "performance_market", "universe",
-                 "config_version", "engine_config_hash", "evidence_source",
+                 "config_version", "engine_version", "engine_config_hash", "evidence_source",
                  "measurement_version", "execution_spec_hash")
 DAY_MS = 86_400_000
 
@@ -83,11 +83,18 @@ def summarize(records, *, bootstrap_iterations=2000):
             continue
         # Whitelist: never propagate tokens, chat IDs, freeform messages or raw rows.
         item = {"observed_at_ms": stamp, "status": out["status"],
+                "reason": out.get("reason"),
+                "spec": {k: out.get("spec", {}).get(k) for k in
+                         ("target_pct", "stop_pct", "horizon_hours", "latency_ms", "round_trip_cost_bps")}
+                        if isinstance(out.get("spec"), dict) else {},
                 "net": out.get("net_return_pct"), "ex_funding": out.get("net_ex_funding_return_pct"),
                 "tp_low": out.get("tp_before_sl_lower"), "tp_high": out.get("tp_before_sl_upper")}
         if any(v is not None and (type(v) not in (int, float) or not math.isfinite(v))
                for v in (item["net"], item["ex_funding"])):
             rejected["invalid_return"] += 1
+            continue
+        if any(type(v) not in (int, float) or not math.isfinite(v) for v in item["spec"].values()):
+            rejected["invalid_execution_spec"] += 1
             continue
         if item["status"] == "measured" and (
                 type(item["tp_low"]) is not bool or type(item["tp_high"]) is not bool
@@ -132,10 +139,15 @@ def summarize(records, *, bootstrap_iterations=2000):
         if len(measured) != len(rows):
             warnings.append("pending_or_missing_outcomes_not_losses_or_wins")
         interval = block_mean_interval(observations, iterations=bootstrap_iterations)
+        ex_observations = [(r["observed_at_ms"] // DAY_MS, r["ex_funding"])
+                           for r in measured if r["ex_funding"] is not None]
+        ex_interval = (interval if ex_observations == observations else
+                       block_mean_interval(ex_observations, iterations=bootstrap_iterations))
         def pct(n, d):
             return n / d * 100 if d else None
         summaries.append({
             **cohort, "n_total": len(rows), "n_measured": len(measured),
+            "execution_spec": rows[0]["spec"],
             "n_pending": sum(r["status"] == "pending" for r in rows),
             "n_unavailable": sum(r["status"] == "unavailable" for r in rows),
             "n_full_net": len(net), "event_days": days,
@@ -147,6 +159,11 @@ def summarize(records, *, bootstrap_iterations=2000):
             "q10_net_pct": _quantile(net, .1) if net else None,
             "q90_net_pct": _quantile(net, .9) if net else None,
             "mean_net_ex_funding_pct": statistics.mean(ex) if ex else None,
+            "median_net_ex_funding_pct": statistics.median(ex) if ex else None,
+            "q10_net_ex_funding_pct": _quantile(ex, .1) if ex else None,
+            "q90_net_ex_funding_pct": _quantile(ex, .9) if ex else None,
+            "net_ex_funding_win_rate_pct": pct(sum(v > 0 for v in ex), len(ex)),
+            "mean_net_ex_funding_interval": ex_interval,
             "mean_net_interval": interval, "warnings": warnings,
         })
     return {"schema_version": "cohort-evidence-v1", "cohorts": summaries,

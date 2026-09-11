@@ -202,6 +202,12 @@ python signal_bot.py            # 7/24 döngü: varsayılan 5 dakikada bir tarar
 python signal_bot.py --once     # tek dongu adimi (kenar-tetikleme; canli davranis testi)
 ```
 
+Telegram gecikmesi için kapanış payı artık varsayılan 10 saniye; tarama periyodu
+5 dakika kalır. Ana bildirimler gözlem taramasından önce çıkar, başarısız
+teslimlerin vadesi bağımsız işçide 5 saniyede bir kontrol edilir. Tekrar deneme
+geri çekilmesi (60/120/240 sn), TTL ve push sınırları korunur. Tabletteki adımlar
+ve sürelerin anlamı: [TELEGRAM_LATENCY.md](TELEGRAM_LATENCY.md).
+
 ## Bilgisayar kapalıyken bulut taraması
 
 `Trade1 cloud scanner` GitHub Actions iş akışı doğrulanmış 89 coinlik evreni
@@ -446,21 +452,35 @@ reddeder. Ölen tarama thread'i watchdog tarafından yeniden başlatılır.
 
 ### Ölçüm sözlüğü ve eski kayıtlar
 
-Pano ve Telegram iki sonucu özellikle ayrı gösterir:
+Pano ve Telegram mevcut iki sonucu ayrı gösterir:
 
 - `TP dokunması`: bildirimdeki referans fiyattan sonra kapanmış 5 dakikalık
   mumlarda coin fiyatının +%2/+%3/+%5/+%10 hedefine değmesi. Bu net kâr, gerçek
   dolum veya kaldıraçlı ROI değildir; aynı mumda hedef/stop sırası bilinmez.
 - `Net zaman çıkışı`: araştırma protokolündeki sonraki saatlik mum açılışı ile
   strateji ufku sonundaki kapanış arasındaki getiri eksi varsayılan 12 bp maliyet.
-  S2 funding nakit akışı `not_modeled` kalır.
+  Aktif pano satırları geçici sinyal referansına göre tahmindir. USD-M sayıları
+  funding hariçtir; S2 funding nakit akışı `not_modeled` kalır.
 
 `N`, `pending`, `UNKNOWN`, piyasa, evren, config ve ölçüm sürümü ayrı görünür.
-Eski kayıtlarda teslim kanıtı veya motor hash'i yoksa bu kayıtlar güncel başarı
-oranına sessizce eklenmez; `legacy_unknown`/`UNKNOWN` olarak kalır. Ayrıntılı
-kurallar ve manuel, salt-okunur rapor protokolü [CORE_EXECUTION_PROTOCOL.md](research/CORE_EXECUTION_PROTOCOL.md)
-dosyasındadır. Bu dosya yeni strateji, otomatik emir veya yatırım tavsiyesi
-anlamına gelmez.
+Mevcut hedef/MFE arşivi strateji bazında topludur; zaman çıkışı grupları da motor
+hash'i ve teslim kanıtını ayırmaz. Dolayısıyla eski/yeni kayıtlar birlikte
+olabilir. Hedef/MFE oranlarından ölçüm sürümü bilinmeyen eski olaylar çıkarılır;
+ayrıca sayıları gösterilir. Bu sayılar yeni paper TP/SL başarısı değildir; eksik sürüm bilgisi
+`legacy_unknown`/`UNKNOWN` görünür, tarihsel evren çıkarımları korunur.
+
+Yeni **Ayrı TP/SL fiyat-yolu deneyi** bölümünde manuel CLI'nin ürettiği JSON'u
+“Paper raporu seç” ile aç. Dosya tarayıcıdan gönderilmez, kaydedilmez veya eski
+karnelere eklenmez. Rapor seçilmediyse “Yeni yöntemle değerlendirilmedi” yazar.
+Yeni rapor strateji/yön/piyasa/evren/config/motor/deney kohortlarını ayrı tutar.
+USD-M için tam net boş kalır; funding-hariç dağılım ayrıca gösterilir.
+
+Manuel rapor öncesinde log ile özel outbox'ın salt okunur kopyasını birlikte
+ver; outbox verilmezse retry teslim kapsamı belirsizdir. 5m JSONL kaynağını,
+checksum ve boşluklarını manifest ile kaydet. Manifest kaynak beyanını
+bağımsız olarak doğrulamaz. Komutlar, kalan gerçek veri/OOS koşulları ve kararlar
+[CORE_EXECUTION_PROTOCOL.md](research/CORE_EXECUTION_PROTOCOL.md) dosyasındadır.
+Bu akış emir açmaz veya doğrulanmış kârlılık iddiası üretmez.
 
 ## Dışarıdan gelen değişiklikler (başka bir AI / kişi)
 

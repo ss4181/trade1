@@ -44,43 +44,14 @@ jobs:
             research/*.py tests/*.py
 
       - name: Bot çevrimdışı testleri
-        run: |
-          python -B tests/offline_tests.py
-          python -B tests/test_cloud_report.py
-          python -B tests/test_watchdog.py
-          python -B tests/test_archive_backup.py
-          python -B tests/test_shadow_experiments.py
-          python -B tests/test_derivatives_archive.py
-          python -B tests/test_price_target_analytics.py
-          python -B tests/test_research_weekly_delivery.py
-          python -B tests/test_forward_oi_periodic_report.py
-          python -B tests/test_research_monitor.py
-          python -B tests/test_reliability.py
-          python -B tests/test_hardening.py
-          python -B tests/test_strategy_engine.py
-          python -B tests/test_paper_execution.py
-          python -B tests/test_evidence_summary.py
-          python -B tests/test_paper_report.py
+        # Includes server/QC/research suites in a clean temporary copy with
+        # Telegram/publishing disabled and socket connections blocked.
+        run: python -B tests/run_isolated.py
 
       - name: Pano JavaScript sözdizimi
         run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import signal_bot
-          html = signal_bot.dashboard_html("https://example.invalid/data.json")
-          script = html.split("<script>", 1)[1].split("</script>", 1)[0]
-          Path(os.environ["RUNNER_TEMP"], "dashboard.js").write_text(
-              script, encoding="utf-8")
-          PY
-          node --check "${{ runner.temp }}/dashboard.js"
+          node tests/check_dashboard_js.js
           node tests/test_dashboard.js
-
-      - name: Sunucu readiness testleri
-        run: python -B tests/server_tests.py
-
-      - name: QC export testleri
-        run: python -B tests/test_qc_export.py
 
       - name: QC export CLI dumani
         # signals.log gitignored oldugu icin CI'da yok: sentetik girdi uret.
@@ -98,18 +69,6 @@ jobs:
           python -B qc_export.py -l "${{ runner.temp }}/smoke-signals.log" \
             -o "${{ runner.temp }}/qc_smoke"
           test -f "${{ runner.temp }}/qc_smoke/signal_events.csv"
-
-      - name: Araştırma metodoloji testleri
-        working-directory: research
-        run: python -B -m unittest -v test_methodology.py
-
-      - name: Araştırma evreni / OI / gölge testleri
-        run: |
-          python -B tests/test_s2_long_short.py
-          python -B tests/test_forward_oi_explore.py
-          python -B tests/test_forward_oi_barriers.py
-          python -B tests/test_g1_liquidation_proxy.py
-          python -B tests/test_archive_preparation.py
 
       - name: Termux betiği sözdizimi
         run: sh -n termux/boot-signal-bot.sh

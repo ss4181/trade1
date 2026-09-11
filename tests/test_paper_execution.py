@@ -87,6 +87,18 @@ class PaperTests(unittest.TestCase):
         self.assertEqual(out["entry_time_ms"], BASE+2*M)
         self.assertEqual(out["status"], "pending")
 
+    def test_only_pre_exit_candle_conflicts_invalidate_event(self):
+        first = dict(bars()[0], high=103)
+        later = bars()[1]
+        conflict = dict(later, close=100.1)
+        expected = self.run_path([first])
+        self.assertEqual(expected, self.run_path([first, later, conflict]))
+        self.assertEqual(expected, self.run_path([conflict, later, first]))
+        self.assertEqual(expected, self.run_path([first, dict(later, open_time=BASE+100*M+1)]))
+        self.assertEqual(self.run_path([first, dict(first, close=100.1)])["reason"], "conflicting_candle")
+        self.assertEqual(self.run_path([dict(first, open_time=first["open_time"]+1)])["reason"], "invalid_candle_timestamp")
+        self.assertEqual(self.run_path([None])["reason"], "invalid_candle_timestamp")
+
     def test_short_simple_not_inverse_return_and_invalid_prices(self):
         self.assertAlmostEqual(simple_return_pct(100, 90, "SHORT"), 10)
         self.assertAlmostEqual(log_price_return_to_simple_pct(math.log(.9), "SHORT"), 10)
