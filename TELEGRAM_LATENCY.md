@@ -34,10 +34,11 @@ onların olay-tespit gecikmesi yeni ana sinyal gecikmesiyle aynı ölçüm deği
 
 ## Senin yapacakların — sırayla
 
-**1. Kodun aktarımını tamamla.** Mevcut çalışma yerelde hazırlanmıştır;
-önceki push/deploy sınırı sürüyor. `main`e gönderildiği teyit edilmeden
-mevcut tablet botunu durdurma. İstenirse yerel Git paketiyle aktarım da
-yapılabilir; yalnız `git pull` yayımlanmamış kodu getirmez.
+**1. Yayını kontrol et.** Kullanıcının açık onayıyla kod paketi **`52f273b`**
+olarak `main`e gönderildi; [GitHub testleri geçti](https://github.com/ss4181/trade1/actions/runs/34638452833).
+Aşağıdaki adımlarla tablete alabilirsin. Son commit yalnız rehber güncellemesi
+olabilir; `git merge-base --is-ancestor 52f273b HEAD` komutunun başarılı
+çıkması kod paketinin de bulunduğunu doğrular.
 
 **2. Paket main'e gönderildikten sonra, Termux'ta önce kontrol et.**
 
@@ -66,6 +67,7 @@ kullanma. Başarılıysa yeni dosyanın geldiğini ve sürümü kontrol et:
 
 ```bash
 git --no-pager log -1 --oneline
+git merge-base --is-ancestor 52f273b HEAD && echo "52f273b kod paketi mevcut"
 test -f TELEGRAM_LATENCY.md && echo "gecikme paketi geldi"
 python -m py_compile signal_bot.py notification_delivery.py server.py strategy_engine.py paper_execution.py
 ```

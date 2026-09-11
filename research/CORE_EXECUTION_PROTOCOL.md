@@ -3,7 +3,9 @@
 Bu dosya yöntem kararlarını ve model devrini kaydeder. Yeni strateji onayı,
 yatırım tavsiyesi, otomatik emir veya kârlılık kanıtı değildir. Canlı eşikler,
 evren seçimi, S5/S6 ve S2 araştırma bildirimleri, cooldown ve 5dk tarama aynı kaldı.
-Bu değişiklikler henüz tablete/buluta dağıtılmadı.
+Kod paketi kullanıcı onayıyla `52f273b` olarak `main`e gönderildi ve CI geçti.
+Tablette uygulama/doğrulama [TELEGRAM_LATENCY.md](../TELEGRAM_LATENCY.md)
+adımlarına bağlıdır; bu görev canlı tablete bağlanmadı.
 
 ## 1. Yüksek muhakeme gerektiren bölümde yapılanlar
 
