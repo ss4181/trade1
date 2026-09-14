@@ -20,6 +20,12 @@ signals.log
 .watchdog_state.json
 .notification_outbox.json
 .notification_outbox.json.tmp
+.notification_preferences.json
+.notification_preferences.tmp
+.g2_state.json
+.g2_state.tmp
+g2_market_*.jsonl
+g2_events_*.jsonl
 backup_manifest.json
 .pc_backup_status.json
 .restore-rehearsals/

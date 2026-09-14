@@ -60,6 +60,9 @@ import archive_backup as archive_backup_module
 import strategy_engine as core_engine
 from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
+import g2_notifications as g2
+import notification_scorecard
+from configure_notifications import load as load_notification_preferences
 from derivatives_archive import (
     DEFAULT_STREAM_URL as DEFAULT_FORCE_ORDER_STREAM_URL,
     ForceOrderArchiveWorker,
@@ -98,9 +101,10 @@ def _load_env(path: str = ".env") -> None:
 
 
 _load_env()
+_NOTIFICATION_OVERRIDES = load_notification_preferences()
 
 def _env(name: str, default, cast=None):
-    raw = os.environ.get(name)
+    raw = _NOTIFICATION_OVERRIDES.get(name, os.environ.get(name))
     if raw is None:
         return default
     return (cast or type(default))(raw)
@@ -207,7 +211,9 @@ SHADOW_PUSH_ENABLED = _env("SHADOW_PUSH_ENABLED", True, cast=_flag)
 SHADOW_MAX_PUSH_PER_RUN = _env("SHADOW_MAX_PUSH_PER_RUN", 20, cast=int)
 SHADOW_DELIST_POLL_MINUTES = _env(
     "SHADOW_DELIST_POLL_MINUTES", 30, cast=int)
-SHADOW_STRATEGIES = {"G1", "DL1"}
+SHADOW_STRATEGIES = {"G1", "G2", "DL1"}
+G2_ENABLED = _env("G2_ENABLED", True, cast=_flag)
+G2_PUSH = _env("G2_PUSH", True, cast=_flag)
 S2_DERIVATIVES_SHADOW_ENABLED = _env(
     "S2_DERIVATIVES_SHADOW_ENABLED", True, cast=_flag)
 
@@ -971,12 +977,22 @@ def _start_archive_worker() -> bool:
 
 
 def run_shadow_experiments() -> int:
-    """G1/DL1'i ana taramadan izole çalıştır; hata çekirdeği bozmasın."""
+    """G1/G2/DL1'i ana taramadan izole çalıştır; hata çekirdeği bozmasın."""
     global SHADOW_WORKER_LAST_ERROR
     if not SHADOW_EXPERIMENTS_ENABLED:
         return 0
     signals: list[dict] = []
     errors = []
+    g2_count = 0
+    if G2_ENABLED and "G2" not in DISABLED_STRATEGIES:
+        try:
+            for sig in g2.scan_g2(_futures_get, Path(__file__).parent / ".g2_state.json", ARCHIVE_DIR,
+                                  on_error=errors.append):
+                sig["push_policy_enabled"] = SHADOW_PUSH_ENABLED and G2_PUSH
+                notify(sig, push=SHADOW_PUSH_ENABLED and G2_PUSH)
+                g2_count += 1
+        except Exception as e:
+            errors.append(f"G2 {type(e).__name__}: {_redact(str(e))}")
     try:
         signals.extend(scan_shadow_gainers(
             _futures_get, SHADOW_STATE_FILE, ARCHIVE_DIR))
@@ -1000,9 +1016,9 @@ def run_shadow_experiments() -> int:
               file=sys.stderr, flush=True)
     else:
         SHADOW_WORKER_LAST_ERROR = None
-    if signals:
-        print(f"golge deney: {len(signals)} yeni olay (G1/DL1)", flush=True)
-    return len(signals)
+    if signals or g2_count:
+        print(f"golge deney: {len(signals) + g2_count} yeni olay (G1/G2/DL1)", flush=True)
+    return len(signals) + g2_count
 
 
 def _start_shadow_worker() -> bool:
@@ -1319,6 +1335,7 @@ STRATEGY_CONF = {
     "S5": ("GOZLEM", "dinamik evren S1+S4 — DOGRULANMAMIS coin, backtest yok"),
     "S6": ("GOZLEM", "dinamik evren S1 — DOGRULANMAMIS coin, backtest yok"),
     "G1": ("GOZLEM", "gainer+OI+short kalabaligi; tarihsel train kapisi RED"),
+    "G2": ("GOZLEM", "düşüş + OI artışı; araştırma bildirimi, Hyperliquid dolumu doğrulanmadı"),
     "DL1": ("GOZLEM", "delist olay arsivi; PRE bekletme RED, POST henuz testsiz"),
 }
 NOTIFY_MIN_CONFIDENCE = _env("NOTIFY_MIN_CONFIDENCE", "ORTA").strip().upper()
@@ -2154,6 +2171,7 @@ def _measurement_display(sig: dict) -> str:
     value = str(sig.get("measurement_version") or profile.get("measurement_version") or "legacy_unknown")
     return {
         "signal-reference-touch-v1": "hedef dokunması · bildirim referansı",
+        "g2-scheduled-bracket-v1": "G2 TP3/SL2 · planlanan Binance giriş referansı",
         "paper-barriers-v1": "TP/SL fiyat yolu · varsayımsal",
         "legacy_unknown": "eski kayıt · ölçüm sürümü bilinmiyor",
     }.get(value, value)
@@ -2182,6 +2200,9 @@ def _telegram_reason(sig: dict) -> str:
     if strategy == "G1":
         return ("İlk-10 günlük yükselen, hacim ve OI artışı ile short hesap "
                 "çoğunluğu aynı kapanmış veride birlikte görüldü.")
+    if strategy == "G2":
+        return ("Sabit 87 coin içinde ilk-10 düşen; 24 saatte en az %5 düşüş ve "
+                "son saatte en az %1 OI artışı. Planlanan referans giriş kapanıştan 1 saat sonra.")
     if strategy == "DL1":
         return ("Resmî Binance tam-token delist duyurusu tespit edildi; bu "
                 "bir piyasa olayı alarmıdır, giriş sinyali değildir.")
@@ -2190,6 +2211,10 @@ def _telegram_reason(sig: dict) -> str:
 
 def _telegram_compact_warning(sig: dict) -> str | None:
     strategy = str(sig.get("strategy") or "")
+    if strategy == "G2":
+        return ("G2 araştırma adayıdır. Ölçüm Binance fiyatı ve OI snapshot'ıdır; "
+                "Hyperliquid kontrat uygunluğu ve Limit/ALO dolumu ayrıca kontrol edilir. "
+                "TP%3 / SL%2 referans takibi gerçek hesap kârı değildir.")
     if strategy == "S2":
         return ("S2 düşük kanıtlı araştırma kanalıdır. Dondurulmuş test medyanı "
                 "negatif ve ters fiyat hareketi kuyruğu geniştir; işlem teyidi "
@@ -2260,7 +2285,7 @@ def _telegram_signal_text(sig: dict) -> str:
         mode, marker = "SİNYAL", "✅"
     else:
         mode, marker = "SİNYAL", "🟦"
-    price_label = ("Tarama anı fiyatı" if strategy == "G1" else "Fiyat")
+    price_label = ("Koşul kapanış referansı" if strategy == "G2" else "Tarama anı fiyatı" if strategy == "G1" else "Fiyat")
     lines = [
         f"🔔 <b>{_html.escape(strategy)} — "
         f"{_html.escape(str(sig.get('symbol') or '?'))} "
@@ -2274,6 +2299,11 @@ def _telegram_signal_text(sig: dict) -> str:
         f"🧭 <b>Evren:</b> {_html.escape(str(sig.get('universe') or 'UNKNOWN'))}",
     ]
     quote = sig.get("notification_quote")
+    if strategy == "G2":
+        lines += [f"📅 <b>Planlanan referans giriş:</b> {_html.escape(str(sig.get('planned_entry_at') or '—'))}",
+                  "🎯 <b>Plan:</b> TP %3 · SL %2 · azami 24 saat · coin başına 24 saat bekleme",
+                  "🏦 <b>İşlem tercihi:</b> Hyperliquid Limit / Post Only (ALO); bot emir açmaz."]
+    lines += ["", notification_scorecard.format_html(sig.get("last_five_scorecard"))]
     if quote:
         quote_age = max(0, time.time() - quote["observed_at_epoch"])
         lines.append(f"📍 <b>Son ticker:</b> {_fmt_price(quote['price'])} "
@@ -2624,12 +2654,16 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
             "minutes_to_hit_upper": (
                 target.get("minutes_to_hit_upper") if hit_at else None),
         })
-    criterion_key = _target_level_key(USER_SUCCESS_TARGET_PCT)
+    criterion_key = _target_level_key(3. if event.get("g2_bracket") else USER_SUCCESS_TARGET_PCT)
     criterion = (event.get("targets") or {}).get(criterion_key) or {}
     success_status = ("SUCCESS" if criterion.get("hit_at") else
                       "FAILED" if expired else "PENDING")
+    if event.get("g2_bracket"):
+        raw = event["g2_bracket"]["status"]
+        success_status = ("SUCCESS" if raw == "TP" else "FAILED" if raw in ("SL", "AMBIGUOUS_SL", "TIMEOUT")
+                          else "PENDING" if raw == "PENDING" else "UNAVAILABLE")
     return {
-        "basis": "signal_notification_price",
+        "basis": "scheduled_binance_open" if event.get("g2_bracket") else "signal_notification_price",
         "measurement_version": event.get("measurement_version", "legacy_unknown"),
         "entry_definition": event.get("entry_definition", "signal_reference_not_executed_price"),
         "universe": event.get("universe", "UNKNOWN"),
@@ -2637,7 +2671,7 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
         "engine_version": event.get("engine_version", "UNKNOWN"),
         "engine_config_hash": event.get("engine_config_hash", "UNKNOWN"),
         "delivery_evidence": event.get("delivery_evidence", "legacy_unverified"),
-        "entry_ref": event.get("entry_ref"),
+        "entry_ref": (None if event.get("g2_bracket") and not event["g2_bracket"].get("entry_set") else event.get("entry_ref")),
         "started_at": event.get("started_at"),
         "expires_at": event.get("expires_at"),
         "status": event.get("status", "active"),
@@ -2645,7 +2679,8 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
         "max_favorable_pct": event.get("max_favorable_pct"),
         "max_adverse_pct": event.get("max_adverse_pct"),
         "path_complete": expired,
-        "success_target_pct": USER_SUCCESS_TARGET_PCT,
+        "success_target_pct": 3. if event.get("g2_bracket") else USER_SUCCESS_TARGET_PCT,
+        "g2_bracket": event.get("g2_bracket"),
         "success_status": success_status,
         "adverse_before_hit_policy": "same_5m_bar_full_range_conservative",
         "last_error": event.get("last_error"),
@@ -2721,6 +2756,8 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
                 "delivery_evidence": ("confirmed" if record.get("delivery_confirmed")
                                       else "legacy_unverified"),
             }
+            if strategy == "G2":
+                g2.initialize_tracking(event, record, int(notified.timestamp()*1000))
             if persist:
                 events[event_id] = event
                 _save_price_target_state()
@@ -2740,14 +2777,16 @@ def fetch_price_target_klines(event: dict, start_ms: int,
     response = (_futures_get("/fapi/v1/klines", params)
                 if market == "um_perp" else
                 _spot_get("/api/v3/klines", params))
-    return [{"open_time": int(k[0]), "high": float(k[2]),
-             "low": float(k[3]), "close_time": int(k[6])}
+    return [{"open_time": int(k[0]), "open": float(k[1]), "high": float(k[2]),
+             "low": float(k[3]), "close": float(k[4]), "close_time": int(k[6])}
             for k in response.json()]
 
 
 def _apply_price_target_bars(event: dict, bars: list[dict],
                              coverage_end_ms: int) -> list[str]:
     """Saf cekirdek: mumlari uygular, ilk dokunulan hedef anahtarlarini verir."""
+    if event.get("g2_bracket"):
+        return g2.advance_tracking(event, bars, coverage_end_ms)
     entry = float(event["entry_ref"])
     direction = event["direction"]
     next_start = int(event.get("next_start_ms") or 0)
@@ -2801,7 +2840,7 @@ def _apply_price_target_bars(event: dict, bars: list[dict],
 
 def _send_price_target_alert(event: dict, hit_keys: list[str]) -> None:
     notify_keys = [key for key in hit_keys
-                   if float(key) in PRICE_TARGET_NOTIFY_LEVELS_PCT]
+                   if float(key) in PRICE_TARGET_NOTIFY_LEVELS_PCT or (event.get("g2_bracket") and key == "3")]
     if not PRICE_TARGET_NOTIFY or not ENABLE_TELEGRAM or not notify_keys:
         return
     levels = sorted((float(k) for k in notify_keys))
@@ -2813,12 +2852,12 @@ def _send_price_target_alert(event: dict, hit_keys: list[str]) -> None:
         target_rows.append(
             f"• {sign}%{level:g}: <b>{_fmt_price(target['price'])}</b>")
     text = "\n".join([
-        "🎯 <b>FİYAT HEDEFİ DOKUNDU</b>",
+        "🎯 <b>G2: TP %3 STOP ÖNCESİ ULAŞILDI</b>" if event.get("g2_bracket") else "🎯 <b>FİYAT HEDEFİ DOKUNDU</b>",
         f"<i>{_html.escape(str(event.get('strategy') or '?'))} · "
         f"{_html.escape(str(event.get('symbol') or '?'))} · "
         f"{_html.escape(str(event.get('direction') or ''))}</i>",
         "",
-        f"💰 <b>Bildirim referansı:</b> {_fmt_price(event['entry_ref'])}",
+        f"💰 <b>{'Planlanan Binance giriş referansı' if event.get('g2_bracket') else 'Bildirim referansı'}:</b> {_fmt_price(event['entry_ref'])}",
         f"🎯 <b>Ulaşılan seviye:</b> {level_text}",
         *target_rows,
         f"⚠️ <b>Hedef öncesi ters hareket:</b> "
@@ -2826,6 +2865,7 @@ def _send_price_target_alert(event: dict, hit_keys: list[str]) -> None:
         "",
         "ℹ️ Kapanmış 5dk mumuyla ölçülen brüt fiyat dokunmasıdır; "
         "ücret/slippage düşülmez, kaldıraçlı ROI değildir ve bot emir vermez.",
+        *( ["Hyperliquid limit emrinin dolduğunu göstermez."] if event.get("g2_bracket") else [] ),
     ])
     for cid in TELEGRAM_SUBSCRIBERS:
         _telegram_send_text(text, chat_id=cid)
@@ -2929,12 +2969,15 @@ def price_target_summary() -> dict:
     kalır. Satır bazında anlık HIT yine görünür.
     """
     grouped: dict[str, dict[str, dict]] = {}
-    legacy_events = legacy_matured = legacy_pending = 0
+    legacy_events = legacy_matured = legacy_pending = g2_events = 0
     with _price_target_lock:
         events = list(PRICE_TARGET_STATE.get("events", {}).values())
     for event in events:
         if not isinstance(event, dict):
             continue
+        if event.get("measurement_version") == g2.MEASUREMENT:
+            g2_events += 1
+            continue  # Separate TP/SL rule, never pool with unrestricted target touches.
         if event.get("measurement_version") not in PRICE_TARGET_MEASUREMENT_VERSIONS:
             legacy_events += 1
             if event.get("status") == "expired":
@@ -2995,6 +3038,7 @@ def price_target_summary() -> dict:
         "legacy_unverified_events": legacy_events,
         "legacy_unverified_matured": legacy_matured,
         "legacy_unverified_pending": legacy_pending,
+        "g2_separate_bracket_events": g2_events,
     }
     return out
 
@@ -3068,6 +3112,8 @@ def _ensure_price_target_state_schema() -> int:
         events = PRICE_TARGET_STATE.setdefault("events", {})
         for event in events.values():
             if not isinstance(event, dict):
+                continue
+            if event.get("measurement_version") == g2.MEASUREMENT:
                 continue
             targets = event.get("targets") or {}
             needs_replay = (version < PRICE_TARGET_STATE_SCHEMA_VERSION
@@ -3154,7 +3200,7 @@ def _backfill_price_targets_from_signal_log() -> int:
             notified = _target_dt(record.get("notified_at"))
         except (TypeError, ValueError):
             continue
-        if (notified < cutoff or record.get("performance_excluded")
+        if (notified < cutoff or (record.get("performance_excluded") and record.get("strategy") != "G2")
                 or str(record.get("strategy") or "").startswith("TEST")):
             continue
         if record.get("delivery_confirmed") is not True:
@@ -3224,6 +3270,13 @@ def notify(sig: dict, push: bool = True) -> dict:
     Anti-spam UST AKISTA yapilir (ScanState.should_fire — kenar-tetikleme +
     strateji-basi cooldown): buraya ulasan her sinyal zaten tekillestirilmistir."""
     record = _delivery_record(sig, push)
+    try:
+        delivered = DELIVERY_OUTBOX.confirmed_records()
+        with _price_target_lock:
+            record["last_five_scorecard"] = notification_scorecard.summarize(
+                record, delivered, PRICE_TARGET_STATE.get("events", {}), USER_SUCCESS_TARGET_PCT)
+    except (OSError, ValueError, TypeError):
+        record["last_five_scorecard"] = None
     market = record.get("performance_market") or ("um_perp" if record.get("strategy") == "S2" else "spot")
     quote = DISPLAY_PRICES.get((market, record.get("performance_symbol") or record.get("symbol")))
     if quote and 0 <= time.time() - quote[1] <= PRICE_STALE_AFTER_MINUTES * 60:
@@ -5069,7 +5122,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "funding_cost_status": "not_modeled",
             "engine_version": core_engine.ENGINE_VERSION,
             "measurement_versions": ["signal-reference-touch-v1",
-                                      "paper-barriers-v1", "legacy_unknown"],
+                                      "paper-barriers-v1", g2.MEASUREMENT, "legacy_unknown"],
             "price_target_tracking_enabled": PRICE_TARGET_TRACKING_ENABLED,
             "price_target_levels_pct": list(PRICE_TARGET_LEVELS_PCT),
             "price_target_notify_levels_pct": list(

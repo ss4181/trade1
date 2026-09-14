@@ -35,11 +35,15 @@ ARCHIVE_GLOBS = (
     "liquidation_archive_*.jsonl",
     "shadow_market_*.jsonl",
     "shadow_events_*.jsonl",
+    "g2_market_*.jsonl",
+    "g2_events_*.jsonl",
 )
 
 STATE_NAMES = (
     ".bot_state.json",
     ".experiment_state.json",
+    ".g2_state.json",
+    ".notification_preferences.json",
     ".perf_cache.json",
     ".price_target_state.json",
     ".research_monitor_state.json",
