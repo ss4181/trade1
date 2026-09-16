@@ -194,10 +194,27 @@ class DeliveryOutbox:
                                 "max": max(values) if values else None}
             latest = max((item for item in items if item.get("first_delivered_at")),
                          key=lambda item: _aware_time(item["first_delivered_at"]), default=None)
+            def strategy(item):
+                name = (item.get("record") or {}).get("strategy")
+                return name if name in {"S1", "S1+S4", "S2", "S3", "S5", "S6", "G1", "G2", "DL1"} else "UNKNOWN"
+            by_strategy = {}
+            for name in sorted({strategy(item) for item in samples}):
+                group = [delivery_latency(item) for item in samples if strategy(item) == name]
+                by_strategy[name] = {}
+                for stage in stages:
+                    values = [t[stage] for t in group if t[stage] is not None]
+                    by_strategy[name][stage] = {
+                        "n": len(values),
+                        "median": round(statistics.median(values), 3) if values else None,
+                        "max": max(values) if values else None,
+                        "under_30_seconds": sum(v < 30 for v in values),
+                    }
             return {"pending_events": len(pending), "sample_events": len(samples),
                     "oldest_pending_age_seconds": max((max(0, (now - _aware_time(
                         item["created_at"])).total_seconds()) for item in pending), default=None),
                     "latency_seconds": stages,
+                    "latency_seconds_by_strategy": by_strategy,
+                    "latest_ack_strategy": strategy(latest) if latest else None,
                     "latest_ack_at": latest["first_delivered_at"] if latest else None,
                     "latest_ack_latency_seconds": delivery_latency(latest) if latest else None,
                     "measurement": "first_telegram_api_ack_not_device_receipt"}

@@ -62,6 +62,7 @@ from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
 import g2_notifications as g2
 import notification_scorecard
+from concurrent.futures import ThreadPoolExecutor, as_completed, CancelledError
 from configure_notifications import load as load_notification_preferences
 from derivatives_archive import (
     DEFAULT_STREAM_URL as DEFAULT_FORCE_ORDER_STREAM_URL,
@@ -263,11 +264,21 @@ RESEARCH_REPORT_SOURCE = _env(
 SCAN_INTERVAL_MINUTES = _env("SCAN_INTERVAL_MINUTES", 5)
 # Closed candles are still used; only the intentional post-boundary delay changes.
 SCAN_CLOSE_DELAY_SECONDS = max(1, min(90, _env("SCAN_CLOSE_DELAY_SECONDS", 10)))
+SCAN_WORKERS = max(1, min(8, _env("SCAN_WORKERS", 8)))
+SCAN_STREAMING_ENABLED = _env("SCAN_STREAMING_ENABLED", bool(_NOTIFICATION_OVERRIDES), cast=_flag)
+_scan_state_lock = threading.RLock()
+_telegram_limiter_lock = threading.Lock()
+_telegram_chat_gates: dict = {}
+TELEGRAM_MIN_INTERVAL_SECONDS = max(0., _env("TELEGRAM_MIN_INTERVAL_SECONDS", 1.05))
 KLINE_LIMIT = _env("KLINE_LIMIT", 250)          # >= VOLUME_ZSCORE_WINDOW + 24 olmali
 SIGNAL_LOG = _env("SIGNAL_LOG", "signals.log")
 DELIVERY_OUTBOX = DeliveryOutbox(Path(__file__).parent / ".notification_outbox.json")
 _delivery_worker_lock = threading.Lock()
 _delivery_retry_worker: DeliveryRetryWorker | None = None
+_g2_worker: DeliveryRetryWorker | None = None
+G2_WORKER_LAST_ERROR: str | None = None
+G2_LAST_SCAN_STARTED_AT: str | None = None
+G2_LAST_SCAN_FINISHED_AT: str | None = None
 PUBLISH_QC_ENABLED = _env("PUBLISH_QC_ENABLED", False, cast=_flag)
 _qc_candle_cache: dict = {}
 
@@ -976,49 +987,58 @@ def _start_archive_worker() -> bool:
     return True
 
 
+def _poll_g2_notifications(stop_event=None) -> None:
+    """Own clock: G2 never waits for the core, observation or G1/DL1 scans."""
+    global G2_WORKER_LAST_ERROR, G2_LAST_SCAN_STARTED_AT, G2_LAST_SCAN_FINISHED_AT
+    if (not SHADOW_EXPERIMENTS_ENABLED or not G2_ENABLED or "G2" in DISABLED_STRATEGIES
+            or (stop_event is not None and stop_event.is_set())
+            or time.time() % 3600 < SCAN_CLOSE_DELAY_SECONDS):
+        return
+    errors = []
+    G2_LAST_SCAN_STARTED_AT = datetime.now(timezone.utc).isoformat()
+    try:
+        for sig in g2.scan_g2(_futures_get, Path(__file__).parent / ".g2_state.json", ARCHIVE_DIR,
+                              on_error=errors.append, workers=SCAN_WORKERS):
+            sig["push_policy_enabled"] = SHADOW_PUSH_ENABLED and G2_PUSH
+            notify(sig, push=SHADOW_PUSH_ENABLED and G2_PUSH)
+    except Exception as e:
+        errors.append(f"G2 {type(e).__name__}: {_redact(str(e))}")
+    G2_WORKER_LAST_ERROR = " | ".join(errors)[:500] or None
+    G2_LAST_SCAN_FINISHED_AT = datetime.now(timezone.utc).isoformat()
+    if errors:
+        print(f"uyari: G2 taramasi: {G2_WORKER_LAST_ERROR}", file=sys.stderr, flush=True)
+
+
 def run_shadow_experiments() -> int:
-    """G1/G2/DL1'i ana taramadan izole çalıştır; hata çekirdeği bozmasın."""
+    """G1/DL1'i ana taramadan izole çalıştır; hata çekirdeği bozmasın."""
     global SHADOW_WORKER_LAST_ERROR
     if not SHADOW_EXPERIMENTS_ENABLED:
         return 0
-    signals: list[dict] = []
+    count = 0
     errors = []
-    g2_count = 0
-    if G2_ENABLED and "G2" not in DISABLED_STRATEGIES:
+    for name, scan in (
+        ("G1", lambda: scan_shadow_gainers(_futures_get, SHADOW_STATE_FILE, ARCHIVE_DIR)),
+        ("DL1", lambda: poll_shadow_delists(requests.get, _spot_get, SHADOW_STATE_FILE, ARCHIVE_DIR,
+                                           poll_minutes=SHADOW_DELIST_POLL_MINUTES)),
+    ):
+        started = datetime.now(timezone.utc).isoformat()
         try:
-            for sig in g2.scan_g2(_futures_get, Path(__file__).parent / ".g2_state.json", ARCHIVE_DIR,
-                                  on_error=errors.append):
-                sig["push_policy_enabled"] = SHADOW_PUSH_ENABLED and G2_PUSH
-                notify(sig, push=SHADOW_PUSH_ENABLED and G2_PUSH)
-                g2_count += 1
+            signals = _stamp_signal_detection(scan(), started)
+            for sig in sorted(signals, key=lambda s: s.get("symbol", "")):
+                sig["push_policy_enabled"] = SHADOW_PUSH_ENABLED
+                notify(sig, push=SHADOW_PUSH_ENABLED and count < SHADOW_MAX_PUSH_PER_RUN)
+                count += 1
         except Exception as e:
-            errors.append(f"G2 {type(e).__name__}: {_redact(str(e))}")
-    try:
-        signals.extend(scan_shadow_gainers(
-            _futures_get, SHADOW_STATE_FILE, ARCHIVE_DIR))
-    except Exception as e:
-        errors.append(f"G1 {type(e).__name__}: {_redact(str(e))}")
-    try:
-        signals.extend(poll_shadow_delists(
-            requests.get, _spot_get, SHADOW_STATE_FILE, ARCHIVE_DIR,
-            poll_minutes=SHADOW_DELIST_POLL_MINUTES))
-    except Exception as e:
-        errors.append(f"DL1 {type(e).__name__}: {_redact(str(e))}")
-    signals.sort(key=lambda sig: (sig.get("strategy", ""),
-                                  sig.get("symbol", "")))
-    for index, sig in enumerate(signals):
-        sig["push_policy_enabled"] = SHADOW_PUSH_ENABLED
-        notify(sig, push=(SHADOW_PUSH_ENABLED and
-                          index < SHADOW_MAX_PUSH_PER_RUN))
+            errors.append(f"{name} {type(e).__name__}: {_redact(str(e))}")
     if errors:
         SHADOW_WORKER_LAST_ERROR = " | ".join(errors)[:500]
         print(f"uyari: golge deney: {SHADOW_WORKER_LAST_ERROR}",
               file=sys.stderr, flush=True)
     else:
         SHADOW_WORKER_LAST_ERROR = None
-    if signals or g2_count:
-        print(f"golge deney: {len(signals) + g2_count} yeni olay (G1/G2/DL1)", flush=True)
-    return len(signals) + g2_count
+    if count:
+        print(f"golge deney: {count} yeni olay (G1/DL1)", flush=True)
+    return count
 
 
 def _start_shadow_worker() -> bool:
@@ -1781,7 +1801,8 @@ class ScanState:
 
 
 def scan_symbol(symbol: str, state: ScanState,
-                snapshot: bool = False, observe: bool = False) -> list[dict]:
+                snapshot: bool = False, observe: bool = False,
+                defer_shadow: bool = False) -> list[dict]:
     """Bir sembolu tarar, sinyal listesini dondurur.
 
     snapshot=False (canli mod): kenar-tetikleme + cooldown uygulanir — sinyal
@@ -1800,7 +1821,8 @@ def scan_symbol(symbol: str, state: ScanState,
     def include(strategy: str, cond: bool, cooldown: float) -> bool:
         if snapshot:
             return cond
-        return state.should_fire(strategy, symbol, cond, cooldown, now_s)
+        with _scan_state_lock:
+            return state.should_fire(strategy, symbol, cond, cooldown, now_s)
 
     klines = fetch_klines(symbol)
     if len(klines) < max(DIVERGENCE_LOOKBACK + DIVERGENCE_GAP,
@@ -1920,23 +1942,10 @@ def scan_symbol(symbol: str, state: ScanState,
                 "horizon_hours": 72,
             })
             if not snapshot and S2_DERIVATIVES_SHADOW_ENABLED:
-                try:
-                    def s2_shadow_get(path, params):
-                        needs_key = path.endswith(
-                            "/topLongShortPositionRatio")
-                        if needs_key and not BINANCE_MARKET_DATA_API_KEY:
-                            raise RuntimeError(
-                                "market-data API key yapilandirilmamis")
-                        return _futures_get(
-                            path, params, market_data_key=needs_key)
-
-                    capture_s2_derivatives_shadow(
-                        s2_shadow_get, symbol, contract, fr, ARCHIVE_DIR)
-                except Exception as e:
-                    # Gölge araştırma asla canlı S2 olayını düşürmemeli.
-                    print("uyari: S2 turev golge kaydi basarisiz: "
-                          f"{type(e).__name__}: {_redact(str(e))}",
-                          file=sys.stderr, flush=True)
+                if defer_shadow:
+                    signals[-1]["_s2_shadow_job"] = (symbol, contract, fr)
+                else:
+                    _capture_s2_shadow(symbol, contract, fr)
 
     if signals:
         sigma = realized_sigma1h(closes)
@@ -1976,6 +1985,19 @@ def scan_symbol(symbol: str, state: ScanState,
                     pass
                 sig["ref"] = ref
     return signals
+
+def _capture_s2_shadow(symbol, contract, funding):
+    """Research capture uses its actual later observation time, never the signal time."""
+    try:
+        def get(path, params):
+            needs_key = path.endswith("/topLongShortPositionRatio")
+            if needs_key and not BINANCE_MARKET_DATA_API_KEY:
+                raise RuntimeError("market-data API key yapilandirilmamis")
+            return _futures_get(path, params, market_data_key=needs_key)
+        capture_s2_derivatives_shadow(get, symbol, contract, funding, ARCHIVE_DIR)
+    except Exception as e:
+        print(f"uyari: S2 turev golge kaydi basarisiz: {type(e).__name__}: {_redact(str(e))}",
+              file=sys.stderr, flush=True)
 
 # --------------------------------------------------------------------------
 # bildirim / dongu
@@ -2408,7 +2430,13 @@ def notification_delivery_status() -> dict:
     worker = _delivery_retry_worker
     report = {"scan_close_delay_seconds": SCAN_CLOSE_DELAY_SECONDS,
               "retry_poll_seconds": 5,
-              "retry_worker_alive": bool(worker and worker.thread.is_alive())}
+              "retry_worker_alive": bool(worker and worker.thread.is_alive()),
+              "scan_workers": SCAN_WORKERS,
+              "scan_streaming_enabled": SCAN_STREAMING_ENABLED,
+              "g2_independent_worker_alive": bool(_g2_worker and _g2_worker.thread.is_alive()),
+              "g2_last_error": G2_WORKER_LAST_ERROR,
+              "g2_last_scan_started_at": G2_LAST_SCAN_STARTED_AT,
+              "g2_last_scan_finished_at": G2_LAST_SCAN_FINISHED_AT}
     try:
         report.update(DELIVERY_OUTBOX.diagnostics())
     except (OSError, ValueError, TypeError):
@@ -2487,6 +2515,23 @@ def _telegram_send_text(text: str, chat_id: str | None = None,
     atlar; hata olursa uyarir, ASLA istisna firlatmaz."""
     if not ENABLE_TELEGRAM:
         return False
+    cid = str(chat_id or TELEGRAM_CHAT_ID)
+    with _telegram_limiter_lock:
+        gate = _telegram_chat_gates.setdefault(cid, [threading.Lock(), 0.])
+    # One recipient's requests are paced across scan, retry and command threads.
+    with gate[0]:
+        interval = TELEGRAM_MIN_INTERVAL_SECONDS
+        if interval and cid.startswith("-"):
+            interval = max(interval, 3.05)  # groups: at most 20 messages/minute
+        delay = max(0., gate[1] + interval - time.monotonic())
+        if delay:
+            time.sleep(delay)
+        gate[1] = time.monotonic()
+        return _telegram_send_text_unpaced(text, chat_id, reply_markup)
+
+
+def _telegram_send_text_unpaced(text: str, chat_id: str | None = None,
+                                reply_markup: dict | None = None) -> bool:
     payload = {"chat_id": chat_id or TELEGRAM_CHAT_ID, "text": text,
                "parse_mode": "HTML", "disable_web_page_preview": True}
     if reply_markup:
@@ -3357,6 +3402,11 @@ SCAN_FAILURE_ERROR_RATIO = _env("SCAN_FAILURE_ERROR_RATIO", 0.8)
 def scan_all(state: ScanState) -> int:
     global LAST_SCAN_ERRORS, LAST_SCAN_ATTEMPTED
     global LAST_SCAN_SUCCEEDED_SYMBOLS, LAST_SCAN_ERROR_RATIO
+    # With all alerts enabled there is no scarce push budget to rank globally.
+    # Keep the old priority selection for users who deliberately retain a cap.
+    if (SCAN_STREAMING_ENABLED and SCAN_WORKERS > 1 and MAX_PUSH_PER_SCAN >= 3 * len(SYMBOLS)
+            and (not OBSERVE_ENABLED or OBSERVE_MAX_PUSH_PER_SCAN >= len(OBSERVE_SYMBOLS))):
+        return _scan_all_streaming(state)
     errors = 0
     scan_started_at = datetime.now(timezone.utc).isoformat()
     collected: list[dict] = []
@@ -3441,12 +3491,85 @@ def scan_all(state: ScanState) -> int:
     return len(collected)
 
 
+def _scan_all_streaming(state: ScanState) -> int:
+    """Bounded parallel reads; the caller alone delivers and writes scan state."""
+    global LAST_SCAN_ERRORS, LAST_SCAN_ATTEMPTED
+    global LAST_SCAN_SUCCEEDED_SYMBOLS, LAST_SCAN_ERROR_RATIO
+    started = datetime.now(timezone.utc).isoformat()
+    core = list(dict.fromkeys(SYMBOLS))
+    core_set = set(core)
+    observed = [s for s in dict.fromkeys(OBSERVE_SYMBOLS) if s not in core_set] if OBSERVE_ENABLED else []
+    jobs = [(s, False) for s in core] + [(s, True) for s in observed]
+    succeeded = count = 0
+    market_error = None
+    shadow_jobs = []
+    market_failed = threading.Event()
+
+    def evaluate(symbol, observe):
+        if market_failed.is_set():
+            raise CancelledError()
+        try:
+            return _stamp_signal_detection(
+                scan_symbol(symbol, state, observe=observe, defer_shadow=True), started)
+        except (MarketRateLimitError, MarketTransientError):
+            market_failed.set()
+            raise
+
+    with ThreadPoolExecutor(max_workers=SCAN_WORKERS, thread_name_prefix="signal-read") as pool:
+        futures = {pool.submit(evaluate, s, obs): (s, obs) for s, obs in jobs}
+        for future in as_completed(futures):
+            if future.cancelled():
+                continue
+            symbol, observe = futures[future]
+            try:
+                signals = future.result()
+                if not observe:
+                    succeeded += 1
+                    count += len(signals)
+            except CancelledError:
+                continue
+            except (MarketRateLimitError, MarketTransientError) as e:
+                market_error = market_error or e
+                ERROR_SAMPLES.append(f"{symbol}: {_redact(str(e))}")
+                # Already running calls honor the existing shared API backoff.
+                # Never keep starting the remaining universe after a service failure.
+                for pending in futures:
+                    pending.cancel()
+                continue
+            except Exception as e:
+                ERROR_SAMPLES.append(f"{symbol}: {_redact(str(e))}")
+                print(f"uyari: {symbol} taranamadi: {_redact(str(e))}", file=sys.stderr, flush=True)
+                continue
+            for sig in sorted(signals, key=_priority):
+                job = sig.pop("_s2_shadow_job", None)
+                if job:
+                    shadow_jobs.append(job)
+                conf_ok = CONF_RANK.get(sig.get("confidence", "YUKSEK"), 2) >= CONF_RANK.get(NOTIFY_MIN_CONFIDENCE, 1)
+                allowed = OBSERVE_PUSH if observe else (conf_ok or (sig.get("strategy") == "S2" and S2_RESEARCH_PUSH))
+                notify(sig, push=allowed)
+    # All symbol writers have joined before serializing the shared state.
+    state.save()
+    LAST_SCAN_ATTEMPTED = len(core)
+    LAST_SCAN_SUCCEEDED_SYMBOLS = succeeded
+    LAST_SCAN_ERRORS = len(core) - succeeded
+    LAST_SCAN_ERROR_RATIO = LAST_SCAN_ERRORS / len(core) if core else 1.0
+    for job in shadow_jobs:
+        _capture_s2_shadow(*job)
+    if market_error:
+        raise market_error
+    if not core or LAST_SCAN_ERROR_RATIO >= min(1.0, max(.01, float(SCAN_FAILURE_ERROR_RATIO))):
+        raise RuntimeError(f"yetersiz piyasa veri kapsami: {succeeded}/{len(core)} sembol basarili")
+    return count
+
+
 def _stamp_signal_detection(signals: list[dict], scan_started_at: str) -> list[dict]:
     detected_at = datetime.now(timezone.utc).isoformat()
     for sig in signals:
         sig["detected_at"] = detected_at
         sig["scan_started_at"] = scan_started_at
         strategy = sig.get("strategy")
+        if strategy == "G1" and sig.get("condition_bar_close_utc"):
+            sig["signal_reference_at"] = sig["condition_bar_close_utc"]
         # bar_time is the OPEN time for 1h signals, but settlement time for S2.
         if strategy in ("S1", "S1+S4", "S3", "S5", "S6", "S2"):
             try:
@@ -3913,7 +4036,7 @@ def _release_instance_file_lock(handle) -> None:
 
 def run_forever(once: bool = False, state: ScanState | None = None) -> None:
     """Tek lider garantili tarama giris noktasi."""
-    global INSTANCE_LOCK_HELD, LAST_LOOP_ERROR, _delivery_retry_worker
+    global INSTANCE_LOCK_HELD, LAST_LOOP_ERROR, _delivery_retry_worker, _g2_worker
     if not _run_guard.acquire(blocking=False):
         LAST_LOOP_ERROR = "bu proseste baska bir tarama dongusu zaten calisiyor"
         raise RuntimeError(LAST_LOOP_ERROR)
@@ -3935,12 +4058,19 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             worker = DeliveryRetryWorker(_retry_signal_deliveries)
             worker.start()
             _delivery_retry_worker = worker
+        if not once and SHADOW_EXPERIMENTS_ENABLED and G2_ENABLED:
+            _g2_worker = DeliveryRetryWorker(_poll_g2_notifications)
+            _g2_worker.thread.name = "g2-hourly"
+            _g2_worker.start()
         _run_forever_locked(once=once, state=state)
     except Exception as e:
         if not LAST_LOOP_ERROR:
             LAST_LOOP_ERROR = f"{type(e).__name__}: {e}"
         raise
     finally:
+        if _g2_worker is not None:
+            _g2_worker.stop()
+            _g2_worker = None
         if _delivery_retry_worker is not None:
             _delivery_retry_worker.stop()
             _delivery_retry_worker = None
@@ -4028,6 +4158,8 @@ def _run_forever_locked(once: bool = False,
         LAST_LOOP_HEARTBEAT_AT = LAST_SCAN_STARTED_AT
         SCAN_IN_PROGRESS = True
         try:
+            if not once:
+                _start_shadow_worker()
             refresh_universe_if_due()
             refresh_perp_map_if_due()
             refresh_observe_universe_if_due()
@@ -4049,9 +4181,8 @@ def _run_forever_locked(once: bool = False,
             else:
                 _start_archive_worker()
             if once:
+                _poll_g2_notifications()
                 run_shadow_experiments()
-            else:
-                _start_shadow_worker()
             if once:
                 publish_to_github()
             else:

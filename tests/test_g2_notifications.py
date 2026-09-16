@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import threading
 from datetime import datetime,timezone
 from unittest.mock import patch
 
@@ -59,6 +60,25 @@ class G2Tests(unittest.TestCase):
         candles.pop(10)
         with self.assertRaises(ValueError):g2.closed_return(candles,self.h)
         self.assertEqual(len(g2.CONTRACTS),87)
+
+    def test_prices_parallel_and_detection_is_after_inputs_not_scan_start(self):
+        entered=threading.Barrier(2)
+        def fetch(path,params):
+            if path.endswith('klines'):entered.wait(timeout=3)
+            return self.fetch(path,params)
+        detected=datetime(2026,9,14,12,1,8,tzinfo=timezone.utc)
+        signals=g2.scan_g2(fetch,self.root/'parallel.json',self.root,self.now,
+                           contracts=('BTCUSDT','ETHUSDT'),workers=2,clock=lambda:detected)
+        self.assertEqual(len(signals),2)
+        self.assertEqual(signals[0]['scan_started_at'],self.now.isoformat())
+        self.assertEqual(signals[0]['detected_at'],detected.isoformat())
+
+    def test_parallel_and_serial_g2_produce_identical_decisions(self):
+        outputs=[]
+        for workers in (1,8):
+            outputs.append(g2.scan_g2(self.fetch,self.root/f'{workers}.json',self.root,self.now,
+                                      contracts=('BTCUSDT','ETHUSDT'),workers=workers,clock=lambda:self.now))
+        self.assertEqual(outputs[0],outputs[1])
 
     def event(self):
         e=dict(status='active',entry_ref=90,config_version=g2.VERSION,strategy='G2',direction='LONG')

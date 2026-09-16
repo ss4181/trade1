@@ -85,6 +85,7 @@ class NotificationLatencyTests(unittest.TestCase):
         self.assertEqual(before, self.path.read_bytes())
         self.assertNotIn("PRIVATE", json.dumps(report))
         self.assertNotIn("private-event", json.dumps(report))
+        self.assertEqual(report['latency_seconds_by_strategy']['UNKNOWN']['reference_to_ack']['under_30_seconds'],0)
 
     def test_unknown_or_reversed_timestamps_do_not_fabricate_zero_latency(self):
         item = {"created_at": self.now.isoformat(), "first_delivered_at": (self.now - timedelta(seconds=1)).isoformat()}

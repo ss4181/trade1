@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 import json
 import math
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed, CancelledError
+import threading
 from shadow_experiments import append_jsonl
 
 HOUR = 3_600_000
@@ -54,8 +56,10 @@ def oi_change(rows,close_ms):
     return now[1]/old[1]-1,now[0],old[0]
 
 
-def scan_g2(futures_get,state_path,archive_dir,now=None,contracts=CONTRACTS,on_error=None):
-    now=now or datetime.now(timezone.utc)
+def scan_g2(futures_get,state_path,archive_dir,now=None,contracts=CONTRACTS,on_error=None,
+            workers=8,clock=None):
+    clock=clock or (lambda:datetime.now(timezone.utc))
+    now=now or clock()
     close_ms=int(now.timestamp()*1000)//HOUR*HOUR
     state_path=Path(state_path)
     state=json.loads(state_path.read_text()) if state_path.exists() else {"last_fire":{}}
@@ -72,15 +76,31 @@ def scan_g2(futures_get,state_path,archive_dir,now=None,contracts=CONTRACTS,on_e
         response.raise_for_status()
         return response.json()
     # Full frozen cross-section first; never rank only the symbols that responded.
-    try:
-        for symbol in contracts:
-            if symbol not in state["prices"]:
-                raw=fetch("/fapi/v1/klines",{"symbol":symbol,"interval":"1h","limit":25,
-                          "startTime":close_ms-25*HOUR,"endTime":close_ms-1})
-                state["prices"][symbol]=closed_return(raw,close_ms)
-    except Exception:
+    abort=threading.Event()
+    def price_for(symbol):
+        if abort.is_set():raise CancelledError()
+        try:
+            raw=fetch("/fapi/v1/klines",{"symbol":symbol,"interval":"1h","limit":25,
+                      "startTime":close_ms-25*HOUR,"endTime":close_ms-1})
+            return closed_return(raw,close_ms)
+        except Exception:
+            abort.set()
+            raise
+    failed=None
+    with ThreadPoolExecutor(max_workers=max(1,min(8,int(workers)))) as pool:
+        pending={pool.submit(price_for,s):s for s in contracts if s not in state["prices"]}
+        for future in as_completed(pending):
+            if future.cancelled():continue
+            try:
+                state["prices"][pending[future]]=future.result()
+            except CancelledError:
+                continue
+            except Exception as exc:
+                failed=failed or exc
+                for queued in pending:queued.cancel()
+    if failed:
         save()
-        raise
+        raise failed
     ranked=sorted(contracts,key=lambda s:(state["prices"][s]["return_24h"],s))
     signals=[]
     errors=[]
@@ -98,7 +118,8 @@ def scan_g2(futures_get,state_path,archive_dir,now=None,contracts=CONTRACTS,on_e
             if change<.01:continue
             signal={"strategy":"G2","symbol":symbol,"direction":"LONG","strength":"RESEARCH",
                     "confidence":"GOZLEM","confidence_note":"Araştırma adayı; Hyperliquid dolumu doğrulanmadı",
-                    "bar_time":iso(close_ms-HOUR),"signal_reference_at":iso(close_ms),"detected_at":now.isoformat(),
+                    "bar_time":iso(close_ms-HOUR),"signal_reference_at":iso(close_ms),
+                    "scan_started_at":now.isoformat(),"detected_at":clock().isoformat(),
                     "price":price["close"],"condition_price":price["close"],"horizon_hours":24,
                     "planned_entry_at":iso(close_ms+HOUR),"target_pct":3.,"stop_pct":2.,
                     "rank_loser":rank,"return_24h_pct":round(price["return_24h"]*100,3),"oi_change_1h_pct":round(change*100,3),

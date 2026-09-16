@@ -1,5 +1,8 @@
 # G2 ve tüm bildirimleri açma — 14 Eylül 2026
 
+16 Eylül gecikme incelemesi ve ortak hızlı bildirim güncellemesi:
+[ölçüm, değişiklikler ve tablet adımları](TELEGRAM_LATENCY_AUDIT_2026-09-16.md).
+
 G2, `fade_long_l1_up_d60_e2` adayının ileriye dönük araştırma bildirimidir.
 Sabit 87 Binance sözleşmesi içinde son 24 saatte en çok düşen ilk 10,
 en az %5 düşüş ve son 1 saatte en az %1 OI artışı aranır. Yalnız kapanmış
