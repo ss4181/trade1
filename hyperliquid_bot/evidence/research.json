@@ -1,0 +1,1369 @@
+{
+  "schema": "hl-research-report-v1",
+  "rules": {
+    "version": "hl-research-v1",
+    "btc_sma_fast": 50,
+    "btc_sma_slow": 200,
+    "swing_breakout_hours": 72,
+    "swing_volume_ratio": 1.5,
+    "swing_min_rs_24h": 0.01,
+    "swing_max_extension": 0.08,
+    "discovery_breakout_days": 30,
+    "discovery_volume_ratio": 1.8,
+    "discovery_min_rs_7d": 0.03,
+    "discovery_max_7d_return": 0.5,
+    "limit_offset_bps": 20,
+    "penetration_bps": 5,
+    "swing_stop_atr": 2,
+    "discovery_stop_atr": 2.5,
+    "reward_risk": 2,
+    "cooldown_swing_hours": 48,
+    "cooldown_discovery_days": 28
+  },
+  "rule_hash": "0e6e36400f17c95c",
+  "generated_at": "2026-09-17T20:42:10.559148+00:00",
+  "btc_hourly_regime": {
+    "OTHER": 4786,
+    "BULL": 213
+  },
+  "provenance": "Hyperliquid candles; optional historical Coinalyze OI labeled by venue",
+  "coverage": [
+    {
+      "market": "perp",
+      "coin": "BTC",
+      "display": "BTC",
+      "bars": 4999,
+      "first_ms": 1771678800000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "ETH",
+      "display": "ETH",
+      "bars": 4999,
+      "first_ms": 1771678800000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "ZEC",
+      "display": "ZEC",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "HYPE",
+      "display": "HYPE",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "SOL",
+      "display": "SOL",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "NEAR",
+      "display": "NEAR",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "UNI",
+      "display": "UNI",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "PONS",
+      "display": "PONS",
+      "bars": 425,
+      "first_ms": 1788145200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "XRP",
+      "display": "XRP",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "LIT",
+      "display": "LIT",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "PUMP",
+      "display": "PUMP",
+      "bars": 4999,
+      "first_ms": 1771678800000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "ARB",
+      "display": "ARB",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "CASHCAT",
+      "display": "CASHCAT",
+      "bars": 1648,
+      "first_ms": 1783742400000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "VVV",
+      "display": "VVV",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "ENA",
+      "display": "ENA",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "XMR",
+      "display": "XMR",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "kPEPE",
+      "display": "kPEPE",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "AAVE",
+      "display": "AAVE",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "USELESS",
+      "display": "USELESS",
+      "bars": 220,
+      "first_ms": 1788883200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "TAO",
+      "display": "TAO",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "XPL",
+      "display": "XPL",
+      "bars": 4999,
+      "first_ms": 1771678800000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "ONDO",
+      "display": "ONDO",
+      "bars": 4999,
+      "first_ms": 1771678800000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "CRV",
+      "display": "CRV",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "BNB",
+      "display": "BNB",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "SUI",
+      "display": "SUI",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "WLD",
+      "display": "WLD",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "DOGE",
+      "display": "DOGE",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "LINK",
+      "display": "LINK",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "FARTCOIN",
+      "display": "FARTCOIN",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "ETHFI",
+      "display": "ETHFI",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "CHIP",
+      "display": "CHIP",
+      "bars": 3570,
+      "first_ms": 1776823200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "LTC",
+      "display": "LTC",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "ADA",
+      "display": "ADA",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "ASTER",
+      "display": "ASTER",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "AVAX",
+      "display": "AVAX",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "JUP",
+      "display": "JUP",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "DASH",
+      "display": "DASH",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "AERO",
+      "display": "AERO",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "ZRO",
+      "display": "ZRO",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "PAXG",
+      "display": "PAXG",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "MON",
+      "display": "MON",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "TRUMP",
+      "display": "TRUMP",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "MORPHO",
+      "display": "MORPHO",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "PENDLE",
+      "display": "PENDLE",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "XLM",
+      "display": "XLM",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "INJ",
+      "display": "INJ",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "BCH",
+      "display": "BCH",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "DOT",
+      "display": "DOT",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "SPX",
+      "display": "SPX",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "FET",
+      "display": "FET",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "SKR",
+      "display": "SKR",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "CAKE",
+      "display": "CAKE",
+      "bars": 4999,
+      "first_ms": 1771678800000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "PENGU",
+      "display": "PENGU",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "SAGA",
+      "display": "SAGA",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "TRX",
+      "display": "TRX",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "RENDER",
+      "display": "RENDER",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "GRAM",
+      "display": "GRAM",
+      "bars": 1859,
+      "first_ms": 1782982800000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "TIA",
+      "display": "TIA",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "CC",
+      "display": "CC",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "ATOM",
+      "display": "ATOM",
+      "bars": 4999,
+      "first_ms": 1771678800000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "perp",
+      "coin": "kSHIB",
+      "display": "kSHIB",
+      "bars": 5000,
+      "first_ms": 1771675200000,
+      "last_ms": 1789675200000
+    },
+    {
+      "market": "spot",
+      "coin": "@107",
+      "display": "HYPE/USDC",
+      "bars": 657,
+      "first_ms": 1732838400000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@142",
+      "display": "UBTC/USDC",
+      "bars": 591,
+      "first_ms": 1738540800000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@272",
+      "display": "UZEC/USDC",
+      "bars": 192,
+      "first_ms": 1773014400000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@151",
+      "display": "UETH/USDC",
+      "bars": 540,
+      "first_ms": 1742947200000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@260",
+      "display": "XMR1/USDC",
+      "bars": 273,
+      "first_ms": 1766016000000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@156",
+      "display": "USOL/USDC",
+      "bars": 495,
+      "first_ms": 1746835200000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@700",
+      "display": "DRV/USDC",
+      "bars": 69,
+      "first_ms": 1783641600000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@188",
+      "display": "UPUMP/USDC",
+      "bars": 430,
+      "first_ms": 1752451200000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@334",
+      "display": "KNTQ/USDC",
+      "bars": 120,
+      "first_ms": 1779235200000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@719",
+      "display": "TREAD/USDC",
+      "bars": 1,
+      "first_ms": 1789516800000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "PURR/USDC",
+      "display": "PURR/USDC",
+      "bars": 884,
+      "first_ms": 1713225600000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@206",
+      "display": "UENA/USDC",
+      "bars": 297,
+      "first_ms": 1763942400000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@166",
+      "display": "USDT0/USDC",
+      "bars": 496,
+      "first_ms": 1746748800000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@182",
+      "display": "XAUT0/USDC",
+      "bars": 462,
+      "first_ms": 1749686400000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@243",
+      "display": "UMON/USDC",
+      "bars": 297,
+      "first_ms": 1763942400000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@256",
+      "display": "SEDA/USDC",
+      "bars": 289,
+      "first_ms": 1764633600000,
+      "last_ms": 1789603200000
+    },
+    {
+      "market": "spot",
+      "coin": "@707",
+      "display": "FLOCK/USDC",
+      "bars": 41,
+      "first_ms": 1786060800000,
+      "last_ms": 1789603200000
+    }
+  ],
+  "results": {
+    "HL-S_24h": {
+      "split_ms": 1783675200000,
+      "development": {
+        "n_signals": 0,
+        "n_measured": 0,
+        "statuses": {},
+        "mean_net_ex_funding_pct": null,
+        "median_net_ex_funding_pct": null,
+        "positive_pct": null,
+        "worst_pct": null,
+        "best_pct": null,
+        "distinct_coins": 0
+      },
+      "heldout": {
+        "n_signals": 7,
+        "n_measured": 2,
+        "statuses": {
+          "SL": 2,
+          "ALO_REJECTED_SCENARIO": 4,
+          "UNFILLED": 1
+        },
+        "mean_net_ex_funding_pct": -4.430216181862763,
+        "median_net_ex_funding_pct": -4.430216181862763,
+        "positive_pct": 0.0,
+        "worst_pct": -5.465056169907744,
+        "best_pct": -3.395376193817782,
+        "distinct_coins": 2
+      },
+      "external_oi_up_heldout": {
+        "n_signals": 1,
+        "n_measured": 0,
+        "statuses": {
+          "ALO_REJECTED_SCENARIO": 1
+        },
+        "mean_net_ex_funding_pct": null,
+        "median_net_ex_funding_pct": null,
+        "positive_pct": null,
+        "worst_pct": null,
+        "best_pct": null,
+        "distinct_coins": 0
+      },
+      "external_oi_available_heldout": 3,
+      "promotion": "NOT_VALIDATED",
+      "reason": "current_universe_selection_bias; hypothetical_limits; forward_validation_required"
+    },
+    "HL-S_48h": {
+      "split_ms": 1783675200000,
+      "development": {
+        "n_signals": 0,
+        "n_measured": 0,
+        "statuses": {},
+        "mean_net_ex_funding_pct": null,
+        "median_net_ex_funding_pct": null,
+        "positive_pct": null,
+        "worst_pct": null,
+        "best_pct": null,
+        "distinct_coins": 0
+      },
+      "heldout": {
+        "n_signals": 7,
+        "n_measured": 2,
+        "statuses": {
+          "SL": 2,
+          "ALO_REJECTED_SCENARIO": 4,
+          "UNFILLED": 1
+        },
+        "mean_net_ex_funding_pct": -4.430216181862763,
+        "median_net_ex_funding_pct": -4.430216181862763,
+        "positive_pct": 0.0,
+        "worst_pct": -5.465056169907744,
+        "best_pct": -3.395376193817782,
+        "distinct_coins": 2
+      },
+      "external_oi_up_heldout": {
+        "n_signals": 1,
+        "n_measured": 0,
+        "statuses": {
+          "ALO_REJECTED_SCENARIO": 1
+        },
+        "mean_net_ex_funding_pct": null,
+        "median_net_ex_funding_pct": null,
+        "positive_pct": null,
+        "worst_pct": null,
+        "best_pct": null,
+        "distinct_coins": 0
+      },
+      "external_oi_available_heldout": 3,
+      "promotion": "NOT_VALIDATED",
+      "reason": "current_universe_selection_bias; hypothetical_limits; forward_validation_required"
+    },
+    "HL-D_336h": {
+      "split_ms": 1764144000000,
+      "development": {
+        "n_signals": 8,
+        "n_measured": 1,
+        "statuses": {
+          "ALO_REJECTED_SCENARIO": 3,
+          "TP": 1,
+          "UNFILLED": 4
+        },
+        "mean_net_ex_funding_pct": 19.752957624714856,
+        "median_net_ex_funding_pct": 19.752957624714856,
+        "positive_pct": 100.0,
+        "worst_pct": 19.752957624714856,
+        "best_pct": 19.752957624714856,
+        "distinct_coins": 1
+      },
+      "heldout": {
+        "n_signals": 0,
+        "n_measured": 0,
+        "statuses": {},
+        "mean_net_ex_funding_pct": null,
+        "median_net_ex_funding_pct": null,
+        "positive_pct": null,
+        "worst_pct": null,
+        "best_pct": null,
+        "distinct_coins": 0
+      },
+      "external_oi_up_heldout": {
+        "n_signals": 0,
+        "n_measured": 0,
+        "statuses": {},
+        "mean_net_ex_funding_pct": null,
+        "median_net_ex_funding_pct": null,
+        "positive_pct": null,
+        "worst_pct": null,
+        "best_pct": null,
+        "distinct_coins": 0
+      },
+      "external_oi_available_heldout": 0,
+      "promotion": "NOT_VALIDATED",
+      "reason": "current_universe_selection_bias; hypothetical_limits; forward_validation_required"
+    },
+    "HL-D_672h": {
+      "split_ms": 1764144000000,
+      "development": {
+        "n_signals": 8,
+        "n_measured": 1,
+        "statuses": {
+          "ALO_REJECTED_SCENARIO": 3,
+          "TP": 1,
+          "UNFILLED": 4
+        },
+        "mean_net_ex_funding_pct": 19.752957624714856,
+        "median_net_ex_funding_pct": 19.752957624714856,
+        "positive_pct": 100.0,
+        "worst_pct": 19.752957624714856,
+        "best_pct": 19.752957624714856,
+        "distinct_coins": 1
+      },
+      "heldout": {
+        "n_signals": 0,
+        "n_measured": 0,
+        "statuses": {},
+        "mean_net_ex_funding_pct": null,
+        "median_net_ex_funding_pct": null,
+        "positive_pct": null,
+        "worst_pct": null,
+        "best_pct": null,
+        "distinct_coins": 0
+      },
+      "external_oi_up_heldout": {
+        "n_signals": 0,
+        "n_measured": 0,
+        "statuses": {},
+        "mean_net_ex_funding_pct": null,
+        "median_net_ex_funding_pct": null,
+        "positive_pct": null,
+        "worst_pct": null,
+        "best_pct": null,
+        "distinct_coins": 0
+      },
+      "external_oi_available_heldout": 0,
+      "promotion": "NOT_VALIDATED",
+      "reason": "current_universe_selection_bias; hypothetical_limits; forward_validation_required"
+    }
+  },
+  "trades": [
+    {
+      "status": "SL",
+      "net_return_pct": null,
+      "net_ex_funding_pct": -5.465056169907744,
+      "gross_return_pct": -5.3074445199417175,
+      "entry_ms": 1789138800000,
+      "exit_ms": 1789156800000,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "ambiguous_entry_bar": false,
+      "funding": "not_modeled",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "NEAR",
+      "display": "NEAR",
+      "signal_ms": 1789135200000,
+      "hours": 24,
+      "external_oi_change": 0.0007024078621842289,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "SL",
+      "net_return_pct": null,
+      "net_ex_funding_pct": -5.465056169907744,
+      "gross_return_pct": -5.3074445199417175,
+      "entry_ms": 1789138800000,
+      "exit_ms": 1789156800000,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "ambiguous_entry_bar": false,
+      "funding": "not_modeled",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "NEAR",
+      "display": "NEAR",
+      "signal_ms": 1789135200000,
+      "hours": 48,
+      "external_oi_change": 0.0007024078621842289,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1788962400000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "PUMP",
+      "display": "PUMP",
+      "signal_ms": 1788958800000,
+      "hours": 24,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1788962400000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "PUMP",
+      "display": "PUMP",
+      "signal_ms": 1788958800000,
+      "hours": 48,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1788940800000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "ETHFI",
+      "display": "ETHFI",
+      "signal_ms": 1788937200000,
+      "hours": 24,
+      "external_oi_change": 0.01857665526473129,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1788940800000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "ETHFI",
+      "display": "ETHFI",
+      "signal_ms": 1788937200000,
+      "hours": 48,
+      "external_oi_change": 0.01857665526473129,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1789362000000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "PENDLE",
+      "display": "PENDLE",
+      "signal_ms": 1789358400000,
+      "hours": 24,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1789362000000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "PENDLE",
+      "display": "PENDLE",
+      "signal_ms": 1789358400000,
+      "hours": 48,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "SL",
+      "net_return_pct": null,
+      "net_ex_funding_pct": -3.395376193817782,
+      "gross_return_pct": -3.2368327685636356,
+      "entry_ms": 1789412400000,
+      "exit_ms": 1789441200000,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "ambiguous_entry_bar": false,
+      "funding": "not_modeled",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "INJ",
+      "display": "INJ",
+      "signal_ms": 1789408800000,
+      "hours": 24,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "SL",
+      "net_return_pct": null,
+      "net_ex_funding_pct": -3.395376193817782,
+      "gross_return_pct": -3.2368327685636356,
+      "entry_ms": 1789412400000,
+      "exit_ms": 1789441200000,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "ambiguous_entry_bar": false,
+      "funding": "not_modeled",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "INJ",
+      "display": "INJ",
+      "signal_ms": 1789408800000,
+      "hours": 48,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "UNFILLED",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1789358400000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "CAKE",
+      "display": "CAKE",
+      "signal_ms": 1789354800000,
+      "hours": 24,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "UNFILLED",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1789358400000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "CAKE",
+      "display": "CAKE",
+      "signal_ms": 1789354800000,
+      "hours": 48,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1789196400000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "TRX",
+      "display": "TRX",
+      "signal_ms": 1789192800000,
+      "hours": 24,
+      "external_oi_change": 0.004097765234469364,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1789196400000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-S",
+      "market": "perp",
+      "coin": "TRX",
+      "display": "TRX",
+      "signal_ms": 1789192800000,
+      "hours": 48,
+      "external_oi_change": 0.004097765234469364,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1748044800000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@107",
+      "display": "HYPE/USDC",
+      "signal_ms": 1747958400000,
+      "hours": 336,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1748044800000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@107",
+      "display": "HYPE/USDC",
+      "signal_ms": 1747958400000,
+      "hours": 672,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1749686400000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@151",
+      "display": "UETH/USDC",
+      "signal_ms": 1749600000000,
+      "hours": 336,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1749686400000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@151",
+      "display": "UETH/USDC",
+      "signal_ms": 1749600000000,
+      "hours": 672,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "TP",
+      "net_return_pct": 19.752957624714856,
+      "net_ex_funding_pct": 19.752957624714856,
+      "gross_return_pct": 19.976941483753485,
+      "entry_ms": 1752278400000,
+      "exit_ms": 1752883200000,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "ambiguous_entry_bar": false,
+      "funding": "not_applicable",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@151",
+      "display": "UETH/USDC",
+      "signal_ms": 1752192000000,
+      "hours": 336,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "TP",
+      "net_return_pct": 19.752957624714856,
+      "net_ex_funding_pct": 19.752957624714856,
+      "gross_return_pct": 19.976941483753485,
+      "entry_ms": 1752278400000,
+      "exit_ms": 1752883200000,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "ambiguous_entry_bar": false,
+      "funding": "not_applicable",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@151",
+      "display": "UETH/USDC",
+      "signal_ms": 1752192000000,
+      "hours": 672,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1755216000000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@151",
+      "display": "UETH/USDC",
+      "signal_ms": 1755129600000,
+      "hours": 336,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "ALO_REJECTED_SCENARIO",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1755216000000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@151",
+      "display": "UETH/USDC",
+      "signal_ms": 1755129600000,
+      "hours": 672,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "UNFILLED",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1752796800000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@156",
+      "display": "USOL/USDC",
+      "signal_ms": 1752710400000,
+      "hours": 336,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "UNFILLED",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1752796800000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@156",
+      "display": "USOL/USDC",
+      "signal_ms": 1752710400000,
+      "hours": 672,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "UNFILLED",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1757721600000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@156",
+      "display": "USOL/USDC",
+      "signal_ms": 1757635200000,
+      "hours": 336,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "UNFILLED",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1757721600000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@156",
+      "display": "USOL/USDC",
+      "signal_ms": 1757635200000,
+      "hours": 672,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "UNFILLED",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1757721600000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@188",
+      "display": "UPUMP/USDC",
+      "signal_ms": 1757635200000,
+      "hours": 336,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "UNFILLED",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1757721600000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "@188",
+      "display": "UPUMP/USDC",
+      "signal_ms": 1757635200000,
+      "hours": 672,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "UNFILLED",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1730246400000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "PURR/USDC",
+      "display": "PURR/USDC",
+      "signal_ms": 1730160000000,
+      "hours": 336,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    },
+    {
+      "status": "UNFILLED",
+      "net_return_pct": null,
+      "net_ex_funding_pct": null,
+      "gross_return_pct": null,
+      "entry_ms": 1730246400000,
+      "exit_ms": null,
+      "fill": "hypothetical_penetration_not_actual_ALO_fill",
+      "strategy": "HL-D",
+      "market": "spot",
+      "coin": "PURR/USDC",
+      "display": "PURR/USDC",
+      "signal_ms": 1730160000000,
+      "hours": 672,
+      "external_oi_change": null,
+      "rule_hash": "0e6e36400f17c95c"
+    }
+  ],
+  "limitations": [
+    "No guaranteed return or next-meme prediction.",
+    "Current liquid universe is retrospective selection, not historical membership.",
+    "Historical spread/depth unavailable: replay cannot reproduce the live book gate.",
+    "Returns are per-signal unleveraged scenarios, not a portfolio equity curve.",
+    "OI availability time is bar close plus one bar; actual publication latency unknown.",
+    "External OI joins use exact ticker names, not verified token identities; exploratory context only.",
+    "Perp outcomes exclude historical funding; not full net PnL.",
+    "Limit penetration is a scenario; queue position and actual fills unknown.",
+    "No optimization; two horizons per strategy and OI sensitivity all disclosed."
+  ]
+}
