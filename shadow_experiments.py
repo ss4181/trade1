@@ -16,6 +16,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 BINANCE_DELIST_LIST = (
@@ -41,6 +42,7 @@ TITLE_RE = re.compile(
 DEADLINE_RE = re.compile(r"(20\d{2}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s*\(UTC\)")
 STATE_SCHEMA_VERSION = 1
 _archive_lock = threading.Lock()
+_state_lock = threading.Lock()
 
 
 def _utc_now() -> datetime:
@@ -235,6 +237,18 @@ def save_state(path: Path, state: dict) -> None:
     tmp.replace(path)
 
 
+def _save_strategy_state(path: Path, state: dict, keys: tuple[str, ...]) -> None:
+    """G1/DL1 may run concurrently; preserve the other strategy's newest state."""
+    with _state_lock:
+        latest = load_state(path)
+        latest.update({key: state[key] for key in keys})
+        save_state(path, latest)
+
+
+_G1_STATE_KEYS = ("s7_last_hour", "s7_prev_condition", "s7_last_fire")
+_DL1_STATE_KEYS = ("delist_last_poll", "seen_articles", "delist_events")
+
+
 def append_jsonl(archive_dir: Path, prefix: str, rows: list[dict],
                  now: datetime | None = None) -> None:
     if not rows:
@@ -315,9 +329,11 @@ def evaluate_g1_snapshot(klines: list, oi_rows: list, ls_rows: list,
 
 
 def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
-            now: datetime | None = None) -> list[dict]:
+            now: datetime | None = None, *, workers: int = 8,
+            on_signal: Callable | None = None, clock: Callable | None = None) -> list[dict]:
     """Tüm aktif USD-M perpleri sıralar, ilk 10'u ayrıntılı gölge tarar."""
-    now = now or _utc_now()
+    clock = clock or ((lambda: now) if now is not None else _utc_now)
+    now = now or clock()
     now_ms = int(now.timestamp() * 1000)
     hour_key = (now.replace(minute=0, second=0, microsecond=0) -
                 timedelta(hours=1)).isoformat()
@@ -342,8 +358,8 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
     ranked.sort(key=lambda item: (-item[0], item[1]))
     top = ranked[:G1_TOP_N]
 
-    snapshots, evaluated = [], {}
-    for rank, (ticker_change, symbol, ticker) in enumerate(top, 1):
+    def fetch_candidate(candidate):
+        rank, (ticker_change, symbol, ticker) = candidate
         try:
             klines = _response_json(futures_get("/fapi/v1/klines", {
                 "symbol": symbol, "interval": "1h", "limit": 26,
@@ -363,31 +379,40 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
             # içinde gecikmeli çalışırsa eski mum kapanışı "giriş fiyatı" gibi
             # görünmez. Ticker yoksa açıkça işaretli kapanış fallback'i kalır.
             metrics["observed_price"] = _float(ticker.get("lastPrice"))
-            evaluated[symbol] = metrics
-            snapshots.append({
+            snapshot = {
                 "schema_version": "shadow-market-v1", "kind": "G1_SNAPSHOT",
                 "source": "binance_public_usdm", "observed_at": _iso(now),
                 "universe": "all_active_usdm_perpetuals",
                 "active_universe_size": len(active), "symbol": symbol,
                 **metrics,
-            })
+            }
+            return symbol, metrics, snapshot, clock()
         except Exception as exc:
-            snapshots.append({
+            snapshot = {
                 "schema_version": "shadow-market-v1", "kind": "G1_SNAPSHOT",
                 "source": "binance_public_usdm", "observed_at": _iso(now),
                 "symbol": symbol, "rank": rank, "condition": None,
                 "unavailable_reason": f"{type(exc).__name__}: {str(exc)[:160]}",
-            })
-    append_jsonl(archive_dir, "shadow_market", snapshots, now)
-    if not evaluated:
-        return []
+            }
+            return symbol, None, snapshot, clock()
+
+    def ready_candidates():
+        with ThreadPoolExecutor(max_workers=max(1, min(8, int(workers))),
+                                thread_name_prefix="g1-read") as pool:
+            futures = [pool.submit(fetch_candidate, item)
+                       for item in enumerate(top, 1)]
+            for future in as_completed(futures):
+                yield future.result()
 
     previous = state.setdefault("s7_prev_condition", {})
     last_fire = state.setdefault("s7_last_fire", {})
-    current_true = {symbol for symbol, row in evaluated.items()
-                    if row["condition"]}
+    snapshots, evaluated = [], {}
     signals = []
-    for symbol, metrics in evaluated.items():
+    for symbol, metrics, snapshot, detected in ready_candidates():
+        snapshots.append(snapshot)
+        if metrics is None:
+            continue
+        evaluated[symbol] = metrics
         was_true = bool(previous.get(symbol))
         fire_ok = True
         if last_fire.get(symbol):
@@ -409,13 +434,16 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
             display_price = (observed_price if has_observed_price
                              else metrics["close"])
             delay_minutes = max(
-                0.0, (now_ms - (metrics["bar_close_ms"] + 1)) / 60_000)
+                0.0, (detected - measurement_entry).total_seconds() / 60)
             signal = {
                 "strategy": "G1", "symbol": symbol, "direction": "LONG",
                 "strength": "RESEARCH", "confidence": "GOZLEM",
                 "confidence_note": "Tarihsel train kapısı RED; ileri ölçüm",
                 "bar_time": _iso(bar_time), "price": display_price,
                 "observed_at": _iso(now),
+                "scan_started_at": now.isoformat(),
+                "detected_at": detected.isoformat(),
+                "signal_reference_at": measurement_entry.isoformat(),
                 "condition_bar_close_utc": _iso(condition_close),
                 "measurement_entry_time_utc": _iso(measurement_entry),
                 "condition_price": metrics["close"],
@@ -446,16 +474,24 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
             }
             signals.append(signal)
             last_fire[symbol] = _iso(now)
+            previous[symbol] = True
+            # Persist cooldown before early delivery; restarting must not replay it.
+            _save_strategy_state(state_path, state, _G1_STATE_KEYS)
+            append_jsonl(archive_dir, "shadow_events", [{
+                "schema_version": "shadow-event-v1", "kind": "G1_EVENT",
+                "recorded_at": detected.isoformat(), **signal}], detected)
+            if on_signal is not None:
+                on_signal(signal)
         previous[symbol] = bool(metrics["condition"])
+    append_jsonl(archive_dir, "shadow_market", snapshots, now)
+    if not evaluated:
+        return []
+    current_true = {symbol for symbol, row in evaluated.items() if row["condition"]}
     for symbol in list(previous):
         if symbol not in current_true and symbol not in evaluated:
             previous[symbol] = False
     state["s7_last_hour"] = hour_key
-    save_state(state_path, state)
-    append_jsonl(archive_dir, "shadow_events", [
-        {"schema_version": "shadow-event-v1", "kind": "G1_EVENT",
-         "recorded_at": _iso(now), **signal} for signal in signals
-    ], now)
+    _save_strategy_state(state_path, state, _G1_STATE_KEYS)
     return signals
 
 
@@ -677,7 +713,7 @@ def poll_dl1(http_get: Callable, spot_get: Callable, state_path: Path,
          "recorded_at": _iso(now), **signal} for signal in signals
     ], now)
     state["delist_last_poll"] = _iso(now)
-    save_state(state_path, state)
+    _save_strategy_state(state_path, state, _DL1_STATE_KEYS)
     return signals
 
 

@@ -53,11 +53,15 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
-TR_ZONE = ZoneInfo("Europe/Istanbul")
+try:
+    TR_ZONE = ZoneInfo("Europe/Istanbul")
+except ZoneInfoNotFoundError:
+    # Minimal Python/Termux installs may lack the IANA database.
+    TR_ZONE = timezone(timedelta(hours=3), "TRT")
 
 import archive_backup as archive_backup_module
 import strategy_engine as core_engine
@@ -295,6 +299,9 @@ DELIVERY_OUTBOX = DeliveryOutbox(Path(__file__).parent / ".notification_outbox.j
 _delivery_worker_lock = threading.Lock()
 _delivery_retry_worker: DeliveryRetryWorker | None = None
 _g2_worker: DeliveryRetryWorker | None = None
+_g1_worker: DeliveryRetryWorker | None = None
+_g1_worker_lock = threading.Lock()
+G1_WORKER_LAST_ERROR: str | None = None
 G2_WORKER_LAST_ERROR: str | None = None
 G2_LAST_SCAN_STARTED_AT: str | None = None
 G2_LAST_SCAN_FINISHED_AT: str | None = None
@@ -1028,7 +1035,39 @@ def _poll_g2_notifications(stop_event=None) -> None:
         print(f"uyari: G2 taramasi: {G2_WORKER_LAST_ERROR}", file=sys.stderr, flush=True)
 
 
-def run_shadow_experiments() -> int:
+def _poll_g1_notifications(stop_event=None) -> None:
+    """G1 owns its clock; neither core scans nor delist HTTP work can delay it."""
+    global G1_WORKER_LAST_ERROR
+    if (not SHADOW_EXPERIMENTS_ENABLED or "G1" in DISABLED_STRATEGIES
+            or (stop_event is not None and stop_event.is_set())
+            or time.time() % 3600 < SCAN_CLOSE_DELAY_SECONDS):
+        return
+    if not _g1_worker_lock.acquire(blocking=False):
+        return
+    try:
+        count = 0
+        def deliver(sig):
+            nonlocal count
+            sig["push_policy_enabled"] = SHADOW_PUSH_ENABLED
+            notify(sig, push=SHADOW_PUSH_ENABLED and count < SHADOW_MAX_PUSH_PER_RUN)
+            count += 1
+        # Keep the existing symbol-order cap when an intentionally small cap is set.
+        streaming = SHADOW_MAX_PUSH_PER_RUN >= 10
+        signals = scan_shadow_gainers(
+            _futures_get, SHADOW_STATE_FILE, ARCHIVE_DIR, workers=SCAN_WORKERS,
+            on_signal=deliver if streaming else None)
+        if not streaming:
+            for sig in sorted(signals, key=lambda s: s.get("symbol", "")):
+                deliver(sig)
+        G1_WORKER_LAST_ERROR = None
+    except Exception as exc:
+        G1_WORKER_LAST_ERROR = f"{type(exc).__name__}: {_redact(str(exc))}"[:500]
+        print(f"uyari: G1 taramasi: {G1_WORKER_LAST_ERROR}", file=sys.stderr, flush=True)
+    finally:
+        _g1_worker_lock.release()
+
+
+def run_shadow_experiments(*, include_g1: bool = True) -> int:
     """G1/DL1'i ana taramadan izole çalıştır; hata çekirdeği bozmasın."""
     global SHADOW_WORKER_LAST_ERROR
     if not SHADOW_EXPERIMENTS_ENABLED:
@@ -1040,6 +1079,8 @@ def run_shadow_experiments() -> int:
         ("DL1", lambda: poll_shadow_delists(requests.get, _spot_get, SHADOW_STATE_FILE, ARCHIVE_DIR,
                                            poll_minutes=SHADOW_DELIST_POLL_MINUTES)),
     ):
+        if name == "G1" and not include_g1:
+            continue
         started = datetime.now(timezone.utc).isoformat()
         try:
             signals = _stamp_signal_detection(scan(), started)
@@ -1072,7 +1113,7 @@ def _start_shadow_worker() -> bool:
     def work() -> None:
         global SHADOW_WORKER_ACTIVE, SHADOW_WORKER_LAST_ERROR
         try:
-            run_shadow_experiments()
+            run_shadow_experiments(include_g1=False)
         except Exception as e:
             SHADOW_WORKER_LAST_ERROR = f"{type(e).__name__}: {_redact(str(e))}"
             print(f"uyari: golge deney iscisinde hata: {SHADOW_WORKER_LAST_ERROR}",
@@ -2496,12 +2537,14 @@ def notification_delivery_status() -> dict:
               "retry_worker_alive": bool(worker and worker.thread.is_alive()),
               "scan_workers": SCAN_WORKERS,
               "scan_streaming_enabled": SCAN_STREAMING_ENABLED,
+              "g1_independent_worker_alive": bool(_g1_worker and _g1_worker.thread.is_alive()),
+              "g1_last_error": G1_WORKER_LAST_ERROR,
               "g2_independent_worker_alive": bool(_g2_worker and _g2_worker.thread.is_alive()),
               "g2_last_error": G2_WORKER_LAST_ERROR,
               "g2_last_scan_started_at": G2_LAST_SCAN_STARTED_AT,
               "g2_last_scan_finished_at": G2_LAST_SCAN_FINISHED_AT}
     try:
-        report.update(DELIVERY_OUTBOX.diagnostics())
+        report.update(DELIVERY_OUTBOX.diagnostics(since=STARTED_AT))
     except (OSError, ValueError, TypeError):
         report["error"] = "delivery_state_unreadable"
     return report
@@ -3628,11 +3671,11 @@ def _scan_all_streaming(state: ScanState) -> int:
 def _stamp_signal_detection(signals: list[dict], scan_started_at: str) -> list[dict]:
     detected_at = datetime.now(timezone.utc).isoformat()
     for sig in signals:
-        sig["detected_at"] = detected_at
-        sig["scan_started_at"] = scan_started_at
+        sig.setdefault("detected_at", detected_at)
+        sig.setdefault("scan_started_at", scan_started_at)
         strategy = sig.get("strategy")
         if strategy == "G1" and sig.get("condition_bar_close_utc"):
-            sig["signal_reference_at"] = sig["condition_bar_close_utc"]
+            sig.setdefault("signal_reference_at", sig["condition_bar_close_utc"])
         # bar_time is the OPEN time for 1h signals, but settlement time for S2.
         if strategy in ("S1", "S1+S4", "S3", "S5", "S6", "S2"):
             try:
@@ -4099,7 +4142,7 @@ def _release_instance_file_lock(handle) -> None:
 
 def run_forever(once: bool = False, state: ScanState | None = None) -> None:
     """Tek lider garantili tarama giris noktasi."""
-    global INSTANCE_LOCK_HELD, LAST_LOOP_ERROR, _delivery_retry_worker, _g2_worker
+    global INSTANCE_LOCK_HELD, LAST_LOOP_ERROR, _delivery_retry_worker, _g2_worker, _g1_worker
     if not _run_guard.acquire(blocking=False):
         LAST_LOOP_ERROR = "bu proseste baska bir tarama dongusu zaten calisiyor"
         raise RuntimeError(LAST_LOOP_ERROR)
@@ -4125,12 +4168,19 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             _g2_worker = DeliveryRetryWorker(_poll_g2_notifications)
             _g2_worker.thread.name = "g2-hourly"
             _g2_worker.start()
+        if not once and SHADOW_EXPERIMENTS_ENABLED:
+            _g1_worker = DeliveryRetryWorker(_poll_g1_notifications)
+            _g1_worker.thread.name = "g1-hourly"
+            _g1_worker.start()
         _run_forever_locked(once=once, state=state)
     except Exception as e:
         if not LAST_LOOP_ERROR:
             LAST_LOOP_ERROR = f"{type(e).__name__}: {e}"
         raise
     finally:
+        if _g1_worker is not None:
+            _g1_worker.stop()
+            _g1_worker = None
         if _g2_worker is not None:
             _g2_worker.stop()
             _g2_worker = None
@@ -5756,13 +5806,14 @@ def _format_status_for_telegram() -> str:
     latency = delivery.get("latest_ack_latency_seconds") or {}
     elapsed = latency.get("reference_to_ack")
     delivery_note = f"{elapsed:g} sn" if elapsed is not None else "henüz ölçülmedi"
+    last_scan = _display_tr_time(LAST_SCAN_AT) if LAST_SCAN_AT else "(henüz yok)"
     return (
         "ℹ️ <b>BOT DURUMU</b>\n"
         "<i>Çalışma, bildirim ve araştırma özeti</i>\n\n"
         "📡 <b>Tarama</b>\n"
         f"• Evren: {len(SYMBOLS)} sembol · {mode}\n"
         f"• Tamamlanan tur: {SCANS_COMPLETED}\n"
-        f"• Son tarama: {_html.escape(str(LAST_SCAN_AT or '(henüz yok)'))}\n"
+        f"• Son tarama: {_html.escape(last_scan)}\n"
         f"• Son tarama hatası: {LAST_SCAN_ERRORS}\n\n"
         f"• Kapanış payı: {SCAN_CLOSE_DELAY_SECONDS} sn · tekrar kontrolü: 5 sn\n"
         f"• Bekleyen bildirim: {delivery.get('pending_events', 'bilinmiyor')}\n"

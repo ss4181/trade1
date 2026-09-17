@@ -77,6 +77,7 @@ class NotificationLatencyTests(unittest.TestCase):
         with patch.object(delivery, "utcnow", return_value=self.now + timedelta(seconds=37)):
             result = self.box.deliver("private-event", lambda *_: True, self.now + timedelta(seconds=35))
         self.assertEqual(result["delivery_latency_seconds"], {
+            "reference_to_scan": None, "scan_to_detect": None,
             "reference_to_detect": 20, "detect_to_queue": 15,
             "queue_to_ack": 2, "reference_to_ack": 37})
         before = self.path.read_bytes()
@@ -86,6 +87,29 @@ class NotificationLatencyTests(unittest.TestCase):
         self.assertNotIn("PRIVATE", json.dumps(report))
         self.assertNotIn("private-event", json.dumps(report))
         self.assertEqual(report['latency_seconds_by_strategy']['UNKNOWN']['reference_to_ack']['under_30_seconds'],0)
+
+    def test_since_excludes_old_latencies_but_keeps_global_pending_count(self):
+        self.box.enqueue({"event_id": "old"}, ["a"], self.now - timedelta(hours=1))
+        self.box.enqueue({"event_id": "new", "strategy": "G1",
+                          "signal_reference_at": self.now.isoformat(),
+                          "scan_started_at": (self.now + timedelta(seconds=300)).isoformat(),
+                          "detected_at": (self.now + timedelta(seconds=482)).isoformat()},
+                         ["a"], self.now + timedelta(seconds=482))
+        with patch.object(delivery, "utcnow", return_value=self.now + timedelta(seconds=483)):
+            self.box.deliver("new", lambda *_: True)
+        before = self.path.read_bytes()
+        report = self.box.diagnostics(since=self.now.isoformat())
+        self.assertEqual(report["sample_events"], 1)
+        self.assertEqual(report["pending_events"], 1)
+        self.assertEqual(report["latest_ack_strategy"], "G1")
+        self.assertEqual(report["latest_ack_latency_seconds"]["reference_to_scan"], 300)
+        self.assertEqual(report["latest_ack_latency_seconds"]["scan_to_detect"], 182)
+        empty = self.box.diagnostics(since=(self.now + timedelta(hours=1)).isoformat())
+        self.assertEqual(empty["sample_events"], 0)
+        self.assertIsNone(empty["latest_ack_at"])
+        self.assertEqual(self.path.read_bytes(), before)
+        with self.assertRaises(ValueError):
+            self.box.diagnostics(since="2026-09-17T10:00:00")
 
     def test_unknown_or_reversed_timestamps_do_not_fabricate_zero_latency(self):
         item = {"created_at": self.now.isoformat(), "first_delivered_at": (self.now - timedelta(seconds=1)).isoformat()}
@@ -127,6 +151,7 @@ class NotificationLatencyTests(unittest.TestCase):
             stack.enter_context(patch.object(bot, "_acquire_instance_file_lock", return_value=object()))
             stack.enter_context(patch.object(bot, "_release_instance_file_lock", side_effect=released))
             stack.enter_context(patch.object(bot, "_run_forever_locked", side_effect=scanning))
+            stack.enter_context(patch.object(bot, "_poll_g1_notifications"))
             stack.enter_context(patch.object(bot, "_telegram_signal_text", return_value="synthetic"))
             sender = stack.enter_context(patch.object(bot, "_telegram_send_text", side_effect=lambda *a, **k: arrived.set() or True))
             stack.enter_context(patch.object(bot, "_backfill_price_targets_from_signal_log"))

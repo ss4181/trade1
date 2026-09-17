@@ -78,11 +78,14 @@ def delivery_latency(item: dict) -> dict:
     """
     record = item.get("record") or {}
     stamps = {"reference": record.get("signal_reference_at"),
+              "scan": record.get("scan_started_at"),
               "detected": record.get("detected_at"),
               "queued": item.get("created_at"),
               "ack": item.get("first_delivered_at")}
     result = {}
     for name, start, end in (
+            ("reference_to_scan", "reference", "scan"),
+            ("scan_to_detect", "scan", "detected"),
             ("reference_to_detect", "reference", "detected"),
             ("detect_to_queue", "detected", "queued"),
             ("queue_to_ack", "queued", "ack"),
@@ -177,22 +180,26 @@ class DeliveryOutbox:
                                 > timedelta(minutes=self.ttl_minutes))
                            for cid, r in item["recipients"].items())]
 
-    def diagnostics(self, limit=20, now=None):
+    def diagnostics(self, limit=20, now=None, since=None):
         """Read-only aggregate; never expose records, recipients, tokens or paths."""
         now = now or utcnow()
+        cutoff = _aware_time(since) if since is not None else None
         with self.lock:
             items = list(self._load().values())
             pending = [item for item in items if any(
                 r["status"] in ("pending", "sending") for r in item["recipients"].values())]
-            samples = sorted(items, key=lambda item: _aware_time(item["created_at"]))[-limit:]
+            eligible = [item for item in items if cutoff is None
+                        or _aware_time(item["created_at"]) >= cutoff]
+            samples = sorted(eligible, key=lambda item: _aware_time(item["created_at"]))[-limit:]
             timings = [delivery_latency(item) for item in samples]
             stages = {}
-            for name in ("reference_to_detect", "detect_to_queue", "queue_to_ack", "reference_to_ack"):
+            for name in ("reference_to_scan", "scan_to_detect", "reference_to_detect",
+                         "detect_to_queue", "queue_to_ack", "reference_to_ack"):
                 values = [timing[name] for timing in timings if timing[name] is not None]
                 stages[name] = {"n": len(values),
                                 "median": round(statistics.median(values), 3) if values else None,
                                 "max": max(values) if values else None}
-            latest = max((item for item in items if item.get("first_delivered_at")),
+            latest = max((item for item in eligible if item.get("first_delivered_at")),
                          key=lambda item: _aware_time(item["first_delivered_at"]), default=None)
             def strategy(item):
                 name = (item.get("record") or {}).get("strategy")
@@ -210,6 +217,9 @@ class DeliveryOutbox:
                         "under_30_seconds": sum(v < 30 for v in values),
                     }
             return {"pending_events": len(pending), "sample_events": len(samples),
+                    "sample_since": cutoff.isoformat() if cutoff else None,
+                    "sample_first_queued_at": samples[0]["created_at"] if samples else None,
+                    "sample_last_queued_at": samples[-1]["created_at"] if samples else None,
                     "oldest_pending_age_seconds": max((max(0, (now - _aware_time(
                         item["created_at"])).total_seconds()) for item in pending), default=None),
                     "latency_seconds": stages,
@@ -276,10 +286,11 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Read-only Telegram latency diagnostics; no network.")
     parser.add_argument("--status", action="store_true", required=True)
+    parser.add_argument("--since", help="Only events queued since this ISO time (include +03:00 or Z).")
     parser.add_argument("--outbox", type=Path, default=Path(__file__).parent / ".notification_outbox.json")
     args = parser.parse_args()
     try:
-        print(json.dumps(DeliveryOutbox(args.outbox).diagnostics(), indent=2))
+        print(json.dumps(DeliveryOutbox(args.outbox).diagnostics(since=args.since), indent=2))
     except (OSError, ValueError, TypeError):
         print(json.dumps({"error": "delivery_state_unreadable"}))
         raise SystemExit(1)

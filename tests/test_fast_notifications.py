@@ -122,6 +122,7 @@ class FastNotificationTests(unittest.TestCase):
             for name,value in {'G2_ENABLED':True,'SHADOW_EXPERIMENTS_ENABLED':True,'ENABLE_TELEGRAM':False}.items():
                 stack.enter_context(patch.object(bot,name,value))
             stack.enter_context(patch.object(bot,'_poll_g2_notifications',side_effect=lambda *_:arrived.set()))
+            stack.enter_context(patch.object(bot,'_poll_g1_notifications'))
             stack.enter_context(patch.object(bot,'_run_forever_locked',side_effect=main))
             stack.enter_context(patch.object(bot,'_acquire_instance_file_lock',return_value=object()))
             stack.enter_context(patch.object(bot,'_release_instance_file_lock',side_effect=released))
