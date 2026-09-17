@@ -53,8 +53,11 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
+
+TR_ZONE = ZoneInfo("Europe/Istanbul")
 
 import archive_backup as archive_backup_module
 import strategy_engine as core_engine
@@ -99,6 +102,22 @@ def _load_env(path: str = ".env") -> None:
             continue
         k, _, v = line.partition("=")
         os.environ.setdefault(k.strip(), v.strip())
+
+
+def _display_tr_time(value, *, seconds: bool = True) -> str:
+    """UTC kaydını yalnız kullanıcı arayüzünde Türkiye saatine çevir."""
+    try:
+        raw = str(value).strip()
+        if raw.upper().endswith(" UTC"):
+            raw = raw[:-4].strip() + "+00:00"
+        raw = raw.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        fmt = "%Y-%m-%d %H:%M:%S TRT" if seconds else "%Y-%m-%d %H:%M TRT"
+        return parsed.astimezone(TR_ZONE).strftime(fmt)
+    except (TypeError, ValueError, OverflowError):
+        return str(value or "—")
 
 
 _load_env()
@@ -2049,11 +2068,11 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
                      f"{float(sig['notification_delay_minutes']):.1f} dakika"))
     if sig.get("strategy") == "G1" and sig.get("measurement_entry_time_utc"):
         rows.append(("Ölçüm girişi",
-                     f"sonraki 1s açılışı · {sig['measurement_entry_time_utc']}"))
+                     f"sonraki 1s açılışı · {_display_tr_time(sig['measurement_entry_time_utc'])}"))
     if sig.get("announcement_at"):
-        rows.append(("Resmî duyuru", str(sig["announcement_at"])))
+        rows.append(("Resmî duyuru", _display_tr_time(sig["announcement_at"])))
     if sig.get("delist_at"):
-        rows.append(("Binance spot durdurma", str(sig["delist_at"])))
+        rows.append(("Binance spot durdurma", _display_tr_time(sig["delist_at"])))
     if "bybit_perp_available" in sig:
         rows.append(("Bybit linear perp", "VAR" if sig["bybit_perp_available"]
                      else "YOK"))
@@ -2294,9 +2313,58 @@ def _telegram_evidence_lines(sig: dict) -> list[str]:
     return lines
 
 
+def _telegram_g1_signal_text(sig: dict) -> str:
+    """G1 için kısa, tek bakışta okunabilen araştırma bildirimi."""
+    profile = sig.get("price_target")
+    profile = profile if isinstance(profile, dict) else {}
+    targets = profile.get("targets") or []
+    target_text = " · ".join(
+        f"TP{float(t['level_pct']):g} {_fmt_price(t.get('price'))}"
+        for t in targets
+    ) or "henüz oluşturulmadı"
+    score = sig.get("last_five_scorecard")
+    if isinstance(score, dict) and "target_pct" not in score:
+        score = {**score, "target_pct": USER_SUCCESS_TARGET_PCT}
+    scorecard = notification_scorecard.format_html(score)
+    hours = sig.get("horizon_hours", 4)
+    lines = [
+        f"🔔 <b>G1 — {_html.escape(str(sig.get('symbol') or '?'))} "
+        f"{_html.escape(str(sig.get('direction') or ''))}</b> 🔬",
+        f"💰 <b>Tarama anı fiyatı:</b> {_fmt_price(sig.get('price'))}",
+        f"🎯 <b>Kişisel fiyat takibi:</b> {target_text}",
+        f"⏱️ <b>Beklenen ufuk:</b> ~{hours:g} saat" if isinstance(hours, (int, float))
+        else f"⏱️ <b>Beklenen ufuk:</b> ~{_html.escape(str(hours))} saat",
+        scorecard,
+    ]
+    wanted = {
+        "24s yükselen sırası", "Kapanmış mum 24s getirisi",
+        "1s hacim / önceki 24s medyan", "Open interest 1s",
+        "Global hesap long/short", "Short hesap payi",
+        "Koşul mumu kapanışı", "Bildirim gecikmesi", "Ölçüm girişi",
+    }
+    for label, value in _signal_detail_rows(sig):
+        if label in wanted:
+            lines.append(f"{_TELEGRAM_DETAIL_ICONS.get(label, '•')} "
+                         f"<b>{_html.escape(label)}:</b> {_html.escape(str(value))}")
+    lines += ["", f"💡 <b>Neden geldi?</b> {_html.escape(_telegram_reason(sig))}"]
+    try:
+        live = price_target_summary().get("G1", {}).get(
+            _target_level_key(USER_SUCCESS_TARGET_PCT), {})
+        if live.get("resolved"):
+            small = " · küçük N" if live.get("sample_warning") else ""
+            lines.append(
+                f"📡 <b>Toplu hedef arşivi TP{USER_SUCCESS_TARGET_PCT:g}:</b> "
+                f"%{live['hit_rate_pct']:g} ({live['hit']}/{live['resolved']}{small})")
+    except Exception:
+        pass
+    return "\n".join(lines)
+
+
 def _telegram_signal_text(sig: dict) -> str:
     """Okunabilir, bolumlu ve Telegram HTML sinirina uygun sinyal metni."""
     strategy = str(sig.get("strategy") or "?")
+    if strategy == "G1":
+        return _telegram_g1_signal_text(sig)
     direction = str(sig.get("direction") or "")
     conf = str(sig.get("confidence") or signal_confidence(strategy)[0])
     if strategy == "S2":
@@ -2320,16 +2388,11 @@ def _telegram_signal_text(sig: dict) -> str:
         f"{_html.escape(str(sig.get('performance_market') or ('um_perp' if strategy == 'S2' else 'spot')))}",
         f"🧭 <b>Evren:</b> {_html.escape(str(sig.get('universe') or 'UNKNOWN'))}",
     ]
-    quote = sig.get("notification_quote")
     if strategy == "G2":
-        lines += [f"📅 <b>Planlanan referans giriş:</b> {_html.escape(str(sig.get('planned_entry_at') or '—'))}",
+        lines += [f"📅 <b>Planlanan referans giriş:</b> {_html.escape(_display_tr_time(sig.get('planned_entry_at')))}",
                   "🎯 <b>Plan:</b> TP %3 · SL %2 · azami 24 saat · coin başına 24 saat bekleme",
                   "🏦 <b>İşlem tercihi:</b> Hyperliquid Limit / Post Only (ALO); bot emir açmaz."]
     lines += ["", notification_scorecard.format_html(sig.get("last_five_scorecard"))]
-    if quote:
-        quote_age = max(0, time.time() - quote["observed_at_epoch"])
-        lines.append(f"📍 <b>Son ticker:</b> {_fmt_price(quote['price'])} "
-                     f"(yaş {quote_age:.0f} sn; giriş garantisi değil)")
     for label, value in _signal_detail_rows(sig):
         icon = _TELEGRAM_DETAIL_ICONS.get(label, "•")
         lines.append(f"{icon} <b>{_html.escape(label)}:</b> "
@@ -2350,8 +2413,8 @@ def _telegram_signal_text(sig: dict) -> str:
             + ("(sinyaldeki perp fiyat referansı)" if strategy == "S2"
              else "(sinyal mumu kapanışı)"),
             f"• Zaman çıkışı: <b>~{ref.get('time_exit_hours', '?')} saat</b>"
-            + (f" · son { _html.escape(str(ref['exit_by']))}"
-               if ref.get("exit_by") else ""),
+             + (f" · son {_html.escape(_display_tr_time(ref['exit_by']))}"
+                if ref.get("exit_by") else ""),
             f"• Kötü %10 / medyan / iyi %10: "
             f"{_fmt_price(ref.get('q10_price'))} / "
             f"{_fmt_price(ref.get('median_price'))} / "
@@ -2365,7 +2428,7 @@ def _telegram_signal_text(sig: dict) -> str:
             for t in targets)
         lines += ["", f"🎯 <b>Kişisel fiyat takibi:</b> {target_text}"]
     try:
-        stamp = _target_dt(sig.get("bar_time")).strftime("%Y-%m-%d %H:%M UTC")
+        stamp = _display_tr_time(_target_dt(sig.get("bar_time")).isoformat(), seconds=False)
     except (TypeError, ValueError):
         stamp = str(sig.get("bar_time") or "—")
     lines += [
@@ -2375,8 +2438,8 @@ def _telegram_signal_text(sig: dict) -> str:
     ]
     if sig.get("signal_reference_at") and sig.get("detected_at"):
         try:
-            reference = _target_dt(sig["signal_reference_at"]).strftime("%Y-%m-%d %H:%M:%S UTC")
-            detected = _target_dt(sig["detected_at"]).strftime("%H:%M:%S UTC")
+            reference = _display_tr_time(_target_dt(sig["signal_reference_at"]).isoformat())
+            detected = _display_tr_time(_target_dt(sig["detected_at"]).isoformat())
             label = "Funding zamanı" if strategy == "S2" else "Mum kapanışı"
             lines.append(f"⏱️ <i>{label}: {reference} · Tespit: {detected}</i>")
         except (TypeError, ValueError):

@@ -308,6 +308,8 @@ def test_readable_telegram_signal_text():
     assert "💰 <b>Tarama anı fiyatı:</b>" in g1_text
     assert "Koşul mumu kapanışı" in g1_text
     assert "Ölçüm girişi" in g1_text
+    assert "2026-09-01 15:00:00 TRT" in g1_text
+    assert "Son ticker" not in g1_text
     ok("okunabilir Telegram sinyal sablonu")
 
 
