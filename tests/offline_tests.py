@@ -290,13 +290,15 @@ def test_readable_telegram_signal_text():
         ]},
     }
     text = bot._telegram_signal_text(sig)
-    for required in ("S2 — TESTUSDT LONG", "ARAŞTIRMA · Güven: DÜŞÜK",
+    for required in ("S2 — TESTUSDT LONG", "🧪",
                      "💰 <b>Fiyat:</b>", "💡 <b>Neden geldi?</b>",
-                     "📚 Kanıt ve risk", "Dondurulmuş test",
-                     "24 aylık hedef dokunması", "Aynı ufukta ters dokunma",
-                     "📌 Mekanik referanslar", "Kişisel fiyat takibi",
-                     "kaldıraçlı ROI değildir"):
+                     "Funding %", "Funding aralığı", "Kişisel fiyat takibi",
+                     "Son 5 bildirim", "2026-09-01 14:00 TRT"):
         assert required in text, required
+    for removed in ("Kanıt ve risk", "Dondurulmuş test", "Mekanik referanslar",
+                    "Evren / config", "Motor:", "Son ticker"):
+        assert removed not in text, removed
+    assert text.index("Kişisel fiyat takibi") < text.index("Beklenen ufuk")
     assert len(text) < 4000, len(text)
     g1_text = bot._telegram_signal_text({
         "strategy": "G1", "symbol": "AAAUSDT", "direction": "LONG",
@@ -377,7 +379,7 @@ def test_disabled_strategies_and_header():
     bot.DISABLED_STRATEGIES = set()
     sigs2 = bot.scan_symbol("XUSDT", st, snapshot=True)
     assert any(s["strategy"] == "S2" for s in sigs2), "acikken S2 uretilmeli"
-    # telegram basliginda guven kademesi gorunmeli
+    # Compact Telegram title keeps the strategy, symbol and direction.
     captured = {}
 
     class FR:
@@ -395,8 +397,9 @@ def test_disabled_strategies_and_header():
                                "confidence": "YUKSEK", "price": 1,
                                "bar_time": "t", "note": "n",
                                "horizon_hours": 24})
-    assert "SİNYAL · Güven: YÜKSEK" in captured["text"]
-    ok("strateji kapatma anahtari + baslikta guven")
+    assert "<b>S1 — BTCUSDT LONG</b>" in captured["text"]
+    assert "Güven:" not in captured["text"]
+    ok("strateji kapatma anahtari + sade baslik")
 
 
 def test_market_archiver(tmpdir):
