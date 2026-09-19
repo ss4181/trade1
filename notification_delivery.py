@@ -168,6 +168,20 @@ class DeliveryOutbox:
                     for item in self._load().values()
                     if item.get("first_delivered_at")]
 
+    def all_records(self):
+        """Return every queued event with public delivery state.
+
+        Reporting consumers need to distinguish delivered, pending and failed
+        notifications.  ``confirmed_records`` intentionally omits the latter
+        two, which made a crash between enqueue and ``signals.log`` append
+        invisible on the dashboard.  Only the sanitized public delivery
+        fields are merged; recipient IDs and retry internals never leave the
+        outbox.
+        """
+        with self.lock:
+            return [{**item["record"], **public_delivery(item)}
+                    for item in self._load().values()]
+
     def pending_ids(self, due_only=False, now=None):
         now = now or utcnow()
         with self.lock:

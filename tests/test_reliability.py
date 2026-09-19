@@ -64,6 +64,29 @@ class ReliabilityTests(unittest.TestCase):
         result = box.deliver("e", lambda *a: self.fail("late send"), self.now+timedelta(minutes=16))
         self.assertEqual(result["delivery_status"], "failed")
 
+    def test_outbox_all_records_includes_pending_without_recipient_ids(self):
+        box = DeliveryOutbox(self.root / "outbox.json")
+        box.enqueue({"event_id": "pending", "strategy": "G1"}, ["private"], self.now)
+        records = box.all_records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["delivery_status"], "pending")
+        self.assertNotIn("recipients", records[0])
+
+    def test_reporting_merges_outbox_only_event_and_counts_activity(self):
+        box = DeliveryOutbox(self.root / "outbox.json")
+        stamp = self.now.replace(minute=0).isoformat()
+        record = {"event_id": "outbox-only", "strategy": "G2", "symbol": "BTCUSDT",
+                  "direction": "LONG", "bar_time": stamp, "horizon_hours": 24,
+                  "price": 100.0, "push_allowed": True, "suppressed": False}
+        box.enqueue(record, ["private"], self.now)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(bot, "SIGNAL_LOG", str(self.root / "missing.log")))
+            stack.enter_context(patch.object(bot, "DELIVERY_OUTBOX", box))
+            merged = bot._reporting_signal_records()
+            activity = bot._notification_activity(merged)
+        self.assertEqual(merged[0]["event_id"], "outbox-only")
+        self.assertEqual(activity["by_strategy"]["G2"]["pending"], 1)
+
     def test_failed_notify_is_not_backfilled_or_shown_as_sent(self):
         sig = {"strategy": "S1", "symbol": "BTCUSDT", "direction": "LONG",
                "strength": "NORMAL", "bar_time": datetime.now(timezone.utc).replace(

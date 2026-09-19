@@ -4051,20 +4051,20 @@ def _maybe_daily_summary() -> None:
     by_strat: dict[str, int] = {}
     push_by_strat: dict[str, int] = {}
     silent_by_strat: dict[str, int] = {}
-    with _recent_lock:
-        for s in RECENT_SIGNALS:
-            try:
-                notified_at = _target_dt(s.get("notified_at"))
-                if notified_at < cutoff:
-                    continue
-                strategy = str(s.get("strategy") or "?")
-                by_strat[strategy] = by_strat.get(strategy, 0) + 1
-                delivered = bool(s.get("push_allowed")) and not bool(
-                    s.get("suppressed"))
-                bucket = push_by_strat if delivered else silent_by_strat
-                bucket[strategy] = bucket.get(strategy, 0) + 1
-            except (TypeError, ValueError, OverflowError):
+    for s in _reporting_signal_records():
+        try:
+            notified_at = _target_dt(s.get("notified_at") or s.get("queued_at"))
+            if notified_at < cutoff:
                 continue
+            strategy = str(s.get("strategy") or "?")
+            by_strat[strategy] = by_strat.get(strategy, 0) + 1
+            delivered = (not bool(s.get("suppressed")) and
+                         (s.get("delivery_confirmed") is True or
+                          s.get("delivery_status") in ("delivered", "partial")))
+            bucket = push_by_strat if delivered else silent_by_strat
+            bucket[strategy] = bucket.get(strategy, 0) + 1
+        except (TypeError, ValueError, OverflowError):
+            continue
     perf: dict = {}
     try:
         perf = realized_performance(max_signals=30, fetch_missing=False) or {}
@@ -4454,6 +4454,105 @@ def _live_cohort_key(sig: dict) -> tuple[str, str, str, str, str]:
             str(sig.get("config_version") or "legacy"), str(market))
 
 
+def _reporting_signal_records() -> list[dict]:
+    """Load the unified signal ledger used by reports and the dashboard.
+
+    ``signals.log`` is the durable strategy ledger.  The notification outbox
+    is the durable delivery ledger and can contain an event for a short period
+    before the log append (or permanently when the append fails).  Merge them
+    by event id so every strategy and every notification remains visible while
+    the outbox stays authoritative for delivery fields.
+    """
+    path = Path(__file__).parent / SIGNAL_LOG
+    records: dict[str, dict] = {}
+    order: list[str] = []
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    except OSError:
+        raw_lines = []
+    for line in raw_lines:
+        try:
+            record = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        try:
+            event_id = _signal_event_id(record)
+        except (TypeError, ValueError, KeyError):
+            continue
+        record = dict(record)
+        record["event_id"] = event_id
+        if event_id not in records:
+            order.append(event_id)
+        records[event_id] = record
+    try:
+        outbox_records = (DELIVERY_OUTBOX.all_records()
+                          if hasattr(DELIVERY_OUTBOX, "all_records")
+                          else DELIVERY_OUTBOX.confirmed_records())
+    except (OSError, ValueError, TypeError):
+        outbox_records = []
+    delivery_keys = ("delivery_confirmed", "delivery_status", "delivered_at",
+                     "queued_at", "delivery_sent_count",
+                     "delivery_pending_count", "delivery_failed_count",
+                     "delivery_latency_seconds")
+    for item in outbox_records:
+        if not isinstance(item, dict):
+            continue
+        try:
+            event_id = _signal_event_id(item)
+        except (TypeError, ValueError, KeyError):
+            continue
+        if event_id not in records:
+            order.append(event_id)
+            records[event_id] = dict(item)
+            records[event_id]["event_id"] = event_id
+            continue
+        # Keep strategy fields from signals.log, but always refresh delivery
+        # state from the outbox because retries can complete after the append.
+        for key in delivery_keys:
+            if key in item:
+                records[event_id][key] = item[key]
+    return [records[event_id] for event_id in order]
+
+
+def _notification_activity(records: list[dict] | None = None) -> dict:
+    """Summarize signal and Telegram activity without mixing in PnL."""
+    records = _reporting_signal_records() if records is None else records
+    by_strategy: dict[str, dict] = {}
+    totals = {"events": 0, "notifications": 0, "silent": 0,
+              "pending": 0, "failed": 0, "unconfirmed": 0}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        strategy = str(record.get("strategy") or "UNKNOWN")
+        if strategy.startswith("TEST"):
+            continue
+        item = by_strategy.setdefault(strategy, {
+            "events": 0, "notifications": 0, "silent": 0,
+            "pending": 0, "failed": 0, "unconfirmed": 0})
+        item["events"] += 1
+        totals["events"] += 1
+        if record.get("suppressed") or record.get("push_allowed") is False:
+            bucket = "silent"
+        else:
+            status = str(record.get("delivery_status") or "unknown")
+            confirmed = record.get("delivery_confirmed") is True
+            if confirmed or status in ("delivered", "partial"):
+                bucket = "notifications"
+            elif status in ("pending", "sending"):
+                bucket = "pending"
+            elif status in ("failed", "disabled"):
+                bucket = "failed"
+            else:
+                bucket = "unconfirmed"
+        item[bucket] += 1
+        totals[bucket] += 1
+    return {"totals": totals,
+            "by_strategy": {key: by_strategy[key]
+                            for key in sorted(by_strategy)}}
+
+
 def _percentile(values: list[float], q: float) -> float | None:
     if not values:
         return None
@@ -4558,21 +4657,18 @@ def _realized_performance_unlocked(max_signals: int = None,
     kapanis — arastirmayla birebir ayni tanim). `max_signals` her strateji
     icin ayri tavandir; seyrek stratejiler sik stratejilerce dislanmaz."""
     max_signals = max_signals or PERF_MAX_SIGNALS
-    log_path = Path(__file__).parent / SIGNAL_LOG
-    if not log_path.exists():
-        return {"error": "signals.log yok — henuz sinyal uretilmedi",
-                "price_targets": price_target_summary()}
+    records = _reporting_signal_records()
+    if not records:
+        return {"error": "sinyal kaydı yok — henüz sinyal üretilmedi",
+                "price_targets": price_target_summary(),
+                "notification_activity": _notification_activity([])}
     cache = _load_perf_cache()
     now = datetime.now(timezone.utc)
     universe = set(SYMBOLS)
     excluded_out_of_universe = 0
     rows_by_strategy: dict[str, list[tuple[datetime, dict]]] = {}
     seen: set[str] = set()
-    for line in log_path.read_text(encoding="utf-8").splitlines():
-        try:
-            sig = json.loads(line)
-        except ValueError:
-            continue
+    for sig in records:
         if not isinstance(sig, dict) or str(sig.get("strategy", "")).startswith("TEST"):
             continue
         if sig.get("performance_excluded"):
@@ -4657,7 +4753,8 @@ def _realized_performance_unlocked(max_signals: int = None,
            "funding_cost_status": "not_modeled",
            "strategies": {},
            "price_targets": price_target_summary(),
-           "cohorts": []}
+           "cohorts": [],
+           "notification_activity": _notification_activity(records)}
     for s, rets in sorted(per_strat.items()):
         med = statistics.median(rets)
         bt = STRATEGY_TEST_STATS.get(s, {})
@@ -4826,10 +4923,30 @@ def _telegram_fit_report(text: str, label: str) -> str:
     return "\n".join(kept) + note
 
 
+def _format_notification_activity(activity: dict | None) -> list[str]:
+    """Human-readable event/delivery counts shared by every report."""
+    if not activity:
+        return []
+    totals = activity.get("totals") or {}
+    lines = ["", "🔔 <b>SİNYAL / BİLDİRİM AKIŞI</b>",
+             f"<i>Tüm stratejiler · toplam {totals.get('events', 0)} olay</i>"]
+    by_strategy = activity.get("by_strategy") or {}
+    for strategy, counts in sorted(by_strategy.items()):
+        lines.append(
+            f"• <b>{_html.escape(str(strategy))}</b> · "
+            f"{counts.get('events', 0)} olay · "
+            f"{counts.get('notifications', 0)} bildirim · "
+            f"{counts.get('silent', 0)} sessiz · "
+            f"{counts.get('pending', 0)} bekleyen · "
+            f"{counts.get('failed', 0)} başarısız")
+    return lines
+
+
 def _format_performance(perf: dict) -> str:
     if "error" in perf:
         lines = ["⚠️ <b>PERFORMANS ÖLÇÜMÜ BAŞARISIZ</b>",
                  _html.escape(str(perf["error"]))]
+        lines += _format_notification_activity(perf.get("notification_activity"))
         lines += _format_price_target_summary(perf.get("price_targets") or {})
         return _telegram_fit_report("\n".join(lines), "Performans raporu")
     excluded = perf.get("excluded_out_of_universe") or 0
@@ -4842,6 +4959,7 @@ def _format_performance(perf: dict) -> str:
                  "ölçülebilir hale gelir (olgunlasmis = kapanmış).</i>"]
         if excl_note:
             lines.append(excl_note.strip())
+        lines += _format_notification_activity(perf.get("notification_activity"))
         lines += _format_price_target_summary(perf.get("price_targets") or {})
         return _telegram_fit_report("\n".join(lines), "Performans raporu")
     lines = ["📊 <b>CANLI PERFORMANS</b>",
@@ -4891,6 +5009,7 @@ def _format_performance(perf: dict) -> str:
                    f"ort {d['mean_pct']:+.2f}% · {market}")
             (observe_lines if s in OBSERVE_STRATEGIES else validated_lines).append(row)
     lines += validated_lines or ["• Bu dönemde doğrulanmış kohort yok."]
+    lines += _format_notification_activity(perf.get("notification_activity"))
     if observe_lines:
         lines += ["", "🔬 <b>Gozlem kanali — S5/S6</b>",
                   "<i>DOGRULANMAMIS coinler · karşılaştırılacak backtest yok · "
@@ -5127,22 +5246,16 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
     target_summary = price_target_summary()
     path_summary = price_path_summary()
     rows = []
-    log_path = Path(__file__).parent / SIGNAL_LOG
-    lines = []
-    total_log_lines = 0
-    if log_path.exists():
-        try:
-            lines = log_path.read_text(encoding="utf-8").splitlines()
-            total_log_lines = len(lines)
-            lines = lines[-max_rows:]
-        except OSError:
-            lines = []
+    all_records = _reporting_signal_records()
+    activity = _notification_activity(all_records)
+    records = all_records
+    total_log_lines = len(records)
+    records = records[-max_rows:]
     live_rets: dict[str, list[float]] = {}  # geriye uyumlu strateji toplami
     cohort_rets: dict[tuple[str, str, str, str, str], list[float]] = {}
     seen_events: set[str] = set()
-    for line in lines:
+    for sig in records:
         try:
-            sig = json.loads(line)
             if not isinstance(sig, dict):
                 continue
             bar_t = datetime.fromisoformat(sig["bar_time"])
@@ -5327,9 +5440,11 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
     backup.pop("directory", None)
     return {
         "now": now.isoformat(timespec="seconds"),
-        "history_scope": {"total_log_lines": total_log_lines, "window_log_lines": len(lines),
-                          "displayed_events": len(rows), "limit": max_rows,
-                          "truncated": total_log_lines > len(lines),
+        "history_scope": {"total_log_lines": total_log_lines,
+                           "total_event_records": total_log_lines,
+                           "window_log_lines": len(records),
+                           "displayed_events": len(rows), "limit": max_rows,
+                           "truncated": total_log_lines > len(records),
                           "first_event_utc": min((r["t"] for r in rows), default=None),
                           "last_event_utc": max((r["t"] for r in rows), default=None),
                           "performance_scope": "displayed_events_only",
@@ -5370,11 +5485,13 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             # bildirim kanali sagligi: sinyal uretilse de gonderim
             # basarisiz olabilir; uzaktan gorunur olmali (2026-07-26)
             "telegram_enabled": ENABLE_TELEGRAM,
-            "telegram_identity": TELEGRAM_IDENTITY,
-            "notify_health": NOTIFY_HEALTH,
-            "notification_delivery": notification_delivery_status(),
-        },
+             "telegram_identity": TELEGRAM_IDENTITY,
+             "notify_health": NOTIFY_HEALTH,
+             "notification_delivery": notification_delivery_status(),
+             "notification_activity": activity,
+         },
         "strategies": strategies,
+        "notification_activity": activity,
         "price_targets": target_summary,
         "price_paths": path_summary,
         "docs": STRATEGY_DOCS,
