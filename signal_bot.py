@@ -5144,7 +5144,24 @@ STRATEGY_DOCS = {
         "stats": "Tarihsel train RED: N=401, 4s net ortalama -%0,13, medyan "
                  "-%0,30, isabet %45,9. Bu nedenle guven puani degil GOZLEM.",
         "risk": "Yukselen coin kovalamak ters donus, spread ve tasfiye riski "
-                "tasir. Long/short verisi hesap sayisidir, para buyuklugu degil.",
+                 "tasir. Long/short verisi hesap sayisidir, para buyuklugu degil.",
+    },
+    "G2": {
+        "title": "G2 — 24s düşen + OI artışı (araştırma adayı)",
+        "how": "Sabit düşen evrende 24 saatlik getirisi en kötü ilk 10 coin, "
+               "son saatte açık faizi en az %1 artınca ve kapanış verisi "
+               "tamamlanınca araştırma olayı üretir.",
+        "entry": "24s düşen sırası ilk 10 + 24s düşüş en az %5 + son 1s OI "
+                 "artışı en az %1. Planlanan referans giriş kapanıştan 1 saat "
+                 "sonradır.",
+        "exit": "Araştırma planı: Hyperliquid Limit/ALO, TP %3, SL %2, azami "
+                "24 saat. Dolum ve gerçek işlem sonucu bot tarafından garanti "
+                "edilmez.",
+        "stats": "Canlı araştırma kohortu; Binance fiyat/OI referansı kullanır. "
+                 "Hyperliquid uygunluğu ve dolum ayrıca doğrulanır; yeterli N "
+                 "oluşmadan başarı oranı kanıt sayılmaz.",
+        "risk": "Yüksek oynaklık ve gecikmeli planlanan giriş riski vardır. "
+                "Bu kart sinyal/araştırma olayını gösterir; emir açmaz.",
     },
     "DL1": {
         "title": "DL1 — Resmi Binance Tam-Token Delist Olay Arsivi",
@@ -5404,7 +5421,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         })
     rows.reverse()
     strategies = []
-    for key in ("S1+S4", "S1", "S3", "S2", "S5", "S6", "G1", "DL1"):
+    for key in ("S1+S4", "S1", "S3", "S2", "S5", "S6", "G1", "G2", "DL1"):
         bt = STRATEGY_TEST_STATS.get(key, {})
         conf, evid = signal_confidence(key)
         lr = live_rets.get(key, [])

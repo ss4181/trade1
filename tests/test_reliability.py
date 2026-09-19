@@ -84,8 +84,11 @@ class ReliabilityTests(unittest.TestCase):
             stack.enter_context(patch.object(bot, "DELIVERY_OUTBOX", box))
             merged = bot._reporting_signal_records()
             activity = bot._notification_activity(merged)
+            dashboard = bot.build_dashboard_data(max_rows=5)
         self.assertEqual(merged[0]["event_id"], "outbox-only")
         self.assertEqual(activity["by_strategy"]["G2"]["pending"], 1)
+        self.assertIn("G2", {item["name"] for item in dashboard["strategies"]})
+        self.assertIn("G2", dashboard["docs"])
 
     def test_failed_notify_is_not_backfilled_or_shown_as_sent(self):
         sig = {"strategy": "S1", "symbol": "BTCUSDT", "direction": "LONG",
