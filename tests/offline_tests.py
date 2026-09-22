@@ -789,10 +789,12 @@ def test_s3_shadow_market_regime():
         def json(self):
             now_ms = int(bot.time.time() * 1000)
             day = 86_400_000
+            today_open = now_ms // day * day
+            start = today_open - 250 * day
             return [
-                [now_ms - (202 - i) * day, "0", "0", "0", str(100 + i),
-                 "0", now_ms - (201 - i) * day]
-                for i in range(201)
+                [start + i * day, "100", "100", "100", str(100 + i),
+                 "0", start + (i + 1) * day - 1]
+                for i in range(250)
             ]
 
     try:
@@ -815,7 +817,7 @@ def test_s3_shadow_market_regime():
         sigs = bot.scan_symbol("BTCUSDT", bot.ScanState(), snapshot=True)
         s3 = next(s for s in sigs if s["strategy"] == "S3")
         assert s3["market_regime"] == "BULL"
-        assert s3["market_regime_source"] == "btc_1d_close_vs_sma200_shadow"
+        assert s3["market_regime_source"] == "binance_spot_btcusdt_1d_utc"
         assert any(label.startswith("Piyasa rejimi")
                    for label, _ in bot._signal_detail_rows(s3))
     finally:

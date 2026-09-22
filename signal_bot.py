@@ -65,6 +65,7 @@ except ZoneInfoNotFoundError:
 
 import archive_backup as archive_backup_module
 import strategy_engine as core_engine
+import market_regime as market_regime_engine
 from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
 import g2_notifications as g2
@@ -738,20 +739,15 @@ PRICE_STALE_AFTER_MINUTES = _env(
 # performanstan dusulur. S2 funding maliyeti ayrica modellenmez.
 LIVE_ROUND_TRIP_COST_BPS = _env("LIVE_ROUND_TRIP_COST_BPS", 12.0)
 
-# S3 icin ileriye donuk GOZLEM etiketi: son kapanmis BTC gunluk mumu 200 gunluk
-# SMA'nin ustunde mi? Etiket sinyali FILTRELEMEZ ve guven/push kararina girmez;
-# yeterli canli ornek birikince rejim hipotezini yeniden test etmeyi saglar.
-MARKET_REGIME_REFRESH_HOURS = _env("MARKET_REGIME_REFRESH_HOURS", 6.0)
-MARKET_REGIME = {
-    "label": "UNKNOWN",
-    "source": "btc_1d_close_vs_sma200_shadow",
-    "as_of": None,
-    "btc_close": None,
-    "sma200": None,
-    "last_error": None,
-}
+# Versioned daily BTC regime metadata. It is informational only: it never
+# changes strategy conditions, confidence gates, cooldowns or push policy.
+MARKET_REGIME_REFRESH_HOURS = _env("MARKET_REGIME_REFRESH_HOURS", 1.0)
+MARKET_REGIME = market_regime_engine.unknown_snapshot()
 _market_regime_lock = threading.Lock()
 _last_market_regime_refresh = 0.0
+_market_regime_worker: threading.Thread | None = None
+_market_regime_worker_stop = threading.Event()
+MARKET_REGIME_WORKER_LAST_ERROR: str | None = None
 _last_archive_hour: str | None = None
 ARCHIVE_DIR = Path(_env("ARCHIVE_DIR", str(Path(__file__).parent))).expanduser()
 _TERMUX_RUNTIME = bool(
@@ -1531,12 +1527,12 @@ def fetch_klines(symbol: str, limit: int = KLINE_LIMIT) -> list[dict]:
 
 
 def refresh_market_regime_if_due(force: bool = False) -> bool:
-    """BTC 1d kapanis/SMA200 GOZLEM etiketini yeniler.
+    """Fetch and atomically publish the closed-daily BTC regime snapshot.
 
-    Yalniz kapanmis gunluk mumlari kullanir; hata ana taramaya yayilmaz. Donen
-    bool etiketin bu cagrida basariyla yenilenip yenilenmedigini belirtir.
+    Normal service operation calls this from the independent worker. The
+    synchronous entry remains useful for ``--once`` and deterministic tests.
     """
-    global _last_market_regime_refresh
+    global _last_market_regime_refresh, MARKET_REGIME_WORKER_LAST_ERROR
     now_s = time.time()
     with _market_regime_lock:
         if (not force and _last_market_regime_refresh
@@ -1548,38 +1544,66 @@ def refresh_market_regime_if_due(force: bool = False) -> bool:
         _last_market_regime_refresh = now_s
     try:
         raw = _spot_get("/api/v3/klines", {
-            "symbol": "BTCUSDT", "interval": "1d", "limit": 201,
+            "symbol": "BTCUSDT", "interval": "1d", "limit": 250,
         }).json()
         now_ms = int(now_s * 1000)
-        closed = [row for row in raw if len(row) > 6 and int(row[6]) < now_ms]
-        if len(closed) < 200:
-            raise ValueError(f"SMA200 icin yetersiz kapanmis gunluk mum: {len(closed)}")
-        closes = [float(row[4]) for row in closed[-200:]]
-        latest = closes[-1]
-        sma200 = sum(closes) / len(closes)
-        as_of = datetime.fromtimestamp(
-            int(closed[-1][6]) / 1000, tz=timezone.utc).isoformat()
+        fetched_at = datetime.fromtimestamp(now_s, tz=timezone.utc).isoformat()
+        snapshot = market_regime_engine.compute_snapshot(
+            raw, as_of_ms=now_ms, fetched_at=fetched_at,
+            computed_at=fetched_at)
         with _market_regime_lock:
-            MARKET_REGIME.update({
-                "label": "BULL" if latest > sma200 else "BEAR",
-                "as_of": as_of,
-                "btc_close": round(latest, 8),
-                "sma200": round(sma200, 8),
-                "last_error": None,
-            })
+            MARKET_REGIME.clear()
+            MARKET_REGIME.update(snapshot)
+            MARKET_REGIME_WORKER_LAST_ERROR = None
         return True
     except Exception as e:
-        # Bu salt meta-veri kanali oldugu icin piyasa taramasini durduramaz.
+        # This informational channel must never stop signal scanning.
+        error = f"{type(e).__name__}: {_redact(str(e))}"
         with _market_regime_lock:
-            MARKET_REGIME["last_error"] = f"{type(e).__name__}: {_redact(str(e))}"
+            MARKET_REGIME["last_error"] = error
+            MARKET_REGIME["fresh"] = False
+            MARKET_REGIME_WORKER_LAST_ERROR = error
         print(f"uyari: piyasa rejimi etiketi yenilenemedi: {_redact(str(e))}",
               file=sys.stderr, flush=True)
         return False
 
 
+def _market_regime_worker_loop() -> None:
+    while not _market_regime_worker_stop.is_set():
+        refresh_market_regime_if_due()
+        _market_regime_worker_stop.wait(
+            max(30.0, MARKET_REGIME_REFRESH_HOURS * 3600.0))
+
+
+def start_market_regime_worker() -> bool:
+    """Start one non-blocking daily-regime refresh worker."""
+    global _market_regime_worker
+    with _market_regime_lock:
+        if _market_regime_worker and _market_regime_worker.is_alive():
+            return False
+        _market_regime_worker_stop.clear()
+        _market_regime_worker = threading.Thread(
+            target=_market_regime_worker_loop, name="market-regime", daemon=True)
+        _market_regime_worker.start()
+        return True
+
+
+def stop_market_regime_worker() -> None:
+    _market_regime_worker_stop.set()
+
+
 def market_regime_snapshot() -> dict:
     with _market_regime_lock:
-        return dict(MARKET_REGIME)
+        snapshot = dict(MARKET_REGIME)
+        snapshot["worker_alive"] = bool(
+            _market_regime_worker and _market_regime_worker.is_alive())
+        snapshot["refresh_due_at"] = (
+            datetime.fromtimestamp(
+                _last_market_regime_refresh + MARKET_REGIME_REFRESH_HOURS * 3600,
+                timezone.utc).isoformat()
+            if _last_market_regime_refresh else None)
+        snapshot["worker_last_error"] = MARKET_REGIME_WORKER_LAST_ERROR
+        return snapshot
 
 
 def fetch_funding(symbol: str, limit: int = 3) -> list[dict]:
@@ -1937,7 +1961,7 @@ def scan_symbol(symbol: str, state: ScanState,
             "price": closes[i], "volume_logz": round(zs[i], 2),
             "market_regime": regime.get("label", "UNKNOWN"),
             "market_regime_source": regime.get("source"),
-            "market_regime_as_of": regime.get("as_of"),
+            "market_regime_as_of": regime.get("as_of") or regime.get("reference_at"),
             "note": "yukari-bar hacim patlamasi (momentum devami)",
             "horizon_hours": 4,
         })
@@ -2072,7 +2096,10 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
     if "volume_logz" in sig:
         rows.append(("Hacim log-Z", str(sig["volume_logz"])))
     if "market_regime" in sig:
-        rows.append(("Piyasa rejimi (gözlem)", str(sig["market_regime"])))
+        label = str(sig["market_regime"])
+        subtype = str(sig.get("market_regime_subtype") or "")
+        rows.append(("Piyasa rejimi (gözlem)",
+                     f"{label} · {subtype}" if subtype and subtype != label else label))
     if "funding_pct" in sig:
         rows.append(("Funding %", ", ".join(str(x) for x in sig["funding_pct"])))
     if sig.get("performance_symbol"):
@@ -2653,6 +2680,7 @@ def _telegram_send_text_unpaced(text: str, chat_id: str | None = None,
 MENU_BUTTONS = {
     "🔎 Kontrol": "/check",
     "📊 Performans": "/performans",
+    "🌐 Piyasa": "/piyasa",
     "🧪 Araştırma": "/arastirma",
     "ℹ️ Durum": "/status",
     "❓ Yardim": "/help",
@@ -2663,7 +2691,8 @@ MENU_BUTTONS = {
 def _menu_keyboard(owner: bool = False) -> dict:
     """Kalici menu klavyesi. Sahibe ekstra 'Aboneler' dugmesi gosterilir."""
     rows = [["🔎 Kontrol", "📊 Performans"],
-            ["🧪 Araştırma", "ℹ️ Durum"], ["❓ Yardim"]]
+            ["🌐 Piyasa", "ℹ️ Durum"],
+            ["🧪 Araştırma", "❓ Yardim"]]
     if owner:
         rows.append(["👥 Aboneler"])
     return {"keyboard": rows, "resize_keyboard": True,
@@ -3370,6 +3399,19 @@ def _backfill_price_targets_from_signal_log() -> int:
 def _delivery_record(sig: dict, push: bool) -> dict:
     conf = sig.get("confidence", "YUKSEK")
     strategy = str(sig.get("strategy") or "")
+    # Shadow workers may call notify directly; give every strategy the same
+    # frozen regime metadata without adding a network call to notification.
+    if "market_regime" not in sig:
+        regime = market_regime_snapshot()
+        sig = {
+            **sig,
+            "market_regime": regime.get("label", "UNKNOWN"),
+            "market_regime_subtype": regime.get("subtype", "UNKNOWN"),
+            "market_regime_version": regime.get("version"),
+            "market_regime_source": regime.get("source"),
+            "market_regime_as_of": regime.get("reference_at"),
+            "market_regime_data_close_at": regime.get("data_close_at"),
+        }
     reasons = []
     if sig.get("observe"):
         # Gozlem sinyalinin push'unu CONF_RANK degil OBSERVE_PUSH belirler:
@@ -3671,6 +3713,16 @@ def _stamp_signal_detection(signals: list[dict], scan_started_at: str) -> list[d
                 sig["signal_reference_at"] = stamp.isoformat()
             except (KeyError, TypeError, ValueError):
                 pass
+        # Freeze the informational regime with the signal record. Historical
+        # rows must never be re-labelled from the current day's cache.
+        if "market_regime" not in sig:
+            regime = market_regime_snapshot()
+            sig["market_regime"] = regime.get("label", "UNKNOWN")
+            sig["market_regime_subtype"] = regime.get("subtype", "UNKNOWN")
+            sig["market_regime_version"] = regime.get("version")
+            sig["market_regime_source"] = regime.get("source")
+            sig["market_regime_as_of"] = regime.get("reference_at")
+            sig["market_regime_data_close_at"] = regime.get("data_close_at")
     return signals
 
 
@@ -4173,6 +4225,7 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
         if _delivery_retry_worker is not None:
             _delivery_retry_worker.stop()
             _delivery_retry_worker = None
+        stop_market_regime_worker()
         INSTANCE_LOCK_HELD = False
         _release_instance_file_lock(handle)
         _run_guard.release()
@@ -4201,6 +4254,9 @@ def _run_forever_locked(once: bool = False,
     # (bulut, 5dk) her turda yeniden indirmesin diye kritik.
     refresh_observe_universe_if_due()
     telegram_preflight()                    # token gecerli mi? (mesaj atmaz)
+    if not once:
+        # This worker owns the daily BTC request; scan_all never waits on it.
+        start_market_regime_worker()
     # Telegram komut dinleyicisini yalnizca surekli modda baslat (--once'ta degil)
     if ENABLE_TELEGRAM and TELEGRAM_COMMANDS and not once:
         threading.Thread(target=telegram_command_loop, name="tg-commands",
@@ -4262,7 +4318,10 @@ def _run_forever_locked(once: bool = False,
             refresh_universe_if_due()
             refresh_perp_map_if_due()
             refresh_observe_universe_if_due()
-            refresh_market_regime_if_due()  # salt S3 meta-verisi; hata icerde tutulur
+            if once:
+                # A one-shot diagnostic may refresh synchronously. Continuous
+                # service operation relies on the independent worker above.
+                refresh_market_regime_if_due()
             n = scan_all(state)
             target_result = update_price_target_tracking()
             completed = datetime.now(timezone.utc).isoformat()
@@ -5359,6 +5418,12 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "config_version": sig.get("config_version") or "legacy",
             "engine_version": sig.get("engine_version") or "UNKNOWN",
             "engine_config_hash": sig.get("engine_config_hash") or "UNKNOWN",
+            "market_regime": sig.get("market_regime") or "UNKNOWN",
+            "market_regime_subtype": sig.get("market_regime_subtype") or "UNKNOWN",
+            "market_regime_version": sig.get("market_regime_version") or "legacy_unknown",
+            "market_regime_source": sig.get("market_regime_source"),
+            "market_regime_as_of": sig.get("market_regime_as_of"),
+            "market_regime_data_close_at": sig.get("market_regime_data_close_at"),
             "measurement_version": sig.get("measurement_version") or (
                 (target_profile or {}).get("measurement_version")
                 if target_profile else None) or "legacy_unknown",
@@ -5404,8 +5469,11 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
                           if matured else
                           "tahmini_sinyal_kapanisi_net_cost_assumption"),
             "market_regime": sig.get("market_regime"),
+            "market_regime_subtype": sig.get("market_regime_subtype"),
+            "market_regime_version": sig.get("market_regime_version"),
             "market_regime_source": sig.get("market_regime_source"),
             "market_regime_as_of": sig.get("market_regime_as_of"),
+            "market_regime_data_close_at": sig.get("market_regime_data_close_at"),
             "silenced": silenced,
             "push_allowed": sig.get("push_allowed", not silenced),
             "notification_status": notification_status,
@@ -5927,6 +5995,10 @@ def _format_status_for_telegram() -> str:
     elapsed = latency.get("reference_to_ack")
     delivery_note = f"{elapsed:g} sn" if elapsed is not None else "henüz ölçülmedi"
     last_scan = _display_tr_time(LAST_SCAN_AT) if LAST_SCAN_AT else "(henüz yok)"
+    regime = market_regime_snapshot()
+    regime_text = str(regime.get("label") or "UNKNOWN")
+    if regime.get("subtype") not in (None, regime_text, "UNKNOWN"):
+        regime_text += f" · {regime['subtype']}"
     return (
         "ℹ️ <b>BOT DURUMU</b>\n"
         "<i>Çalışma, bildirim ve araştırma özeti</i>\n\n"
@@ -5937,8 +6009,10 @@ def _format_status_for_telegram() -> str:
         f"• Son tarama hatası: {LAST_SCAN_ERRORS}\n\n"
         f"• Kapanış payı: {SCAN_CLOSE_DELAY_SECONDS} sn · tekrar kontrolü: 5 sn\n"
         f"• Bekleyen bildirim: {delivery.get('pending_events', 'bilinmiyor')}\n"
-        f"• Son sinyal referansı → Telegram API kabulü: {delivery_note}\n\n"
-        "🔔 <b>Bildirim kapısı</b>\n"
+         f"• Son sinyal referansı → Telegram API kabulü: {delivery_note}\n\n"
+         f"🌐 <b>Piyasa rejimi:</b> {_html.escape(regime_text)} · "
+         f"veri {_html.escape(_display_tr_time(regime.get('data_close_at')))}\n\n"
+         "🔔 <b>Bildirim kapısı</b>\n"
         f"• Genel eşik: {_html.escape(str(NOTIFY_MIN_CONFIDENCE))}+\n"
         f"• Sessiz stratejiler: {_html.escape(disabled)}\n"
         f"• S2 araştırma bildirimi: {'AÇIK' if S2_RESEARCH_PUSH else 'sessiz'} "
@@ -5949,6 +6023,41 @@ def _format_status_for_telegram() -> str:
         "<i>/check anlık koşulları, /performans olgun sonuçları gösterir. "
         "Bot emir açmaz; yatırım tavsiyesi değildir.</i>"
     )
+
+
+def _format_market_regime_for_telegram() -> str:
+    """Short read-only regime card from the asynchronous cache."""
+    regime = market_regime_snapshot()
+    label = str(regime.get("label") or "UNKNOWN")
+    subtype = str(regime.get("subtype") or "UNKNOWN")
+    if label == "UNKNOWN":
+        error = regime.get("last_error") or regime.get("worker_last_error")
+        detail = (f"\n⚠️ Veri henüz hazır değil: {_html.escape(str(error))}"
+                  if error else "\n⏳ Günlük BTC verisi hazırlanıyor.")
+        return ("🌐 <b>PİYASA REJİMİ</b>\n"
+                "• Durum: <b>BELİRSİZ</b>\n"
+                "• Eksik/bayat veri geçiş olarak sayılmaz." + detail)
+    names = {"BULL": "BOĞA", "BEAR": "AYI", "TRANSITION": "GEÇİŞ"}
+    subtype_names = {"bull_pullback": "geri çekilme",
+                     "bull_moderate": "ılımlı yükseliş",
+                     "bull_strong": "güçlü yükseliş"}
+    human = names.get(label, label)
+    if subtype in subtype_names:
+        human += f" — {subtype_names[subtype]}"
+    close = regime.get("btc_close")
+    sma = regime.get("sma200")
+    distance = regime.get("distance_pct")
+    slope = regime.get("slope20_pct")
+    momentum = regime.get("momentum30_pct")
+    data_close = _display_tr_time(regime.get("data_close_at"))
+    return ("🌐 <b>PİYASA REJİMİ</b>\n"
+            f"• Durum: <b>{_html.escape(human)}</b>\n"
+            f"• BTC kapanışı: {_fmt_price(close)} · M200: {_fmt_price(sma)}\n"
+            f"• M200 uzaklığı: {_html.escape(str(distance))}% · "
+            f"20g eğim: {_html.escape(str(slope))}%\n"
+            f"• Son 30g: {_html.escape(str(momentum))}%\n"
+            f"🕒 Günlük veri kapanışı: {_html.escape(data_close)}\n"
+            "ℹ️ BTC günlük eğilimidir; tek başına coin alım sinyali değildir.")
 
 
 def handle_telegram_command(text: str, chat_id: str) -> None:
@@ -5968,9 +6077,10 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
             "🔎 <b>Anlık</b>\n"
             "• /check — aktif koşullar (bildirim göndermez)\n"
             "• /status — çalışma ve bildirim durumu\n\n"
-            "📊 <b>Raporlar</b>\n"
-            "• /performans — canlı sonuçlar ve hedef karnesi\n"
-            "• /arastirma — OI/funding/likidasyon hazırlığı\n\n"
+             "📊 <b>Raporlar</b>\n"
+             "• /performans — canlı sonuçlar ve hedef karnesi\n"
+             "• /piyasa — BTC günlük rejimi (ayı/geçiş/boğa)\n"
+             "• /arastirma — OI/funding/likidasyon hazırlığı\n\n"
             "👤 <b>Erişim</b>\n"
             "• /myid — kendi chat ID'in\n"
             "• /katil — botu kullanmak için izin iste\n"
@@ -6047,6 +6157,8 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
                 "(onu .env'den silmen gerekir).", chat_id=chat_id)
     elif cmd == "status":
         _telegram_send_text(_format_status_for_telegram(), chat_id=chat_id)
+    elif cmd in ("piyasa", "rejim", "market"):
+        _telegram_send_text(_format_market_regime_for_telegram(), chat_id=chat_id)
     elif cmd in ("performans", "performance", "perf"):
         if not _check_lock.acquire(blocking=False):
             _telegram_send_text("⏳ <b>Rapor zaten hazırlanıyor.</b>\n"

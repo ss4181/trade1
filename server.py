@@ -246,6 +246,8 @@ def health(response: Response) -> dict:
         "publish_worker_active": getattr(bot, "PUBLISH_WORKER_ACTIVE", False),
         "publish_worker_last_error": getattr(
             bot, "PUBLISH_WORKER_LAST_ERROR", None),
+        "market_regime": bot.market_regime_snapshot(),
+        # Backward-compatible alias for existing readonly dashboard clients.
         "market_regime_shadow": bot.market_regime_snapshot(),
         "github_pages_branch": getattr(bot, "GITHUB_PAGES_BRANCH", None),
         "github_data_branch": getattr(bot, "GITHUB_DATA_BRANCH", None),

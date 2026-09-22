@@ -127,6 +127,7 @@ gitmene gerek yok. Botunla sohbete şunları yaz:
 - **/check** — şu an aktif kurulumları getirir (birkaç saniye sürer)
 - **/performans** — gerçekleşen sinyal sonuçları vs backtest beklentisi
 - **/status** — kaç tarama yapıldı, son tarama ne zaman, hata var mı
+- **/piyasa** — kapanmış BTC günlük verisiyle ayı/geçiş/boğa ve boğa alt türü
 
 Ayrıca her gün saat ~09:00'da (TR) bölümlü bir **günlük özet** gelir. Özet;
 son 24 saatteki olayları, gerçekten gönderilen/sessiz kalan kayıtları,
@@ -202,7 +203,7 @@ kaldir - aboneligi kaldir (yalniz sahip)
 ### Düğmeler (komut yazmadan kullan)
 
 Bota **`/start`** yaz → yazı alanının altında kalıcı düğmeler çıkar:
-**🔎 Kontrol · 📊 Performans · ℹ️ Durum · ❓ Yardım** (sende ek olarak
+**🔎 Kontrol · 📊 Performans · 🌐 Piyasa · ℹ️ Durum · 🧪 Araştırma · ❓ Yardım** (sende ek olarak
 **👥 Aboneler**). Bir daha komut yazmana gerek yok; düğmeler sohbette kalır.
 Kaybolursa **`/menu`** yaz.
 
