@@ -1,5 +1,8 @@
 # Piyasa rejimi incelemesi — hesap öncesi sabit protokol
 
+> Güncelleme: [Süre sınırsız TP2/TP3 hesabı](MARKET_REGIME_EVENTUAL_TOUCH_2026-09-22.md) eklendi. Önceki G2 MFE tabanlı stop olmadan dokunma hesabı geçersizdir; MFE ilk çıkışta kesiliyordu. Yeni sonuçlar ham fiyatlardan hesaplandı. “Son 90 gün” ifadesi güncel tablet kayıtlarını değil, 2025 sonunda biten tarihsel G1 arşivini anlatıyordu.
+
+
 Amaç: Telegram `/piyasa` düğmesi için açıklanabilir bir durum tanımı ve mevcut stratejiler için betimleyici rejim karşılaştırması hazırlamak. Canlı stratejiler, eşikler, bildirim izinleri ve emir sistemi bu çalışmada değişmez. Bu yeni bir bağımsız test veya yatırım tavsiyesi değildir.
 
 ## Sabit tanım: btc-daily-regime-v1

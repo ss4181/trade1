@@ -66,6 +66,7 @@ except ZoneInfoNotFoundError:
 import archive_backup as archive_backup_module
 import strategy_engine as core_engine
 import market_regime as market_regime_engine
+from market_http import MarketHttp
 from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
 import g2_notifications as g2
@@ -287,7 +288,10 @@ RESEARCH_REPORT_SOURCE = _env(
 # 15m/5m ufuklarinda edge olmadigi olculdu (research/REPORT.md Ek A/B).
 SCAN_INTERVAL_MINUTES = _env("SCAN_INTERVAL_MINUTES", 5)
 # Closed candles are still used; only the intentional post-boundary delay changes.
-SCAN_CLOSE_DELAY_SECONDS = max(1, min(90, _env("SCAN_CLOSE_DELAY_SECONDS", 10)))
+SCAN_CLOSE_DELAY_SECONDS = max(1, min(90, _env("SCAN_CLOSE_DELAY_SECONDS", 5)))
+MARKET_HTTP_REUSE_ENABLED = _env("MARKET_HTTP_REUSE_ENABLED", True, cast=_flag)
+_spot_http = MarketHttp()
+_futures_http = MarketHttp()
 SCAN_WORKERS = max(1, min(8, _env("SCAN_WORKERS", 8)))
 SCAN_STREAMING_ENABLED = _env("SCAN_STREAMING_ENABLED", bool(_NOTIFICATION_OVERRIDES), cast=_flag)
 _scan_state_lock = threading.RLock()
@@ -398,6 +402,17 @@ class MarketTransientError(requests.RequestException):
     """Ortak piyasa servisinin retry sonrasi da gecici olarak kullanilamamasi."""
 
 
+class StaleCandleError(requests.RequestException):
+    """The latest closed hourly candle is not published yet for this symbol."""
+
+
+def _market_get(url, **kwargs):
+    if not MARKET_HTTP_REUSE_ENABLED:
+        return requests.get(url, **kwargs)
+    client = _futures_http if url.startswith(FUT_API + "/") else _spot_http
+    return client.get(url, **kwargs)
+
+
 def _retry_after_seconds(response: requests.Response | None) -> float | None:
     if response is None:
         return None
@@ -445,7 +460,7 @@ def _spot_get(path: str, params: dict | None = None) -> requests.Response:
         _wait_for_market_gate("spot")
         host = SPOT_HOSTS[_spot_host_idx]
         try:
-            r = requests.get(host + path, params=params, timeout=30)
+            r = _market_get(host + path, params=params, timeout=30)
             r.raise_for_status()
             return r
         except requests.RequestException as e:
@@ -499,7 +514,7 @@ def _futures_get(path: str, params: dict | None = None, *,
             if market_data_key and BINANCE_MARKET_DATA_API_KEY:
                 kwargs["headers"] = {
                     "X-MBX-APIKEY": BINANCE_MARKET_DATA_API_KEY}
-            r = requests.get(FUT_API + path, **kwargs)
+            r = _market_get(FUT_API + path, **kwargs)
             r.raise_for_status()
             return r
         except requests.RequestException as e:
@@ -1517,10 +1532,22 @@ def bullish_divergence(closes, lows, rsi, i: int) -> bool:
 # --------------------------------------------------------------------------
 
 def fetch_klines(symbol: str, limit: int = KLINE_LIMIT) -> list[dict]:
-    """Kapanmis son barlar (Binance son barin acik halini dondurur -> atilir)."""
-    r = _spot_get("/api/v3/klines",
-                  {"symbol": symbol, "interval": "1h", "limit": limit})
-    rows = r.json()[:-1]          # son (henuz kapanmamis) bari at
+    """Keep the same limit-1 closed window, including near a candle boundary.
+
+    Retry a lagging symbol up to five seconds; never mutate strategy state
+    from the previous hour just because an earlier scan beat publication.
+    """
+    boundary = int(time.time() // 3600) * 3_600_000
+    for attempt in range(6):
+        r = _spot_get("/api/v3/klines",
+                      {"symbol": symbol, "interval": "1h", "limit": limit})
+        rows = [k for k in r.json() if int(k[0]) < boundary
+                and int(k[6]) < boundary][-max(1, limit-1):]
+        if rows and int(rows[-1][0]) == boundary-3_600_000:
+            break
+        if attempt == 5:
+            raise StaleCandleError(f"{symbol}: latest closed hourly candle unavailable")
+        time.sleep(1.)
     return [{"open_time": k[0], "open": float(k[1]), "high": float(k[2]),
              "low": float(k[3]), "close": float(k[4]), "volume": float(k[5])}
             for k in rows]
@@ -2546,6 +2573,8 @@ def _retry_signal_deliveries(stop_event=None) -> None:
 def notification_delivery_status() -> dict:
     worker = _delivery_retry_worker
     report = {"scan_close_delay_seconds": SCAN_CLOSE_DELAY_SECONDS,
+              "market_http_reuse_enabled": MARKET_HTTP_REUSE_ENABLED,
+              "market_http": {"spot": _spot_http.snapshot(), "futures": _futures_http.snapshot()},
               "retry_poll_seconds": 5,
               "retry_worker_alive": bool(worker and worker.thread.is_alive()),
               "scan_workers": SCAN_WORKERS,
@@ -4226,6 +4255,8 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             _delivery_retry_worker.stop()
             _delivery_retry_worker = None
         stop_market_regime_worker()
+        _spot_http.close()
+        _futures_http.close()
         INSTANCE_LOCK_HELD = False
         _release_instance_file_lock(handle)
         _run_guard.release()

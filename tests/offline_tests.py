@@ -15,6 +15,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import signal_bot as bot  # noqa: E402
 import qc_export as qc  # noqa: E402
 
+# This legacy suite mocks requests.get directly. The pooled transport is
+# exercised independently in test_scan_speed.py.
+bot._market_get = lambda url, **kwargs: bot.requests.get(url, **kwargs)
+
 # testler modulu monkeypatch'ler; orijinalleri sakla ki sonraki testler
 # oncekilerin sahtelerini cagirmasin
 ORIG = {

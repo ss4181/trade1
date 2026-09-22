@@ -105,6 +105,22 @@ class G1LatencyTests(unittest.TestCase):
             self.assertEqual(state['s7_last_fire'], g1['s7_last_fire'])
             self.assertEqual(state['seen_articles'], ['article'])
 
+    def test_partial_early_hour_retries_without_replaying_ready_signal(self):
+        lagging=[True]
+        def before(path, params):
+            if lagging[0] and params['symbol']=='LATE' and path.endswith('klines'):
+                raise ValueError('latest candle not yet available')
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            fetch=self.fetcher(['FAST','LATE'],before)
+            first=shadow.scan_g1(fetch,root/'s.json',root,self.now)
+            self.assertEqual([r['symbol'] for r in first],['FAST'])
+            self.assertIsNone(shadow.load_state(root/'s.json')['s7_last_hour'])
+            lagging[0]=False
+            second=shadow.scan_g1(fetch,root/'s.json',root,self.now)
+            self.assertEqual([r['symbol'] for r in second],['LATE'])
+            self.assertIsNotNone(shadow.load_state(root/'s.json')['s7_last_hour'])
+
     def test_g1_worker_runs_during_main_and_delist_work_and_joins_before_unlock(self):
         arrived = threading.Event()
         worker = []

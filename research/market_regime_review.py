@@ -370,12 +370,11 @@ def g2_events(search_dir, table):
                     "entry_time_ms": int(row.get("entry_ms", now + HOUR)),
                     "horizon": 24, "market": "um",
                     "net_pct": row["net20_low"], "gross_pct": row["gross"],
-                    # The source already contains the complete 24h path's MFE.
-                    # Reuse it for unrestricted TP2/TP3 touches; the source's
-                    # TARGET outcome remains the separate TP3-before-SL2 rule.
-                    "tp2_touch": float(row["mfe"]) >= 2.0,
-                    "tp3_touch": float(row["mfe"]) >= 3.0,
-                    "touch_measurement": "source_24h_mfe_ge_entry_target_no_stop",
+                    # Search MFE ends at the bracket exit. It cannot describe
+                    # unrestricted touches after a stop; use raw-price follow-up.
+                    "tp2_touch": None,
+                    "tp3_touch": None,
+                    "touch_measurement": "unavailable_exit_truncated_MFE_use_raw_prices",
                     "outcome": row["outcome"], "measurement": "bracket_20bp_conservative_funding"})
     if Counter(r["split"] for r in output) != {"A": 97, "B": 84, "C": 71}:
         raise ValueError("g2_expected_counts_changed")

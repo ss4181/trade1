@@ -276,6 +276,8 @@ def evaluate_g1_snapshot(klines: list, oi_rows: list, ls_rows: list,
     if len(closed) < 25:
         raise ValueError(f"G1 için kapanmış 1h mum yetersiz: {len(closed)}")
     closed = closed[-25:]
+    if int(closed[-1][0]) != now_ms // 3_600_000 * 3_600_000 - 3_600_000:
+        raise ValueError("G1 latest closed hourly candle not published yet")
     close_now = float(closed[-1][4])
     close_24 = float(closed[0][4])
     prior_volumes = [float(row[7]) for row in closed[:-1]]
@@ -487,10 +489,14 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
     if not evaluated:
         return []
     current_true = {symbol for symbol, row in evaluated.items() if row["condition"]}
+    top_symbols = {symbol for _, symbol, _ in top}
     for symbol in list(previous):
-        if symbol not in current_true and symbol not in evaluated:
+        if symbol not in current_true and symbol not in top_symbols:
             previous[symbol] = False
-    state["s7_last_hour"] = hour_key
+    # A partial early response must be retried on the next worker tick.
+    # Existing cooldowns/conditions protect already delivered candidates.
+    if len(evaluated) == len(top):
+        state["s7_last_hour"] = hour_key
     _save_strategy_state(state_path, state, _G1_STATE_KEYS)
     return signals
 

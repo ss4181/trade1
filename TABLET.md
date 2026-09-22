@@ -1,5 +1,10 @@
 # Samsung tablette 7/24 çalıştırma (Termux) — önerilen ücretsiz yol
 
+**22 Eylül güncellemesi:** 5 saniyelik kapanış payı, bağlantı yeniden kullanımı
+ve mevcut kurulumu güncelleme adımları [SCAN_SPEED_2026-09-22.md](SCAN_SPEED_2026-09-22.md).
+Süre sınırı olmadan boğa rejimi TP2/TP3 hesapları
+[araştırma raporunda](research/MARKET_REGIME_EVENTUAL_TOUCH_2026-09-22.md).
+
 **11 Eylül güncellemesi:** Telegram gecikme düzeltmesi ve kalan sunum/ölçüm
 işlerini birlikte alma adımları [TELEGRAM_LATENCY.md](TELEGRAM_LATENCY.md)
 içindedir. Paket yayımlanmadan `git pull` yeni kodu getirmez.

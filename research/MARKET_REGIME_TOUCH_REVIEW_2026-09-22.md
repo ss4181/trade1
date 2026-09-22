@@ -1,5 +1,8 @@
 # Rejim araştırması — TP2/TP3 dokunma yeniden hesabı
 
+> Güncelleme: [Süre sınırsız TP2/TP3 hesabı](MARKET_REGIME_EVENTUAL_TOUCH_2026-09-22.md) eklendi. Önceki G2 MFE tabanlı stop olmadan dokunma hesabı geçersizdir; MFE ilk çıkışta kesiliyordu. Yeni sonuçlar ham fiyatlardan hesaplandı. “Son 90 gün” ifadesi güncel tablet kayıtlarını değil, 2025 sonunda biten tarihsel G1 arşivini anlatıyordu.
+
+
 Bu ek rapor, 22 Eylül 2026 tarihli rejim çalışmasının zaman çıkışı oranlarını
 karar ölçüsü olarak kullanmaz. Her olay için ölçüm girişindeki saatlik açılış
 fiyatı alınır; aynı ufuk içinde kapanmış saatlik mumlardan birinin en yüksek

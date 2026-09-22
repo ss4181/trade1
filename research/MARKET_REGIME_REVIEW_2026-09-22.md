@@ -1,5 +1,8 @@
 # Telegram piyasa rejimi: araştırma ve uygulama kararı — 22 Eylül 2026
 
+> Güncelleme: [Süre sınırsız TP2/TP3 hesabı](MARKET_REGIME_EVENTUAL_TOUCH_2026-09-22.md) eklendi. Önceki G2 MFE tabanlı stop olmadan dokunma hesabı geçersizdir; MFE ilk çıkışta kesiliyordu. Yeni sonuçlar ham fiyatlardan hesaplandı. “Son 90 gün” ifadesi güncel tablet kayıtlarını değil, 2025 sonunda biten tarihsel G1 arşivini anlatıyordu.
+
+
 **Karar:** Ayı/geçiş/boğa düğmesi uygulanabilir. Bütün stratejileri boğada açan veya ayıda susturan ortak bir filtreyi veriler desteklemiyor. İlk sürüm bilgi ve sürümlü gözlem kaydı sunmalı. Luna için uygulama planı hazır; canlı kod, Telegram ve tablet bu hazırlıkta değiştirilmedi.
 
 Bu dosyadaki ana tablolar zaman çıkışı ölçüsüdür. TP2/TP3 hedef dokunmasıyla
