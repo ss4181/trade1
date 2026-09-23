@@ -68,6 +68,7 @@ import strategy_engine as core_engine
 import market_regime as market_regime_engine
 import signal_watch as signal_watch_engine
 import intraday_regime
+from spot_catalog import SpotCatalog
 from market_http import MarketHttp
 from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
@@ -308,6 +309,7 @@ _delivery_retry_worker: DeliveryRetryWorker | None = None
 SIGNAL_WATCH_ENABLED = _env("SIGNAL_WATCH_ENABLED", True, cast=_flag)
 _signal_watch = None
 _signal_watch_worker = None
+SPOT_CATALOG = SpotCatalog()
 _g2_worker: DeliveryRetryWorker | None = None
 _g1_worker: DeliveryRetryWorker | None = None
 _g1_worker_lock = threading.Lock()
@@ -1602,6 +1604,7 @@ def refresh_market_regime_if_due(force: bool = False) -> bool:
 
 def _market_regime_worker_loop() -> None:
     while not _market_regime_worker_stop.is_set():
+        refresh_spot_catalog()
         refresh_market_regime_if_due()
         _market_regime_worker_stop.wait(
             max(30.0, MARKET_REGIME_REFRESH_HOURS * 3600.0))
@@ -1636,6 +1639,10 @@ def market_regime_snapshot() -> dict:
             if _last_market_regime_refresh else None)
         snapshot["worker_last_error"] = MARKET_REGIME_WORKER_LAST_ERROR
         return snapshot
+
+
+def refresh_spot_catalog(force=False):
+    return SPOT_CATALOG.refresh(lambda: _spot_get("/api/v3/exchangeInfo").json(), force=force)
 
 
 def _watch_fetch(market, symbol, interval, params):
@@ -1970,6 +1977,8 @@ def scan_symbol(symbol: str, state: ScanState,
       adi "GOZLEM-" onekli uretilir ve backtest referans seviyeleri
       EKLENMEZ."""
     signals = []
+    if not SPOT_CATALOG.eligible(symbol):
+        return signals
     now_s = time.time()
     # Genis evren VE gozlem kanali: yalniz S1 ailesi (Ek G).
     extended = observe or symbol in EXTENDED_SET
@@ -2617,7 +2626,8 @@ def _retry_signal_deliveries(stop_event=None) -> None:
 
 def notification_delivery_status() -> dict:
     worker = _delivery_retry_worker
-    report = {"signal_watch": signal_watch_snapshot(),
+    report = {"spot_market": SPOT_CATALOG.snapshot(SYMBOLS + OBSERVE_SYMBOLS),
+              "signal_watch": signal_watch_snapshot(),
               "scan_close_delay_seconds": SCAN_CLOSE_DELAY_SECONDS,
               "market_http_reuse_enabled": MARKET_HTTP_REUSE_ENABLED,
               "market_http": {"spot": _spot_http.snapshot(), "futures": _futures_http.snapshot()},
@@ -3624,14 +3634,15 @@ def scan_all(state: ScanState) -> int:
     scan_started_at = datetime.now(timezone.utc).isoformat()
     collected: list[dict] = []
     market_error: MarketRateLimitError | MarketTransientError | None = None
-    attempted = len(SYMBOLS)
-    for index, sym in enumerate(SYMBOLS):
+    core = SPOT_CATALOG.select(SYMBOLS)
+    attempted = len(core)
+    for index, sym in enumerate(core):
         try:
             collected += _stamp_signal_detection(scan_symbol(sym, state), scan_started_at)
         except (MarketRateLimitError, MarketTransientError) as e:
             # Ayni ortak API kapisina kalan tum sembollerle yuklenme. Onceki
             # sembollerde bulunan gecerli sinyaller yine teslim edilir.
-            errors += len(SYMBOLS) - index
+            errors += len(core) - index
             market_error = e
             ERROR_SAMPLES.append(f"{sym}: {e}")
             print(f"uyari: {sym} sonrasinda tarama ortak API hatasi nedeniyle "
@@ -3647,7 +3658,7 @@ def scan_all(state: ScanState) -> int:
     LAST_SCAN_SUCCEEDED_SYMBOLS = max(0, attempted - errors)
     LAST_SCAN_ERROR_RATIO = errors / attempted if attempted else 1.0
     if errors:
-        print(f"uyari: taramada {errors}/{len(SYMBOLS)} sembol hata verdi",
+        print(f"uyari: taramada {errors}/{len(core)} sembol hata verdi",
               file=sys.stderr, flush=True)
     collected.sort(key=lambda s: (_priority(s), s["symbol"]))
     overflow = []
@@ -3670,7 +3681,7 @@ def scan_all(state: ScanState) -> int:
     # Keep the global core priority/cap decision and separate observation budget.
     observed: list[dict] = []
     if OBSERVE_ENABLED and market_error is None:
-        for sym in OBSERVE_SYMBOLS:
+        for sym in SPOT_CATALOG.select(OBSERVE_SYMBOLS):
             try:
                 observed += _stamp_signal_detection(
                     scan_symbol(sym, state, observe=True), scan_started_at)
@@ -3709,9 +3720,9 @@ def _scan_all_streaming(state: ScanState) -> int:
     global LAST_SCAN_ERRORS, LAST_SCAN_ATTEMPTED
     global LAST_SCAN_SUCCEEDED_SYMBOLS, LAST_SCAN_ERROR_RATIO
     started = datetime.now(timezone.utc).isoformat()
-    core = list(dict.fromkeys(SYMBOLS))
+    core = SPOT_CATALOG.select(SYMBOLS)
     core_set = set(core)
-    observed = [s for s in dict.fromkeys(OBSERVE_SYMBOLS) if s not in core_set] if OBSERVE_ENABLED else []
+    observed = [s for s in SPOT_CATALOG.select(OBSERVE_SYMBOLS) if s not in core_set] if OBSERVE_ENABLED else []
     jobs = [(s, False) for s in core] + [(s, True) for s in observed]
     succeeded = count = 0
     market_error = None
@@ -4331,6 +4342,7 @@ def _run_forever_locked(once: bool = False,
               f"{migrated_targets} kayit guncellendi, "
               f"{backfilled_targets} log olayi geri kuruldu", flush=True)
     LAST_LOOP_HEARTBEAT_AT = datetime.now(timezone.utc).isoformat()
+    refresh_spot_catalog(force=True)
     refresh_universe_if_due(force=True)     # otomatik moddaysa evreni kur
     refresh_perp_map_if_due(force=True)     # statik modda da kontrat esle
     # force=True DEGIL: liste state'ten yuklendiyse yasina bakilir. --once
@@ -6084,6 +6096,12 @@ def _format_status_for_telegram() -> str:
     watch = signal_watch_snapshot()
     watch_text = ("çalışıyor" if watch.get("worker_alive") else
                   "kapalı" if not watch.get("enabled") else "worker çalışmıyor")
+    spot = SPOT_CATALOG.snapshot(SYMBOLS + OBSERVE_SYMBOLS)
+    excluded = ", ".join(f"{s} ({status})" for s, status in list(spot["excluded"].items())[:8]) or "yok"
+    if len(spot["excluded"]) > 8:
+        excluded += f" · ayrıca {len(spot['excluded'])-8} sembol"
+    catalog_note = (f" · katalog hatası: {spot['last_error']}" if spot["last_error"] else
+                    " · katalog henüz alınmadı" if spot["checked_at_epoch"] is None else "")
     if regime.get("subtype") not in (None, regime_text, "UNKNOWN"):
         regime_text += f" · {regime['subtype']}"
     return (
@@ -6091,6 +6109,7 @@ def _format_status_for_telegram() -> str:
         "<i>Çalışma, bildirim ve araştırma özeti</i>\n\n"
         "📡 <b>Tarama</b>\n"
         f"• Evren: {len(SYMBOLS)} sembol · {mode}\n"
+        f"• Spot tarama dışı: {_html.escape(excluded + catalog_note)}\n"
         f"• Tamamlanan tur: {SCANS_COMPLETED}\n"
         f"• Son tarama: {_html.escape(last_scan)}\n"
         f"• Son tarama hatası: {LAST_SCAN_ERRORS}\n\n"

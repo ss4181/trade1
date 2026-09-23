@@ -1,5 +1,9 @@
 # Samsung tablette 7/24 çalıştırma (Termux) — önerilen ücretsiz yol
 
+**24 Eylül güncellemesi:** İşlem dışı spot sembolleri taramadan ayırma ve
+ortamda 10 sn kalan kapanış ayarını düzeltme:
+[SPOT_AVAILABILITY_2026-09-24.md](SPOT_AVAILABILITY_2026-09-24.md).
+
 **23 Eylül güncellemesi:** Gün içi rejim ve ufuk içi sinyal koşulu uyarıları:
 [kurallar ve tablet adımları](SIGNAL_WATCH_2026-09-23.md).
 
