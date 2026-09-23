@@ -27,6 +27,7 @@ def main():
         env.update(PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1",
                    ENABLE_TELEGRAM="false", PUBLISH_QC_ENABLED="false",
                    G2_ENABLED="false",
+                   SIGNAL_WATCH_ENABLED="false",
                    TELEGRAM_MIN_INTERVAL_SECONDS="0",
                    TELEGRAM_BOT_TOKEN="", TELEGRAM_CHAT_ID="", GITHUB_TOKEN="")
         suites = sorted(p for p in (copy / "tests").glob("*.py")

@@ -168,6 +168,13 @@ class DeliveryOutbox:
                     for item in self._load().values()
                     if item.get("first_delivered_at")]
 
+    def confirmed_recipients(self, event_id):
+        """Private routing only: follow-ups go to recipients of this signal."""
+        with self.lock:
+            item = self._load().get(event_id) or {}
+            return [cid for cid, recipient in item.get("recipients", {}).items()
+                    if recipient.get("status") == "delivered"]
+
     def all_records(self):
         """Return every queued event with public delivery state.
 

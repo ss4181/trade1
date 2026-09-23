@@ -22,6 +22,10 @@ signals.log
 .notification_outbox.json.tmp
 .notification_preferences.json
 .notification_preferences.tmp
+.signal_watch_state.json
+.signal_watch_state.tmp
+.signal_watch_outbox.json
+.signal_watch_outbox.json.tmp
 .g2_state.json
 .g2_state.tmp
 g2_market_*.jsonl

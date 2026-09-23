@@ -1,0 +1,45 @@
+{
+  "version": "btc-eth-intraday-v1",
+  "start_utc": "2026-01-01T00:00:00Z",
+  "end_exclusive_utc": "2026-07-01T00:00:00Z",
+  "hourly": {
+    "hours": 4344,
+    "counts": {
+      "TRANSITION": 2300,
+      "BULL": 873,
+      "BEAR": 1171
+    },
+    "changes": 289,
+    "median_run_hours": 10.5
+  },
+  "daily": {
+    "hours": 4344,
+    "counts": {
+      "BEAR": 4272,
+      "TRANSITION": 72
+    },
+    "changes": 4,
+    "median_run_hours": 48.0
+  },
+  "disagreement_hours": 3133,
+  "scope": "descriptive_churn_only_not_strategy_success_or_invalidation_validation",
+  "fifteen_minute_backtest": "not_performed_no_matching_local_spot_15m_archive",
+  "sources": [
+    {
+      "file": "BTCUSDT.parquet",
+      "sha256": "9fa64fff2c7252f6fddc1e73f30dfef826eb32f4548507af81f0b2ca183d522c"
+    },
+    {
+      "file": "ETHUSDT.parquet",
+      "sha256": "621869e8a337cf8d10f11ea423c394cc972363a39b00a3d10f8975ecaa3d9a30"
+    },
+    {
+      "file": "btc_spot_daily.json",
+      "sha256": "cd1d084b38d93ca008c9d96c65a210e61363ab68f2c89f14a28c886dc7e05962"
+    },
+    {
+      "file": "intraday_regime.py",
+      "sha256": "504c3b32623a3b012da4cebf347b30e6275c9343f6cf061ff211a019edb7e11a"
+    }
+  ]
+}

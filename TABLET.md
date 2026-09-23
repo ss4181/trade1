@@ -1,5 +1,8 @@
 # Samsung tablette 7/24 çalıştırma (Termux) — önerilen ücretsiz yol
 
+**23 Eylül güncellemesi:** Gün içi rejim ve ufuk içi sinyal koşulu uyarıları:
+[kurallar ve tablet adımları](SIGNAL_WATCH_2026-09-23.md).
+
 **22 Eylül güncellemesi:** 5 saniyelik kapanış payı, bağlantı yeniden kullanımı
 ve mevcut kurulumu güncelleme adımları [SCAN_SPEED_2026-09-22.md](SCAN_SPEED_2026-09-22.md).
 Süre sınırı olmadan boğa rejimi TP2/TP3 hesapları

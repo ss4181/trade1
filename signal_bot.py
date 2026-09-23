@@ -66,6 +66,8 @@ except ZoneInfoNotFoundError:
 import archive_backup as archive_backup_module
 import strategy_engine as core_engine
 import market_regime as market_regime_engine
+import signal_watch as signal_watch_engine
+import intraday_regime
 from market_http import MarketHttp
 from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
@@ -303,6 +305,9 @@ SIGNAL_LOG = _env("SIGNAL_LOG", "signals.log")
 DELIVERY_OUTBOX = DeliveryOutbox(Path(__file__).parent / ".notification_outbox.json")
 _delivery_worker_lock = threading.Lock()
 _delivery_retry_worker: DeliveryRetryWorker | None = None
+SIGNAL_WATCH_ENABLED = _env("SIGNAL_WATCH_ENABLED", True, cast=_flag)
+_signal_watch = None
+_signal_watch_worker = None
 _g2_worker: DeliveryRetryWorker | None = None
 _g1_worker: DeliveryRetryWorker | None = None
 _g1_worker_lock = threading.Lock()
@@ -1633,6 +1638,46 @@ def market_regime_snapshot() -> dict:
         return snapshot
 
 
+def _watch_fetch(market, symbol, interval, params):
+    params = {**params, "symbol": symbol, "interval": interval}
+    if market == "um_perp":
+        params["symbol"] = perp_symbol(symbol)
+        return _futures_get("/fapi/v1/klines", params).json()
+    return _spot_get("/api/v3/klines", params).json()
+
+
+def _tick_signal_watch(stop_event=None):
+    if _signal_watch is not None:
+        _signal_watch.tick(market_regime_snapshot(), stop_event=stop_event)
+
+
+def start_signal_watch():
+    global _signal_watch, _signal_watch_worker
+    if not SIGNAL_WATCH_ENABLED or (_signal_watch_worker and _signal_watch_worker.thread.is_alive()):
+        return
+    _signal_watch = signal_watch_engine.SignalWatch(
+        Path(__file__).parent / ".signal_watch_state.json", fetch=_watch_fetch,
+        records=DELIVERY_OUTBOX.confirmed_records,
+        recipients=DELIVERY_OUTBOX.confirmed_recipients,
+        subscribers=lambda: list(TELEGRAM_SUBSCRIBERS),
+        sender=lambda text, cid: ENABLE_TELEGRAM and _telegram_send_text(text, chat_id=cid))
+    _signal_watch_worker = DeliveryRetryWorker(_tick_signal_watch, interval_seconds=15)
+    _signal_watch_worker.thread.name = "signal-watch"
+    _signal_watch_worker.start()
+
+
+def signal_watch_snapshot():
+    status = dict(_signal_watch.status) if _signal_watch else {"active_signals": 0, "last_error": None}
+    fast = dict(_signal_watch.fast) if _signal_watch else {"fresh": False}
+    try:
+        if time.time()*1000 - signal_watch_engine.millis(fast.get("reference_at")) > 20*60_000:
+            fast["fresh"] = False
+    except (TypeError, ValueError):
+        fast["fresh"] = False
+    return {**status, "enabled": SIGNAL_WATCH_ENABLED, "intraday": fast,
+            "worker_alive": bool(_signal_watch_worker and _signal_watch_worker.thread.is_alive())}
+
+
 def fetch_funding(symbol: str, limit: int = 3) -> list[dict]:
     """Son settled funding kayitlari (eskiden yeniye)."""
     r = _futures_get(
@@ -2572,7 +2617,8 @@ def _retry_signal_deliveries(stop_event=None) -> None:
 
 def notification_delivery_status() -> dict:
     worker = _delivery_retry_worker
-    report = {"scan_close_delay_seconds": SCAN_CLOSE_DELAY_SECONDS,
+    report = {"signal_watch": signal_watch_snapshot(),
+              "scan_close_delay_seconds": SCAN_CLOSE_DELAY_SECONDS,
               "market_http_reuse_enabled": MARKET_HTTP_REUSE_ENABLED,
               "market_http": {"spot": _spot_http.snapshot(), "futures": _futures_http.snapshot()},
               "retry_poll_seconds": 5,
@@ -3428,6 +3474,10 @@ def _backfill_price_targets_from_signal_log() -> int:
 def _delivery_record(sig: dict, push: bool) -> dict:
     conf = sig.get("confidence", "YUKSEK")
     strategy = str(sig.get("strategy") or "")
+    fast = signal_watch_snapshot()["intraday"]
+    if fast.get("fresh"):
+        sig = {**sig, "intraday_regime": {k: fast.get(k) for k in
+               ("version", "hourly", "early", "reference_at", "hourly_reference_at")}}
     # Shadow workers may call notify directly; give every strategy the same
     # frozen regime metadata without adding a network call to notification.
     if "market_regime" not in sig:
@@ -4255,6 +4305,8 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             _delivery_retry_worker.stop()
             _delivery_retry_worker = None
         stop_market_regime_worker()
+        if _signal_watch_worker:
+            _signal_watch_worker.stop()
         _spot_http.close()
         _futures_http.close()
         INSTANCE_LOCK_HELD = False
@@ -4288,6 +4340,7 @@ def _run_forever_locked(once: bool = False,
     if not once:
         # This worker owns the daily BTC request; scan_all never waits on it.
         start_market_regime_worker()
+        start_signal_watch()
     # Telegram komut dinleyicisini yalnizca surekli modda baslat (--once'ta degil)
     if ENABLE_TELEGRAM and TELEGRAM_COMMANDS and not once:
         threading.Thread(target=telegram_command_loop, name="tg-commands",
@@ -6028,6 +6081,9 @@ def _format_status_for_telegram() -> str:
     last_scan = _display_tr_time(LAST_SCAN_AT) if LAST_SCAN_AT else "(henüz yok)"
     regime = market_regime_snapshot()
     regime_text = str(regime.get("label") or "UNKNOWN")
+    watch = signal_watch_snapshot()
+    watch_text = ("çalışıyor" if watch.get("worker_alive") else
+                  "kapalı" if not watch.get("enabled") else "worker çalışmıyor")
     if regime.get("subtype") not in (None, regime_text, "UNKNOWN"):
         regime_text += f" · {regime['subtype']}"
     return (
@@ -6043,6 +6099,12 @@ def _format_status_for_telegram() -> str:
          f"• Son sinyal referansı → Telegram API kabulü: {delivery_note}\n\n"
          f"🌐 <b>Piyasa rejimi:</b> {_html.escape(regime_text)} · "
          f"veri {_html.escape(_display_tr_time(regime.get('data_close_at')))}\n\n"
+         f"👁️ <b>Sinyal takibi:</b> {watch_text} · {watch['active_signals']} sinyal\n"
+         f"• Kontrol: {_html.escape(_display_tr_time(watch.get('last_check_at')))}\n"
+         f"• Hata: {_html.escape(str(watch.get('last_error') or watch.get('fast_error') or 'yok'))} · "
+         f"fiyat hatası: {watch.get('price_errors', 0)} · bekleyen kontrol: {watch.get('price_backlog', 0)}\n\n"
+         f"• Uyarı teslimi: {watch.get('pending_alerts', 0)} bekliyor · "
+         f"{watch.get('failed_alert_deliveries', 0)} başarısız alıcı teslimi\n\n"
          "🔔 <b>Bildirim kapısı</b>\n"
         f"• Genel eşik: {_html.escape(str(NOTIFY_MIN_CONFIDENCE))}+\n"
         f"• Sessiz stratejiler: {_html.escape(disabled)}\n"
@@ -6057,9 +6119,26 @@ def _format_status_for_telegram() -> str:
 
 
 def _format_market_regime_for_telegram() -> str:
+    watch = signal_watch_snapshot()
+    fast = watch["intraday"]
+    if fast.get("fresh"):
+        detail = (f"\n\n🕐 <b>Saatlik yön:</b> {intraday_regime.NAMES.get(fast.get('hourly'), 'BELİRSİZ')}"
+                  f" · {_display_tr_time(fast.get('hourly_reference_at'))}"
+                  f"\n⚡ <b>15dk erken yön:</b> {intraday_regime.NAMES.get(fast.get('early'), 'BELİRSİZ')}"
+                  f"\n🕒 {_display_tr_time(fast.get('reference_at'))}"
+                  "\n<i>BTC + ETH · boğa/ayı için iki kapalı mum teyidi; ayrışma geçiştir.</i>")
+    else:
+        detail = "\n\n⚡ <b>Gün içi yön:</b> BELİRSİZ · güncel veri bekleniyor."
+    detail += f"\n👁️ Ufku devam eden sinyal: {watch['active_signals']}"
+    if watch.get("last_error") or watch.get("price_errors") or watch.get("price_backlog"):
+        detail += "\n⚠️ Sinyal takibinde eksik kontrol var; /status ile kontrol et."
+    return _format_daily_regime_for_telegram() + detail
+
+
+def _format_daily_regime_for_telegram() -> str:
     """Short read-only regime card from the asynchronous cache."""
     regime = market_regime_snapshot()
-    label = str(regime.get("label") or "UNKNOWN")
+    label = str(regime.get("label") or "UNKNOWN") if regime.get("fresh", True) else "UNKNOWN"
     subtype = str(regime.get("subtype") or "UNKNOWN")
     if label == "UNKNOWN":
         error = regime.get("last_error") or regime.get("worker_last_error")
@@ -6110,7 +6189,7 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
             "• /status — çalışma ve bildirim durumu\n\n"
              "📊 <b>Raporlar</b>\n"
              "• /performans — canlı sonuçlar ve hedef karnesi\n"
-             "• /piyasa — BTC günlük rejimi (ayı/geçiş/boğa)\n"
+             "• /piyasa — günlük rejim, saatlik ve 15dk yön\n"
              "• /arastirma — OI/funding/likidasyon hazırlığı\n\n"
             "👤 <b>Erişim</b>\n"
             "• /myid — kendi chat ID'in\n"

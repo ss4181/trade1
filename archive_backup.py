@@ -50,6 +50,8 @@ STATE_NAMES = (
     ".subscribers.json",
     ".forward_oi_report_state.json",
     ".notification_outbox.json",
+    ".signal_watch_state.json",
+    ".signal_watch_outbox.json",
     "signals.log",
 )
 
