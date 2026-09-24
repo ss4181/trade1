@@ -74,6 +74,7 @@ from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
 import g2_notifications as g2
 import notification_scorecard
+import dashboard_reporting
 from concurrent.futures import ThreadPoolExecutor, as_completed, CancelledError
 from configure_notifications import load as load_notification_preferences
 from derivatives_archive import (
@@ -621,7 +622,7 @@ GITHUB_PAGES_BRANCH = _env("GITHUB_PAGES_BRANCH", "gh-pages")
 # Statik sayfa ile sik degisen veriyi ayir: data branch'indeki commit'ler Pages
 # build'i tetiklemez. Boylece 15 dakikada bir gereksiz Pages kuyrugu olusmaz.
 GITHUB_DATA_BRANCH = _env("GITHUB_DATA_BRANCH", "trade1-data")
-PUBLISH_INTERVAL_MIN = _env("PUBLISH_INTERVAL_MIN", 15)
+PUBLISH_INTERVAL_MIN = _env("PUBLISH_INTERVAL_MIN", 5)
 # Yayin, ancak token ACIKCA verildiyse (env ya da URL'e gomulu) acilir.
 PUBLISH_ENABLED = _env("PUBLISH_ENABLED", bool(GITHUB_TOKEN and GITHUB_REPO),
                        cast=_truthy)
@@ -4439,10 +4440,8 @@ def _run_forever_locked(once: bool = False,
                 run_shadow_experiments()
             if once:
                 publish_to_github()
-            else:
-                _start_publish_worker()
-            if SCANS_COMPLETED % 12 == 0:
-                _start_performance_worker(max_signals=40)
+            if not once and (SCANS_COMPLETED == 1 or SCANS_COMPLETED % 3 == 0):
+                _start_performance_worker(max_signals=PERF_MAX_SIGNALS)
             _maybe_daily_summary()
             if not once:
                 # Tek-seferlik GitHub/manual taramalar arşiv raporu göndermez;
@@ -4466,7 +4465,11 @@ def _run_forever_locked(once: bool = False,
                 # Yedek tarama sonucuna bağlı değildir: mevcut arşiv, Binance
                 # taraması o turda hata verse bile vadesi geldiyse kopyalanır.
                 _start_archive_backup_worker()
-                if PUBLISH_ENABLED or DASHBOARD_ENABLED:
+                # Publish failure status too; refresh display prices before
+                # serializing, rather than publishing the previous scan's quote.
+                if PUBLISH_ENABLED:
+                    _start_publish_worker()
+                elif DASHBOARD_ENABLED:
                     threading.Thread(target=_refresh_display_prices,
                                      name="display-prices", daemon=True).start()
         if once:
@@ -4587,10 +4590,10 @@ def _perf_key(sig: dict) -> str:
 
 def _signal_universe(sig: dict) -> str:
     """Eski kayitlarda eksik universe alanini deterministik olarak tamamla."""
-    if sig.get("observe") or sig.get("strategy") in OBSERVE_STRATEGIES:
-        return "observe"
     if sig.get("universe"):
         return str(sig["universe"])
+    if sig.get("observe") or sig.get("strategy") in OBSERVE_STRATEGIES:
+        return "observe"
     symbol = str(sig.get("symbol") or "")
     core = {s.strip() for s in DEFAULT_SYMBOLS.split(",") if s.strip()}
     if symbol in core:
@@ -5419,6 +5422,10 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
     path_summary = price_path_summary()
     rows = []
     all_records = _reporting_signal_records()
+    # Snapshot nested state under its lock; reporting must not race trackers.
+    with _price_target_lock:
+        target_events = json.loads(json.dumps(PRICE_TARGET_STATE.get("events", {})))
+    regime_live = dashboard_reporting.live_regime_summary(all_records, target_events)
     activity = _notification_activity(all_records)
     records = all_records
     total_log_lines = len(records)
@@ -5458,9 +5465,9 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             realized = cached_perf
             entry = provisional_entry
         symbol = sig.get("symbol", "")
-        performance_market = sig.get("performance_market") or (
-            "um_perp" if strat == "S2" else "spot")
-        entry_market = sig.get("signal_market") or "spot"
+        performance_market = dashboard_reporting.market_name(sig.get("performance_market") or (
+            "um_perp" if strat == "S2" else "spot"))
+        entry_market = dashboard_reporting.market_name(sig.get("signal_market") or "spot")
         same_market = entry_market == performance_market
         if performance_market == "um_perp":
             observed_at = LAST_PERP_AT.get(symbol)
@@ -5480,7 +5487,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
                        or price_age_s > PRICE_STALE_AFTER_MINUTES * 60)
         cur = None if price_stale or not same_market else observed_price
         gross = None
-        if not matured and cur and entry:
+        if not performance_excluded and now < deadline and cur and entry:
             gross = round((cur / entry - 1) * 100 * (
                 -1 if sig.get("direction") == "SHORT" else 1), 4)
         elif matured and realized is not None:
@@ -5521,8 +5528,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "market_regime_as_of": sig.get("market_regime_as_of"),
             "market_regime_data_close_at": sig.get("market_regime_data_close_at"),
             "measurement_version": sig.get("measurement_version") or (
-                (target_profile or {}).get("measurement_version")
-                if target_profile else None) or "legacy_unknown",
+                target_profile or {}).get("measurement_version") or "legacy_unknown",
             "entry": entry, "horizon_h": h,
             "signal_price": sig.get("price"),
             "signal_price_source": sig.get("price_source") or "signal_bar_close",
@@ -5536,19 +5542,20 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
                             else "signal_time_provisional"),
             "entry_market": entry_market,
             "performance_market": performance_market,
-            "exit_by": deadline.strftime("%Y-%m-%d %H:%M"),
+            "exit_by": deadline.isoformat(),
             "status": ("OLAY" if performance_excluded else
-                       "OLGUN" if matured else "AKTIF"),
-            "remaining_h": (None if matured
+                       "OLGUN" if matured else "HESAPLANIYOR" if now >= deadline else "AKTIF"),
+            "remaining_h": (None if matured or performance_excluded
                             else max(0, round((deadline - now).total_seconds()
                                               / 3600, 1))),
-            "cur_price": cur if not matured else None,
+            "cur_price": cur if now < deadline and not performance_excluded else None,
             "price_age_seconds": (round(price_age_s, 1)
                                   if price_age_s is not None else None),
             "price_stale": price_stale,
             "pnl_unavailable_reason": (
                 "event_only_no_trade_outcome" if performance_excluded else
                 "matured_outcome_missing_or_recalculating" if matured and realized is None else
+                "awaiting_closed_outcome" if not matured and now >= deadline else
                 "entry_and_performance_market_mismatch"
                 if not matured and not same_market else
                 "market_price_stale_or_missing"
@@ -5564,12 +5571,6 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
                           else "gerceklesen_next_open_net_cost_assumption"
                           if matured else
                           "tahmini_sinyal_kapanisi_net_cost_assumption"),
-            "market_regime": sig.get("market_regime"),
-            "market_regime_subtype": sig.get("market_regime_subtype"),
-            "market_regime_version": sig.get("market_regime_version"),
-            "market_regime_source": sig.get("market_regime_source"),
-            "market_regime_as_of": sig.get("market_regime_as_of"),
-            "market_regime_data_close_at": sig.get("market_regime_data_close_at"),
             "silenced": silenced,
             "push_allowed": sig.get("push_allowed", not silenced),
             "notification_status": notification_status,
@@ -5585,7 +5586,9 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         })
     rows.reverse()
     strategies = []
-    for key in ("S1+S4", "S1", "S3", "S2", "S5", "S6", "G1", "G2", "DL1"):
+    names = list(dict.fromkeys(["S1+S4", "S1", "S3", "S2", "S5", "S6", "G1", "G2", "DL1"]
+                              + sorted({r["strategy"] for r in rows})))
+    for key in names:
         bt = STRATEGY_TEST_STATS.get(key, {})
         conf, evid = signal_confidence(key)
         lr = live_rets.get(key, [])
@@ -5598,11 +5601,13 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         ]
         strategies.append({
             "name": key, "confidence": conf, "evidence": evid,
-            "pushed": (S2_RESEARCH_PUSH if key == "S2" else
-                       SHADOW_PUSH_ENABLED if key in SHADOW_STRATEGIES else
-                       OBSERVE_PUSH if key in OBSERVE_STRATEGIES else
+            "pushed": (ENABLE_TELEGRAM and key not in DISABLED_STRATEGIES and (
+                       S2_RESEARCH_PUSH if key == "S2" else
+                       SHADOW_EXPERIMENTS_ENABLED and SHADOW_PUSH_ENABLED and G2_ENABLED and G2_PUSH if key == "G2" else
+                       SHADOW_EXPERIMENTS_ENABLED and SHADOW_PUSH_ENABLED if key in SHADOW_STRATEGIES else
+                       OBSERVE_ENABLED and OBSERVE_PUSH if key in OBSERVE_STRATEGIES else
                        CONF_RANK.get(conf, 2) >= CONF_RANK.get(
-                           NOTIFY_MIN_CONFIDENCE, 1)),
+                           NOTIFY_MIN_CONFIDENCE, 1))),
             "bt_h": bt.get("h"), "bt_med": bt.get("med"), "bt_wr": bt.get("wr"),
             "bt_q10": bt.get("q10"), "bt_q90": bt.get("q90"), "bt_n": bt.get("n"),
             "bt_scope": bt.get("scope"),
@@ -5615,12 +5620,20 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "price_path": path_summary.get(key, {}),
             "user_success": target_summary.get(key, {}).get(
                 _target_level_key(USER_SUCCESS_TARGET_PCT), {}),
+            "bracket": dashboard_reporting.bracket_summary(target_events) if key == "G2" else None,
+            "last_five": notification_scorecard.summarize(
+                {**next((r for r in reversed(all_records) if r.get("strategy") == key), {}),
+                 "strategy": key, "event_id": None, "notified_at": now.isoformat()},
+                all_records, target_events, USER_SUCCESS_TARGET_PCT),
         })
     backup = archive_backup_status()
     # Public panoya cihaz dizinini yazma; yalnız sağlık özeti yayımlanır.
     backup.pop("directory", None)
     return {
         "now": now.isoformat(timespec="seconds"),
+        "schema_version": "dashboard-v2",
+        "regime_performance": {"live": regime_live,
+            "historical": dashboard_reporting.historical_regime_report(Path(__file__).parent)},
         "history_scope": {"total_log_lines": total_log_lines,
                            "total_event_records": total_log_lines,
                            "window_log_lines": len(records),
@@ -5633,9 +5646,16 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
                            "legacy_target_events": target_summary.get("_meta", {})},
         "status": {
             "scans": SCANS_COMPLETED, "last_scan": LAST_SCAN_AT,
+            "consecutive_scan_failures": CONSECUTIVE_SCAN_FAILURES,
+            "last_scan_failure_at": LAST_SCAN_FAILURE_AT,
             "runtime_source": _default_research_report_source(),
             "signal_timeframe": "1h",
             "qc_enabled": PUBLISH_QC_ENABLED,
+            "publication": {"enabled": PUBLISH_ENABLED, "interval_minutes": PUBLISH_INTERVAL_MIN,
+                            "worker_active": PUBLISH_WORKER_ACTIVE,
+                            "last_error": PUBLISH_WORKER_LAST_ERROR},
+            "performance_worker": {"active": PERFORMANCE_WORKER_ACTIVE,
+                                   "last_error": PERFORMANCE_WORKER_LAST_ERROR},
             "s2_top_position_readiness": ("configured_collecting_not_validated"
                 if BINANCE_MARKET_DATA_API_KEY else "blocked_missing_BINANCE_MARKET_DATA_API_KEY"),
             "errors": LAST_SCAN_ERRORS, "symbols": len(SYMBOLS),
@@ -5720,22 +5740,25 @@ def dashboard_html(data_url: str = "/api/dashboard") -> str:
 
 class _DashHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith("/api/dashboard"):
+        path = self.path.split("?", 1)[0]
+        status = 200
+        if path == "/api/dashboard":
             try:
                 body = json.dumps(build_dashboard_data(),
-                                  ensure_ascii=False).encode("utf-8")
+                                  ensure_ascii=False, allow_nan=False).encode("utf-8")
                 ct = "application/json; charset=utf-8"
             except Exception as e:
+                status = 503
                 body = json.dumps({"error": "dashboard_unavailable"}).encode("utf-8")
                 ct = "application/json; charset=utf-8"
-        elif self.path in ("/", "/index.html"):
+        elif path in ("/", "/index.html"):
             body = dashboard_html().encode("utf-8")
             ct = "text/html; charset=utf-8"
         else:
             self.send_response(404)
             self.end_headers()
             return
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", ct)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
@@ -5975,7 +5998,7 @@ def publish_to_github(force: bool = False) -> None:
         return
     _last_publish = time.time()
     try:
-        data = json.dumps(build_dashboard_data(), ensure_ascii=False).encode("utf-8")
+        data = json.dumps(build_dashboard_data(), ensure_ascii=False, allow_nan=False).encode("utf-8")
         _gh_ensure_branch(GITHUB_DATA_BRANCH)
         if _gh_sha is None:
             _gh_sha = _gh_get_sha("data.json", GITHUB_DATA_BRANCH)
@@ -6011,7 +6034,7 @@ def publish_to_github(force: bool = False) -> None:
 def _start_publish_worker() -> bool:
     """GitHub API yayimini ana tarama heartbeat'inden ayir."""
     global PUBLISH_WORKER_ACTIVE
-    if not PUBLISH_ENABLED:
+    if not PUBLISH_ENABLED or time.time() - _last_publish < PUBLISH_INTERVAL_MIN * 60:
         return False
     if not _publish_worker_lock.acquire(blocking=False):
         return False
@@ -6020,6 +6043,7 @@ def _start_publish_worker() -> bool:
     def work() -> None:
         global PUBLISH_WORKER_ACTIVE, PUBLISH_WORKER_LAST_ERROR
         try:
+            _refresh_display_prices()
             publish_to_github()
         except Exception as e:
             PUBLISH_WORKER_LAST_ERROR = f"{type(e).__name__}: {e}"

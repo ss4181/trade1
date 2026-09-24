@@ -59,6 +59,15 @@ get('reset').listeners.click();
 assert.equal(get('fMeasurement').value,'');
 assert.ok(get('rows').innerHTML.includes('funding hariç'));
 assert.ok(run('drawer(D.signals[0])').includes('Motor hash'));
+assert.equal(run("trTime('2026-09-24T12:00:00Z')"),'24.09.2026 15:00:00 TRT');
+assert.equal(run("trTime('invalid')"),'—');
+assert.equal(run("freshnessInfo({now:'2000-01-01T00:00:00Z'}).stale"),true);
+assert.ok(!run("targetBadges({g2_bracket:{status:'PENDING'},targets:[]})").includes('TP2'));
+context.liveRows=[{strategy:'G1',n:2,tp2:{hit:1,missed:1,pending:0,unavailable:0},tp3:{hit:0,missed:2,pending:0,unavailable:0}},
+                  {strategy:'G1',n:3,tp2:{hit:1,missed:0,pending:1,unavailable:1},tp3:{hit:1,missed:0,pending:1,unavailable:1}}];
+assert.equal(run("combineLiveRegimes(liveRows,'BULL')[0].tp2.resolved"),3);
+assert.equal(run("combineLiveRegimes(liveRows,'BULL')[0].tp2.hit_rate_pct"),200/3);
+assert.equal(run("combineLiveRegimes(liveRows,'BULL')[0].n"),5);
 
 const cohort = {strategy:'S3',direction:'LONG',performance_market:'spot',universe:'core30',
   config_version:'v1',engine_version:'v1',engine_config_hash:'h1',evidence_source:'forward_confirmed_delivery',
