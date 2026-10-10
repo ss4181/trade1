@@ -27,6 +27,7 @@ class G1EntryTests(unittest.TestCase):
 
     def record(self, eid='new'):
         return dict(event_id=eid,strategy='G1',symbol='AAAUSDT',direction='LONG',
+            universe='all_active_usdm_perpetuals',
             price=100.,horizon_hours=4,performance_market='um_perp',
             config_version=entry.CONFIG_VERSION,price_reference_status='fresh',
             price_target_measurement_version=entry.MEASUREMENT,
@@ -117,7 +118,7 @@ class G1EntryTests(unittest.TestCase):
         self.assertAlmostEqual(plan['gross_pct'],-2.)
 
     def test_no_entry_and_timeout_are_explicit(self):
-        e=self.event();bars=self.bars(e['next_start_ms'],16)
+        e=self.event();bars=self.bars(e['next_start_ms'],239)
         for b in bars:
             b.update(open=100.,high=101.,low=99.,close=99.5)
         entry.advance_entry_shadow(e,bars)
@@ -125,9 +126,20 @@ class G1EntryTests(unittest.TestCase):
         self.assertEqual(e['entry_shadow']['plans']['confirm_5m']['status'],'no_entry')
         self.assertEqual(e['entry_shadow']['plans']['wait_15m']['status'],'TIMEOUT')
         e['status']='expired'
+        e['next_start_ms']=bars[-1]['open_time']+60000
         result=summarize([e])
         self.assertFalse(result['readiness_gate'])
         self.assertEqual(result['plans']['confirm_5m']['counts']['no_entry'],1)
+
+    def test_research_metadata_is_recorded_without_changing_entry(self):
+        r=self.record()
+        r['entry_quote']['exchange_time_ms']=int(bot._target_dt(r['notified_at']).timestamp()*1000)
+        r.update(market_regime='BULL',market_regime_data_close_at='2026-10-02T23:59:59.999+00:00')
+        bot._register_price_targets(r)
+        e=bot.PRICE_TARGET_STATE['events']['new']
+        self.assertEqual(e['entry_study_origin'],'forward_live_delivery')
+        self.assertEqual(e['market_regime'],'BULL')
+        self.assertEqual(e['entry_ref'],100.)
 
     def test_g1_fresh_quote_does_not_modify_frozen_decision(self):
         fixture=ShadowExperimentTests();fixture.setUp()

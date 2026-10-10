@@ -5,6 +5,7 @@ import math
 
 MEASUREMENT = "signal-reference-touch-1m-v2"
 CONFIG_VERSION = "G1-prereg-2026-10-03-v3-fresh-ask"
+PATH_VERSION = "g1-entry-path-v1"
 MINUTE = 60_000
 
 
@@ -33,6 +34,28 @@ def tracking_step(event):
 
 def ceil_bar(timestamp, step):
     return ((timestamp + step - 1) // step) * step
+
+
+def _observe_plan_path(plan, bar):
+    """Add diagnostics only; never feed extremes back into the entry decision.
+
+    Includes the full exit candle: intrabar order of its extremes is unknown.
+    A plan upgraded mid-path cannot claim complete MAE/MFE coverage.
+    """
+    t, price = int(bar["open_time"]), plan["entry_price"]
+    path = plan.setdefault("path", {
+        "version": PATH_VERSION, "complete_from_entry": t == plan["entry_time_ms"],
+        "last_open_ms": t-MINUTE, "n_bars": 0, "mae_full_bar_pct": 0.,
+        "mfe_full_bar_pct": 0.,
+    })
+    if t <= path["last_open_ms"]:
+        return
+    if t != path["last_open_ms"]+MINUTE:
+        path["complete_from_entry"] = False
+    path["last_open_ms"] = t
+    path["n_bars"] += 1
+    path["mae_full_bar_pct"] = min(path["mae_full_bar_pct"], (float(bar["low"])/price-1)*100)
+    path["mfe_full_bar_pct"] = max(path["mfe_full_bar_pct"], (float(bar["high"])/price-1)*100)
 
 
 def advance_entry_shadow(event, bars):
@@ -76,6 +99,7 @@ def advance_entry_shadow(event, bars):
                 plan = plans[key]
                 if plan["status"] != "active" or t < plan["entry_time_ms"]:
                     continue
+                _observe_plan_path(plan, bar)
                 price = plan["entry_price"]
                 stop, target = price * .98, price * 1.03
                 o, h, l = (float(bar[k]) for k in ("open", "high", "low"))
@@ -89,6 +113,7 @@ def advance_entry_shadow(event, bars):
                     status, fill = "TP", target
                 else:
                     plan["last_close"] = float(bar["close"])
+                    plan["last_close_time_ms"] = t+MINUTE
                     continue
                 plan.update(status=status, exit_time_upper_ms=t+MINUTE,
                             gross_pct=(fill/price-1)*100)
@@ -99,6 +124,8 @@ def finish_entry_shadow(event):
     for plan in event.get("entry_shadow", {}).get("plans", {}).values():
         if plan["status"] == "active" and "last_close" in plan:
             plan.update(status="TIMEOUT", gross_pct=(plan["last_close"]/plan["entry_price"]-1)*100)
+            if "last_close_time_ms" in plan:
+                plan["exit_time_upper_ms"] = plan["last_close_time_ms"]
 
 
 def public_shadow(event):

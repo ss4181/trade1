@@ -1,64 +1,51 @@
-"""Summarize frozen forward G1 entries. No orders or live confidence score."""
+"""Read-only G1 entry report. No network, tuning, bot import or credentials."""
 from __future__ import annotations
 
 import argparse
-from collections import Counter
-from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
-import statistics
 import sys
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from g1_entry import MEASUREMENT
+from research.g1_entry_comparison import summarize, render_text
 
-
-def summarize(events):
-    cohort = [e for e in events if isinstance(e,dict) and e.get('strategy')=='G1'
-              and e.get('measurement_version')==MEASUREMENT
-              and e.get('delivery_evidence')=='confirmed']
-    completed = [e for e in cohort if e.get('status')=='expired']
-    times = sorted(datetime.fromisoformat(e['started_at']).astimezone(timezone.utc) for e in cohort)
-    days = len({e['started_at'][:10] for e in completed})
-    span = (times[-1]-times[0]).total_seconds()/86400 if times else 0.
-    plans = {}
-    for key in ('immediate','wait_5m','wait_15m','confirm_5m','confirm_15m'):
-        counts = Counter()
-        returns = []
-        for e in completed:
-            plan = e.get('entry_shadow',{}).get('plans',{}).get(key)
-            if not plan:
-                counts['unavailable'] += 1
-            elif plan['status']=='no_entry':
-                counts['no_entry'] += 1
-                returns.append(0.)  # Research opportunity not traded: zero, not a winning trade.
-            elif plan['status'] in ('TP','SL','SL_GAP','AMBIGUOUS_SL','TIMEOUT') and 'gross_pct' in plan:
-                counts[plan['status']] += 1
-                returns.append(plan['gross_pct']-.4)
-            else:
-                counts['unavailable'] += 1
-        n = sum(counts[k] for k in ('TP','SL','SL_GAP','AMBIGUOUS_SL','TIMEOUT'))
-        plans[key] = dict(counts=dict(counts),n_entered=n,n_opportunities=len(completed),
-            tp_first_lower_pct=100*counts['TP']/n if n else None,
-            tp_first_upper_pct=100*(counts['TP']+counts['AMBIGUOUS_SL'])/n if n else None,
-            mean_net40_per_observed_opportunity_ex_funding_pct=statistics.mean(returns) if returns else None,
-            sample_warning='small_sample' if n<30 or days<28 or span<90 else 'forward_sample_not_yet_validated')
-    return dict(schema_version='g1-entry-shadow-report-v1',n_total=len(cohort),n_matured=len(completed),
-        n_pending=sum(e.get('status')=='active' for e in cohort),event_days=days,span_days=round(span,1),
-        readiness_gate=span>=90 and len(completed)>=30 and days>=28,
-        funding='not_modeled',live_filter_enabled=False,plans=plans)
+PROTOCOL = Path(__file__).with_name('G1_ENTRY_COMPARISON_PROTOCOL.md')
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--state',type=Path,default=Path(__file__).resolve().parents[1]/'.price_target_state.json')
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument('--state',type=Path,default=Path(__file__).resolve().parents[1]/'.price_target_state.json')
+    source.add_argument('--replay-dir', type=Path, help='Old snapshot + verified 1m cache, NEVER forward OOS')
+    parser.add_argument('--as-of', help='Timezone-qualified cutoff for reproducible forward reports')
+    parser.add_argument('--format', choices=('json', 'text'), default='json')
     args=parser.parse_args()
-    if not args.state.exists():
-        print('G1 ileri giriş ölçümü henüz yok; yeni sürümde taze kotasyonlu teslimler bekleniyor.')
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    try:
+        if args.replay_dir:
+            from research.g1_entry_replay import replay
+            events, metadata = replay(args.replay_dir)
+            report = summarize(events, as_of=metadata['as_of_utc'], mode='retrospective')
+            report['provenance'] = metadata
+        elif not args.state.exists():
+            report = summarize([], as_of=args.as_of)
+            report['input_status'] = 'state_missing'
+        else:
+            raw = args.state.read_bytes()
+            data = json.loads(raw)
+            if not isinstance(data, dict) or not isinstance(data.get('events'), dict):
+                raise ValueError('invalid_state_shape')
+            report = summarize(data['events'].values(), as_of=args.as_of)
+            report['provenance'] = dict(input_sha256=hashlib.sha256(raw).hexdigest(), network_used=False)
+        report['protocol_sha256'] = hashlib.sha256(PROTOCOL.read_bytes()).hexdigest()
+        print(render_text(report) if args.format == 'text' else json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False))
         return 0
-    data=json.loads(args.state.read_text(encoding='utf-8'))
-    print(json.dumps(summarize(data.get('events',{}).values()),ensure_ascii=False,indent=2))
-    return 0
+    except (OSError, ValueError, TypeError, KeyError, OverflowError):
+        # Never echo JSON decoder excerpts, records, local paths or secrets.
+        print('Rapor okunamadı: dosya biçimini, hash kanıtını ve zaman alanlarını kontrol edin.', file=sys.stderr)
+        return 2
 
 
 if __name__=='__main__':

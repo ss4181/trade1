@@ -3051,6 +3051,12 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
             }
             if strategy == "G2":
                 g2.initialize_tracking(event, record, int(notified.timestamp()*1000))
+            if minute_mode:
+                # Point-in-time research labels only; never an entry filter.
+                event["entry_study_origin"] = "forward_live_delivery"
+                for field in ("market_regime", "market_regime_data_close_at"):
+                    if field in record:
+                        event[field] = record[field]
             if persist:
                 events[event_id] = event
                 _save_price_target_state()
@@ -5739,6 +5745,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "engine_version": core_engine.ENGINE_VERSION,
             "g1_entry_config_version": g1_entry.CONFIG_VERSION,
             "g1_entry_measurement_version": g1_entry.MEASUREMENT,
+            "g1_entry_path_version": g1_entry.PATH_VERSION,
             "measurement_versions": ["signal-reference-touch-v1",
                                       g1_entry.MEASUREMENT,
                                       "paper-barriers-v1", g2.MEASUREMENT, "legacy_unknown"],

@@ -69,7 +69,7 @@ uvicorn) bulunmalı. Sır içermeyen log satırlarıyla başlangıcı kontrol ed
 
 ```bash
 grep -E 'signal_bot basladi|tarama bitti' bot.out.log | tail -5
-python research/review_g1_entry_shadow.py
+python research/review_g1_entry_shadow.py --format text
 ```
 
 Boş ileri rapor ilk yeni, taze kotasyonlu G1 teslimine kadar normaldir.
@@ -88,4 +88,18 @@ Boş ileri rapor ilk yeni, taze kotasyonlu G1 teslimine kadar normaldir.
    unavailable kayıtlar kazanmış/kaybetmiş varsayılmamalı.
 
 GitHub CI geçmesi tablet deploy'u veya gerçek Telegram teslimi kanıtı değildir.
+
+## Giriş karşılaştırması raporu (11 Ekim eki)
+
+`research/G1_ENTRY_COMPARISON_PROTOCOL.md` beş sabit planın ölçüm/payda
+kurallarını, `research/G1_ENTRY_COMPARISON_2026-10-11.md` ilk karşılaştırmayı
+açıklar. `--format json` ayrıntılı maliyet, rejim, kaçırılan fırsat ve
+eşlenmiş karşılaştırmayı verir. `--state /yedek/.price_target_state.json`
+ile PC yedeği salt okunur incelenebilir. Kopyada yeni v3 teslim yoksa rapor
+boştur; eski sinyaller ileri doğrulama sayılmaz.
+
+Ek telemetri sürümü `g1-entry-path-v1`, panonun
+`status.g1_entry_path_version` alanında görünür. Bu sürüm yalnız MAE/MFE,
+timeout zamanı ve sinyal-anı rejim kanıtı ekler; G1 giriş kuralları, TP3/SL2,
+bildirim ve tarama davranışı değişmez. Ham state'i kamuya yüklemeyin.
 Tablet erişimi olmadan bu kabul adımlarının tamamlandığı iddia edilmez.
