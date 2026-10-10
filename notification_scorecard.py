@@ -34,7 +34,8 @@ def summarize(signal,delivered,events,target_pct=2.):
                 raw=(event.get("g2_bracket") or {}).get("status")
                 status=("success" if raw=="TP" else "failed" if raw in ("SL","AMBIGUOUS_SL","TIMEOUT")
                         else "pending" if raw=="PENDING" else "unknown")
-            elif strategy!="G2" and event.get("measurement_version")=="signal-reference-touch-v1":
+            elif strategy!="G2" and event.get("measurement_version")==(
+                    signal.get("price_target_measurement_version") or "signal-reference-touch-v1"):
                 target=(event.get("targets") or {}).get(f"{target_pct:g}")
                 if target:
                     status=("success" if target.get("hit_at") else "failed" if event.get("status")=="expired"

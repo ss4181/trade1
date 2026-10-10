@@ -49,6 +49,14 @@ class DashboardTests(unittest.TestCase):
         records = [dict(event_id='0',strategy='G2',delivery_confirmed=True)]
         self.assertEqual(reporting.live_regime_summary(records,events)['rows'][0]['tp3']['unavailable'],1)
 
+    def test_new_g1_minute_regime_is_separate_from_legacy_measurement(self):
+        records=[dict(event_id=str(i),strategy='G1',delivery_confirmed=True,config_version='same') for i in range(2)]
+        events={str(i):dict(measurement_version=version,status='expired',targets={'2':{'hit_at':'yes'},'3':{}})
+                for i,version in enumerate(['signal-reference-touch-v1','signal-reference-touch-1m-v2'])}
+        rows=reporting.live_regime_summary(records,events)['rows']
+        self.assertEqual(len(rows),2)
+        self.assertTrue(all(r['tp2']['resolved']==1 and r['tp2']['hit']==1 for r in rows))
+
     def test_report_selects_latest_valid_and_projects_no_paths(self):
         with tempfile.TemporaryDirectory() as root:
             folder=Path(root)/'research/results';folder.mkdir(parents=True)
@@ -78,6 +86,10 @@ class DashboardTests(unittest.TestCase):
         self.assertIsNone(rows['waiting']['pnl_pct'])
         self.assertTrue(rows['live']['exit_by'].endswith('+00:00'))
         self.assertFalse(any(s['pushed'] for s in data['strategies']))
+        self.assertEqual(data['status']['g1_entry_config_version'],
+                         'G1-prereg-2026-10-03-v3-fresh-ask')
+        self.assertEqual(data['status']['g1_entry_measurement_version'],
+                         'signal-reference-touch-1m-v2')
 
 
 if __name__ == '__main__':

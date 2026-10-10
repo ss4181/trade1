@@ -44,6 +44,8 @@ def live_regime_summary(records, events):
         identity = {k: record.get(k) or event.get(k) or "UNKNOWN" for k in keys}
         identity.update(strategy=strategy,
                         market=market_name(record.get("performance_market") or event.get("market") or "UNKNOWN"),
+                        measurement_version=(record.get("price_target_measurement_version")
+                            or event.get("measurement_version") or "signal-reference-touch-v1"),
                         regime=record.get("market_regime") or "UNKNOWN",
                         subtype=record.get("market_regime_subtype") or "UNKNOWN",
                         regime_version=record.get("market_regime_version") or "UNKNOWN")
@@ -53,7 +55,8 @@ def live_regime_summary(records, events):
         row["n"] += 1
         for level in (2, 3):
             target = (event.get("targets") or {}).get(str(level))
-            if strategy == "G2" or event.get("measurement_version") != "signal-reference-touch-v1" or target is None:
+            if strategy == "G2" or event.get("measurement_version") not in (
+                    "signal-reference-touch-v1", "signal-reference-touch-1m-v2") or target is None:
                 outcome = "unavailable"
             elif event.get("status") == "expired":
                 outcome = "hit" if target.get("hit_at") else "missed"

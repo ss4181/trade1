@@ -783,3 +783,43 @@ proje klasöründen aşağıdaki kontrol `ok: true` dönmeli:
 Son commit satırını, `--backup-status` ve `--research-status` çıktılarını
 paylaşabilirsin; `.env` içeriğini paylaşma. Günlük aktarım PC kapalıyken
 tamamlanamaz; iki cihaz yeniden çevrimiçi olunca eşitlenir.
+
+## Yeni G1 fiyat/1dk ölçüm sürümü
+
+Kod repoya aktarılıp tablet güncellendiğinde yeni G1 kartında "Teyit sonrası
+alış kotasyonu (ask)" ve spread/yaş görünür. Eski sinyaller değiştirilmez;
+G1'in saatlik tetik koşulları, 5dk bot taraması ve cooldown aynı kalır. Best ask
+gerçek giriş emri/dolumu değildir. Taze kotasyon yoksa olay yine bildirilir,
+ama yeni hedef başarı oranına katılmaz. Ek `.env` anahtarı gerekmez.
+
+Yeni kayıtlarda kişisel hedefler ilk tam 1dk mumdan izlenir. İlk kısmi dakika
+bilinmiyor; alarm, sonraki bot taraması sırasında gelebilir. Eski G1 5m
+karnesi ayrı gösterilir. G2'nin planlanan giriş/erken bildirim davranışı bu
+değişiklikle değiştirilmez.
+
+Araştırma girişlerini görmek için (bot çalışırken salt okunur):
+
+```bash
+cd ~/trade1
+python research/review_g1_entry_shadow.py
+```
+
+İlk yeni taze G1 tesliminden önce boş rapor normaldir. 5/15dk alternatifleri
+TP3/SL2 ile yalnız ölçülür; Telegram sinyallerini filtrelemez ve emir açmaz.
+90 ileri gün / 30 olgun olay / 28 ayrı olay günü minimum veri kapısıdır;
+kapının dolması kendiliğinden canlı filtreyi açmaz.
+5 yıllık büyük backtest PC'de yapılır; tablette pandas/Arrow kurulması gerekmez.
+
+### G1 v3 sürümünü tablete alma
+
+Önce [G1_RELEASE.md](G1_RELEASE.md) içindeki sıralı güncelleme komutlarını
+uygulayın. `git pull --ff-only origin main` başarısız olursa botu yeniden
+başlatmadan hatayı çözün; `.env`, log veya arşivleri silmeyin. Yeni `.env`
+değeri/API anahtarı ve ağır araştırma bağımlılığı gerekmiyor.
+
+`python -c "import g1_entry; print(g1_entry.CONFIG_VERSION); print(g1_entry.MEASUREMENT)"`
+çıktısında `G1-prereg-2026-10-03-v3-fresh-ask` ve
+`signal-reference-touch-1m-v2` görünmeli. Bu yalnız diskteki kodu doğrular;
+tek botu yeniden başlatıp panonun güncel `status.g1_entry_config_version`
+alanını kontrol etmek çalışan/yayımlayan süreci de doğrular. İlk yeni G1
+gelene kadar eski olayların v2 görünmesi normaldir.

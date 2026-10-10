@@ -97,12 +97,13 @@ perpetual** sözleşmelerdir. DL1 pair/margin/futures kaldırma duyurularını k
 etmez. Dış borsa “VAR” alanı short önerisi değil, o andaki point-in-time
 bulunabilirlik kaydıdır.
 
-G1 bildirimindeki **Fiyat**, tarama anındaki USD-M perpetual ticker fiyatıdır.
-Koşulu doğuran son kapanmış 1 saatlik mumun kapanışı ayrı bir `Koşul mumu
-kapanışı` satırında, dondurulmuş araştırma girişi ise `Ölçüm girişi` satırında
-gösterilir. Böylece gecikmiş taramada eski mum kapanışı güncel giriş fiyatı gibi
-sunulmaz. Performans hesabı değişmemiştir: sonraki 1 saatlik mum açılışı → +4
-saat kapanış.
+G1 v3 bildirimindeki **Fiyat**, koşul teyidinden sonra alınan taze USD-M
+**best ask** kotasyonudur; gerçekleşmiş giriş/dolum değildir. Kotasyon yaşı ve
+spread gösterilir. Taze kotasyon alınamazsa eski referans açıkça etiketlenir
+ve yeni hedef ölçümüne katılmaz. Koşul mumu kapanışı ayrı gösterilir;
+kanonik tarihsel performans tanımı değişmez: sonraki 1 saatlik mum açılışı →
++4 saat kapanış. Yeni hedef takibi doğrulanmış teslimden sonraki ilk tam 1dk
+mumuyla başlar; eski 5dk kayıtlar ayrı kalır. [G1 v3 yayın ve tablet kontrolü](G1_RELEASE.md).
 
 `shadow_market_YYYY-MM.jsonl` tüm G1 ilk-10 incelemelerini ve aktif DL1
 snapshot'larını; `shadow_events_YYYY-MM.jsonl` yalnız tetiklenen olayları tutar.

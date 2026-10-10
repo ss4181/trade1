@@ -332,7 +332,8 @@ def evaluate_g1_snapshot(klines: list, oi_rows: list, ls_rows: list,
 
 def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
             now: datetime | None = None, *, workers: int = 8,
-            on_signal: Callable | None = None, clock: Callable | None = None) -> list[dict]:
+            on_signal: Callable | None = None, clock: Callable | None = None,
+            quote_get: Callable | None = None) -> list[dict]:
     """Tüm aktif USD-M perpleri sıralar, ilk 10'u ayrıntılı gölge tarar."""
     clock = clock or ((lambda: now) if now is not None else _utc_now)
     now = now or clock()
@@ -376,11 +377,19 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
                 }))
             metrics = evaluate_g1_snapshot(
                 klines, oi_rows, ls_rows, rank, ticker_change, now_ms)
-            # Koşul yalnız kapanmış 1s mumla hesaplanır; kullanıcıya gösterilen
-            # fiyat ise tarama anındaki USD-M ticker fiyatıdır. Böylece bot saat
-            # içinde gecikmeli çalışırsa eski mum kapanışı "giriş fiyatı" gibi
-            # görünmez. Ticker yoksa açıkça işaretli kapanış fallback'i kalır.
+            # Closed-hour conditions do not use this quote. The old scan ticker
+            # is only an explicitly unavailable fallback if fresh ask fails.
             metrics["observed_price"] = _float(ticker.get("lastPrice"))
+            metrics["entry_quote"] = None
+            if metrics["condition"]:
+                # Price collection is separate from the frozen hourly decision.
+                # An unavailable book must not hide an otherwise valid event.
+                try:
+                    from g1_entry import book_reference
+                    book = _response_json((quote_get or futures_get)("/fapi/v1/ticker/bookTicker", {"symbol": symbol}))
+                    metrics["entry_quote"] = book_reference(book, symbol, int(clock().timestamp()*1000))
+                except Exception as exc:
+                    metrics["quote_unavailable_reason"] = type(exc).__name__
             snapshot = {
                 "schema_version": "shadow-market-v1", "kind": "G1_SNAPSHOT",
                 "source": "binance_public_usdm", "observed_at": _iso(now),
@@ -430,7 +439,9 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
                 metrics["bar_close_ms"] / 1000, tz=timezone.utc)
             measurement_entry = datetime.fromtimestamp(
                 (metrics["bar_close_ms"] + 1) / 1000, tz=timezone.utc)
-            observed_price = metrics.get("observed_price")
+            from g1_entry import CONFIG_VERSION, MEASUREMENT
+            quote = metrics.get("entry_quote")
+            observed_price = quote["price"] if quote else metrics.get("observed_price")
             has_observed_price = (observed_price is not None
                                   and observed_price > 0)
             display_price = (observed_price if has_observed_price
@@ -468,11 +479,15 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
                 "signal_market": "usd_m_perp",
                 "performance_market": "um_perp",
                 "performance_symbol": symbol,
-                "price_source": ("usdm_24h_ticker_last_at_scan"
+                "price_reference_status": "fresh" if quote else "unavailable",
+                "entry_quote": quote,
+                "price_target_measurement_version": MEASUREMENT,
+                "quote_unavailable_reason": metrics.get("quote_unavailable_reason"),
+                "price_source": (quote["source"] if quote else "usdm_24h_ticker_last_at_scan"
                                  if has_observed_price
                                  else "closed_usdm_1h_fallback"),
                 "push_policy_enabled": True,
-                "config_version": "G1-prereg-2026-09-01-v2-price-fix",
+                "config_version": CONFIG_VERSION,
             }
             signals.append(signal)
             last_fire[symbol] = _iso(now)

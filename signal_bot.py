@@ -73,6 +73,7 @@ from market_http import MarketHttp
 from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
 import g2_notifications as g2
+import g1_entry
 import notification_scorecard
 import dashboard_reporting
 from concurrent.futures import ThreadPoolExecutor, as_completed, CancelledError
@@ -510,15 +511,18 @@ def _spot_get(path: str, params: dict | None = None) -> requests.Response:
 
 
 def _futures_get(path: str, params: dict | None = None, *,
-                 market_data_key: bool = False) -> requests.Response:
+                 market_data_key: bool = False, request_timeout: float = 30,
+                 max_retries: int | None = None, fail_fast_gate: bool = False) -> requests.Response:
     """USD-M GET; 429 kapisini tum futures cagrilari arasinda paylastirir."""
     global _futures_blocked_until
-    retries = max(1, int(FUTURES_MAX_RETRIES))
+    retries = max(1, int(FUTURES_MAX_RETRIES if max_retries is None else max_retries))
     last_exc: Exception | None = None
     for attempt in range(retries):
+        if fail_fast_gate and _futures_blocked_until > time.time():
+            raise MarketRateLimitError("futures gate active; optional quote deferred")
         _wait_for_market_gate("futures")
         try:
-            kwargs = {"params": params, "timeout": 30}
+            kwargs = {"params": params, "timeout": request_timeout}
             if market_data_key and BINANCE_MARKET_DATA_API_KEY:
                 kwargs["headers"] = {
                     "X-MBX-APIKEY": BINANCE_MARKET_DATA_API_KEY}
@@ -555,6 +559,10 @@ def _futures_get(path: str, params: dict | None = None, *,
             elif delay:
                 time.sleep(delay)
     raise last_exc  # type: ignore[misc]
+
+
+def _g1_quote_get(path: str, params: dict | None = None):
+    return _futures_get(path, params, request_timeout=5, max_retries=1, fail_fast_gate=True)
 
 # --- Telegram bildirim kanali ---
 # Degerler .env dosyasindan (yerel) veya platform secret yonetiminden (bulut)
@@ -1074,7 +1082,7 @@ def _poll_g1_notifications(stop_event=None) -> None:
         streaming = SHADOW_MAX_PUSH_PER_RUN >= 10
         signals = scan_shadow_gainers(
             _futures_get, SHADOW_STATE_FILE, ARCHIVE_DIR, workers=SCAN_WORKERS,
-            on_signal=deliver if streaming else None)
+            on_signal=deliver if streaming else None, quote_get=_g1_quote_get)
         if not streaming:
             for sig in sorted(signals, key=lambda s: s.get("symbol", "")):
                 deliver(sig)
@@ -1094,7 +1102,7 @@ def run_shadow_experiments(*, include_g1: bool = True) -> int:
     count = 0
     errors = []
     for name, scan in (
-        ("G1", lambda: scan_shadow_gainers(_futures_get, SHADOW_STATE_FILE, ARCHIVE_DIR)),
+        ("G1", lambda: scan_shadow_gainers(_futures_get, SHADOW_STATE_FILE, ARCHIVE_DIR, quote_get=_g1_quote_get)),
         ("DL1", lambda: poll_shadow_delists(requests.get, _spot_get, SHADOW_STATE_FILE, ARCHIVE_DIR,
                                            poll_minutes=SHADOW_DELIST_POLL_MINUTES)),
     ):
@@ -2213,6 +2221,11 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
         rows.append(("Short hesap payi", f"%{sig['global_short_account_pct']:.2f}"))
     if sig.get("strategy") == "G1" and sig.get("condition_price") is not None:
         rows.append(("Koşul mumu kapanışı", _fmt_price(sig["condition_price"])))
+    if sig.get("strategy") == "G1" and sig.get("entry_quote"):
+        quote = sig["entry_quote"]
+        quote_at = datetime.fromtimestamp(quote["exchange_time_ms"]/1000,timezone.utc).isoformat()
+        rows.append(("Alış kotasyonu zamanı", _display_tr_time(quote_at)))
+        rows.append(("Alış / satış farkı", f"{quote['spread_bps']:.2f} bp; gösterilen fiyat ask, dolum değil"))
     if sig.get("strategy") == "G1" and sig.get("notification_delay_minutes") is not None:
         rows.append(("Bildirim gecikmesi",
                      f"{float(sig['notification_delay_minutes']):.1f} dakika"))
@@ -2362,6 +2375,7 @@ def _measurement_display(sig: dict) -> str:
     value = str(sig.get("measurement_version") or profile.get("measurement_version") or "legacy_unknown")
     return {
         "signal-reference-touch-v1": "hedef dokunması · bildirim referansı",
+        "signal-reference-touch-1m-v2": "hedef dokunması · taze ask · 1dk",
         "g2-scheduled-bracket-v1": "G2 TP3/SL2 · planlanan Binance giriş referansı",
         "paper-barriers-v1": "TP/SL fiyat yolu · varsayımsal",
         "legacy_unknown": "eski kayıt · ölçüm sürümü bilinmiyor",
@@ -2480,12 +2494,21 @@ def _telegram_g1_signal_text(sig: dict) -> str:
     lines = [
         f"🔔 <b>G1 — {_html.escape(str(sig.get('symbol') or '?'))} "
         f"{_html.escape(str(sig.get('direction') or ''))}</b> 🔬",
-        f"💰 <b>Tarama anı fiyatı:</b> {_fmt_price(sig.get('price'))}",
+        f"💰 <b>{'Teyit sonrası alış kotasyonu (ask)' if sig.get('entry_quote') else 'Eski fiyat referansı · taze kotasyon yok' if sig.get('price_target_measurement_version') == g1_entry.MEASUREMENT else 'Tarama anı fiyatı'}:</b> {_fmt_price(sig.get('price'))}",
         f"🎯 <b>Kişisel fiyat takibi:</b> {target_text}",
         f"⏱️ <b>Beklenen ufuk:</b> ~{hours:g} saat" if isinstance(hours, (int, float))
         else f"⏱️ <b>Beklenen ufuk:</b> ~{_html.escape(str(hours))} saat",
         scorecard,
     ]
+    quote = sig.get("entry_quote")
+    if quote:
+        age = max(0., (datetime.now(timezone.utc).timestamp()*1000-quote['exchange_time_ms'])/1000)
+        lines.append(f"📐 <b>Kotasyon:</b> gönderimde yaş {age:.1f} sn · spread {quote['spread_bps']:.1f} bp · dolum değildir")
+        if age > 30:
+            lines.append("⚠️ Teslim gecikti: kotasyon eski, giriş fiyatı olarak kullanma; yeni hedef ölçümüne alınmaz.")
+        lines.append("🔎 <b>Ölçüm:</b> teslimden sonraki ilk tam 1dk mumundan; ilk kısmi dakika bilinmiyor.")
+    elif sig.get("price_target_measurement_version") == g1_entry.MEASUREMENT:
+        lines.append("⚠️ Taze kotasyon alınamadı: bu referanstan hedef başarı oranı hesaplanmaz.")
     wanted = {
         "24s yükselen sırası", "Kapanmış mum 24s getirisi",
         "1s hacim / önceki 24s medyan", "Open interest 1s",
@@ -2493,6 +2516,8 @@ def _telegram_g1_signal_text(sig: dict) -> str:
         "Koşul mumu kapanışı", "Bildirim gecikmesi", "Ölçüm girişi",
     }
     for label, value in _signal_detail_rows(sig):
+        if label == "Ölçüm girişi" and sig.get("price_target_measurement_version") == g1_entry.MEASUREMENT:
+            continue  # Canonical hourly backtest entry is not the user's delivered ask reference.
         if label in wanted:
             lines.append(f"{_TELEGRAM_DETAIL_ICONS.get(label, '•')} "
                          f"<b>{_html.escape(label)}:</b> {_html.escape(str(value))}")
@@ -2507,6 +2532,7 @@ def _telegram_g1_signal_text(sig: dict) -> str:
                 f"%{live['hit_rate_pct']:g} ({live['hit']}/{live['resolved']}{small})")
     except Exception:
         pass
+    lines.append("⚠️ Hedefe dokunma, stop öncesi kâr veya güvenilir giriş garantisi değildir; bot emir vermez.")
     return "\n".join(lines)
 
 
@@ -2837,7 +2863,7 @@ def _signal_event_id(sig: dict) -> str:
 PRICE_TARGET_STATE_FILE = Path(__file__).parent / ".price_target_state.json"
 PRICE_TARGET_STATE_SCHEMA_VERSION = 2
 PRICE_TARGET_MEASUREMENT_VERSIONS = frozenset({
-    "signal-reference-touch-v1", "paper-barriers-v1",
+    "signal-reference-touch-v1", g1_entry.MEASUREMENT, "paper-barriers-v1",
 })
 _price_target_lock = threading.RLock()
 
@@ -2917,6 +2943,9 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
     return {
         "basis": "scheduled_binance_open" if event.get("g2_bracket") else "signal_notification_price",
         "measurement_version": event.get("measurement_version", "legacy_unknown"),
+        "bar_interval_minutes": g1_entry.tracking_step(event) // 60_000,
+        "entry_shadow": g1_entry.public_shadow(event),
+        "unobserved_initial_seconds": event.get("unobserved_initial_seconds"),
         "entry_definition": event.get("entry_definition", "signal_reference_not_executed_price"),
         "universe": event.get("universe", "UNKNOWN"),
         "config_version": event.get("config_version", "UNKNOWN"),
@@ -2934,7 +2963,8 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
         "success_target_pct": 3. if event.get("g2_bracket") else USER_SUCCESS_TARGET_PCT,
         "g2_bracket": event.get("g2_bracket"),
         "success_status": success_status,
-        "adverse_before_hit_policy": "same_5m_bar_full_range_conservative",
+        "adverse_before_hit_policy": ("same_1m_bar_full_range_conservative"
+            if g1_entry.tracking_step(event) == 60_000 else "same_5m_bar_full_range_conservative"),
         "last_error": event.get("last_error"),
         "as_of": now.isoformat(timespec="seconds"),
     }
@@ -2950,6 +2980,10 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
             or not record.get("push_allowed")
             or str(record.get("strategy", "")).startswith("TEST")):
         return None
+    measurement = record.get("price_target_measurement_version")
+    minute_mode = record.get("strategy") == "G1" and measurement == g1_entry.MEASUREMENT
+    if minute_mode and record.get("price_reference_status") != "fresh":
+        return None
     try:
         entry = float(record["price"])
         horizon = float(record["horizon_hours"])
@@ -2957,6 +2991,10 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
     except (KeyError, TypeError, ValueError, OverflowError):
         return None
     direction = str(record.get("direction") or "").upper()
+    if minute_mode and record.get("delivery_confirmed") is True:
+        quote_ms = (record.get("entry_quote") or {}).get("exchange_time_ms")
+        if quote_ms is None or notified.timestamp()*1000-int(quote_ms) > 30_000:
+            return None
     if (not math.isfinite(entry) or entry <= 0 or not math.isfinite(horizon)
             or horizon <= 0 or direction not in ("LONG", "SHORT")):
         return None
@@ -2965,8 +3003,9 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
         events = PRICE_TARGET_STATE.setdefault("events", {})
         event = events.get(event_id)
         if not isinstance(event, dict):
-            start_ms = ((int(notified.timestamp() * 1000) + 299_999)
-                        // 300_000) * 300_000
+            step = 60_000 if minute_mode else 300_000
+            notified_ms = int(notified.timestamp() * 1000)
+            start_ms = g1_entry.ceil_bar(notified_ms, step)
             expires = notified + timedelta(hours=horizon)
             targets = {}
             for level in PRICE_TARGET_LEVELS_PCT:
@@ -2985,7 +3024,7 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
             event = {
                 "event_id": event_id,
                 "strategy": strategy,
-                "measurement_version": "signal-reference-touch-v1",
+                "measurement_version": g1_entry.MEASUREMENT if minute_mode else "signal-reference-touch-v1",
                 "entry_definition": "signal_reference_not_executed_price",
                 "universe": record.get("universe") or "UNKNOWN",
                 "config_version": record.get("config_version") or "UNKNOWN",
@@ -2999,6 +3038,8 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
                 "started_at": notified.isoformat(),
                 "expires_at": expires.isoformat(),
                 "next_start_ms": start_ms,
+                "tracking_start_ms": start_ms,
+                "unobserved_initial_seconds": (start_ms-notified_ms)/1000,
                 "status": "active",
                 "targets": targets,
                 "max_favorable_pct": 0.0,
@@ -3018,13 +3059,13 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
 
 def fetch_price_target_klines(event: dict, start_ms: int,
                               end_ms: int) -> list[dict]:
-    """Hedef izlemesi icin kapanmis 5dk mumlari (spot veya USD-M perp)."""
+    """Per-event resolution: new G1 1m; historical events and G2 stay 5m."""
     if end_ms <= start_ms:
         return []
     market = event.get("market") or "spot"
     symbol = (event.get("performance_symbol") or perp_symbol(event["symbol"])) \
         if market == "um_perp" else event["symbol"]
-    params = {"symbol": symbol, "interval": "5m", "startTime": start_ms,
+    params = {"symbol": symbol, "interval": "1m" if g1_entry.tracking_step(event)==60_000 else "5m", "startTime": start_ms,
               "endTime": end_ms - 1, "limit": 1000}
     response = (_futures_get("/fapi/v1/klines", params)
                 if market == "um_perp" else
@@ -3041,9 +3082,10 @@ def _apply_price_target_bars(event: dict, bars: list[dict],
         return g2.advance_tracking(event, bars, coverage_end_ms)
     entry = float(event["entry_ref"])
     direction = event["direction"]
+    step = g1_entry.tracking_step(event)
     next_start = int(event.get("next_start_ms") or 0)
-    tracking_start = ((int(_target_dt(event["started_at"]).timestamp() * 1000)
-                       + 299_999) // 300_000) * 300_000
+    notified_ms = int(_target_dt(event["started_at"]).timestamp() * 1000)
+    tracking_start = g1_entry.ceil_bar(notified_ms, step)
     silent_before = int(event.get("replay_silent_before_ms") or tracking_start)
     newly_hit = []
     for bar in sorted(bars, key=lambda b: int(b["open_time"])):
@@ -3057,6 +3099,12 @@ def _apply_price_target_bars(event: dict, bars: list[dict],
         high, low = float(bar["high"]), float(bar["low"])
         if not all(math.isfinite(x) and x > 0 for x in (high, low)):
             break
+        if step == 60_000:
+            prices = [float(bar.get(k, float('nan'))) for k in ("open", "close")]
+            if (high < low or not all(math.isfinite(x) and low <= x <= high for x in prices)
+                    or int(bar.get("close_time", -1)) != open_ms+step-1):
+                break
+        g1_entry.advance_entry_shadow(event, [bar])
         if direction == "LONG":
             favorable = (high / entry - 1) * 100
             adverse = (low / entry - 1) * 100
@@ -3082,10 +3130,10 @@ def _apply_price_target_bars(event: dict, bars: list[dict],
                 target["hit_at"] = datetime.fromtimestamp(
                     open_ms / 1000, tz=timezone.utc).isoformat()
                 target["minutes_to_hit_upper"] = round(max(
-                    0.0, (open_ms + 300_000 - tracking_start) / 60_000), 1)
+                    0.0, (open_ms + step - (notified_ms if step==60_000 else tracking_start)) / 60_000), 2)
                 if open_ms >= silent_before:
                     newly_hit.append(key)
-        next_start = max(next_start, open_ms + 300_000)
+        next_start = max(next_start, open_ms + step)
     event["next_start_ms"] = next_start
     return newly_hit
 
@@ -3113,9 +3161,9 @@ def _send_price_target_alert(event: dict, hit_keys: list[str]) -> None:
         f"🎯 <b>Ulaşılan seviye:</b> {level_text}",
         *target_rows,
         f"⚠️ <b>Hedef öncesi ters hareket:</b> "
-        f"{float(event.get('max_adverse_pct') or 0):+.2f}%",
+        f"{min(float(event['targets'][k].get('max_adverse_before_hit_pct') or 0) for k in notify_keys):+.2f}%",
         "",
-        "ℹ️ Kapanmış 5dk mumuyla ölçülen brüt fiyat dokunmasıdır; "
+        f"ℹ️ Kapanmış {g1_entry.tracking_step(event)//60_000}dk mumuyla ölçülen brüt fiyat dokunmasıdır; "
         "ücret/slippage düşülmez, kaldıraçlı ROI değildir ve bot emir vermez.",
         *( ["Hyperliquid limit emrinin dolduğunu göstermez."] if event.get("g2_bracket") else [] ),
     ])
@@ -3145,10 +3193,11 @@ def update_price_target_tracking(now: datetime | None = None) -> dict:
                 event["status"] = "invalid"
                 changed = True
                 continue
-            # Yalniz tam kapanmis 5dk mumlar; bildirimden onceki mumun yuksegi
+            # Yalniz olay surumundeki tam kapanmis mumlar; bildirimden onceki yuksek
             # basari sayilmaz. Ufkun sonundaki parcali mum da muhafazakar atilir.
-            closed_end_ms = (now_ms // 300_000) * 300_000
-            horizon_end_ms = (expires_ms // 300_000) * 300_000
+            step = g1_entry.tracking_step(event)
+            closed_end_ms = (now_ms // step) * step
+            horizon_end_ms = (expires_ms // step) * step
             coverage_end_ms = min(closed_end_ms, horizon_end_ms)
             start_ms = int(event.get("next_start_ms") or 0)
         if start_ms < coverage_end_ms:
@@ -3160,7 +3209,7 @@ def update_price_target_tracking(now: datetime | None = None) -> dict:
                 bars = fetch_price_target_klines(event, start_ms,
                                                   coverage_end_ms)
                 if not bars:
-                    raise ValueError("kapanmis 5dk mum verisi bos")
+                    raise ValueError("kapanmis hedef mum verisi bos")
                 with _price_target_lock:
                     current = PRICE_TARGET_STATE["events"].get(event_id)
                     if not isinstance(current, dict):
@@ -3189,6 +3238,7 @@ def update_price_target_tracking(now: datetime | None = None) -> dict:
                     and now_ms >= expires_ms
                     and int(current.get("next_start_ms") or 0) >= horizon_end_ms):
                 current["status"] = "expired"
+                g1_entry.finish_entry_shadow(current)
                 changed = True
     with _price_target_lock:
         if PRICE_TARGET_RETENTION_DAYS > 0:
@@ -3224,6 +3274,8 @@ def price_target_summary() -> dict:
     legacy_events = legacy_matured = legacy_pending = g2_events = 0
     with _price_target_lock:
         events = list(PRICE_TARGET_STATE.get("events", {}).values())
+    has_minute_g1 = any(isinstance(e,dict) and e.get("strategy")=="G1" and
+                       e.get("measurement_version")==g1_entry.MEASUREMENT for e in events)
     for event in events:
         if not isinstance(event, dict):
             continue
@@ -3237,7 +3289,7 @@ def price_target_summary() -> dict:
             elif event.get("status") == "active":
                 legacy_pending += 1
             continue
-        strategy = str(event.get("strategy") or "?")
+        strategy = _price_target_cohort_name(event, has_minute_g1)
         status = event.get("status")
         if status not in ("active", "expired"):
             continue
@@ -3295,17 +3347,26 @@ def price_target_summary() -> dict:
     return out
 
 
+def _price_target_cohort_name(event: dict, has_minute_g1: bool) -> str:
+    name = str(event.get("strategy") or "?")
+    if name == "G1" and event.get("measurement_version") != g1_entry.MEASUREMENT and has_minute_g1:
+        return "G1 · 5m (eski)"
+    return name
+
+
 def price_path_summary() -> dict:
     """Strateji bazında ufuk içi MFE/MAE; yalnız tamamlanmış fiyat yolları."""
     grouped: dict[str, dict[str, list[float] | int]] = {}
     with _price_target_lock:
         events = list(PRICE_TARGET_STATE.get("events", {}).values())
+    has_minute_g1 = any(isinstance(e,dict) and e.get("strategy")=="G1" and
+                       e.get("measurement_version")==g1_entry.MEASUREMENT for e in events)
     for event in events:
         if not isinstance(event, dict):
             continue
         if event.get("measurement_version") not in PRICE_TARGET_MEASUREMENT_VERSIONS:
             continue
-        strategy = str(event.get("strategy") or "?")
+        strategy = _price_target_cohort_name(event, has_minute_g1)
         row = grouped.setdefault(strategy, {"mfe": [], "mae": [],
                                             "pending": 0})
         if event.get("status") == "active":
@@ -3382,10 +3443,10 @@ def _ensure_price_target_state_schema() -> int:
                 expires = _target_dt(event["expires_at"])
                 if entry <= 0 or direction not in ("LONG", "SHORT"):
                     raise ValueError("gecersiz fiyat/yon")
-                start_ms = ((int(started.timestamp() * 1000) + 299_999)
-                            // 300_000) * 300_000
+                step = g1_entry.tracking_step(event)
+                start_ms = g1_entry.ceil_bar(int(started.timestamp()*1000), step)
                 horizon_end_ms = (int(expires.timestamp() * 1000)
-                                  // 300_000) * 300_000
+                                  // step) * step
             except (KeyError, TypeError, ValueError, OverflowError):
                 event["status"] = "invalid"
                 changed += 1
@@ -3409,12 +3470,15 @@ def _ensure_price_target_state_schema() -> int:
             event.update({
                 "targets": rebuilt,
                 "next_start_ms": start_ms,
+                "tracking_start_ms": start_ms,
                 "replay_silent_before_ms": silent_before,
                 "status": "active",
                 "max_favorable_pct": 0.0,
                 "max_adverse_pct": 0.0,
                 "last_error": None,
             })
+            if event.get("measurement_version") == g1_entry.MEASUREMENT:
+                event.pop("entry_shadow", None)
             changed += 1
         if version != PRICE_TARGET_STATE_SCHEMA_VERSION:
             PRICE_TARGET_STATE["schema_version"] = \
@@ -3472,9 +3536,11 @@ def _backfill_price_targets_from_signal_log() -> int:
             with _price_target_lock:
                 event = PRICE_TARGET_STATE["events"].get(event_id)
                 if isinstance(event, dict):
+                    step = g1_entry.tracking_step(event)
+                    now_closed_ms = (int(now.timestamp()*1000)//step)*step
                     horizon_end_ms = (int(_target_dt(
                         event["expires_at"]).timestamp() * 1000)
-                                      // 300_000) * 300_000
+                                      // step) * step
                     event["replay_silent_before_ms"] = min(
                         now_closed_ms, horizon_end_ms)
                     _save_price_target_state()
@@ -5293,8 +5359,9 @@ STRATEGY_DOCS = {
                "onceki 24 saatin medyaninin en az 2 kati, OI artisi en az %2 "
                "ve global hesap long/short orani 1'in altindaysa golge LONG "
                "olayi uretilir.",
-        "entry": "Olcum girisi sonraki 1s mum acilisidir. Canli bildirimde "
-                 "tarama anindaki USD-M ticker fiyati gosterilir; kosulu "
+        "entry": "Kanonik tarihsel giris sonraki 1s mum acilisidir; emir degildir. "
+                 "Yeni canli referans, teyit sonrasi taze best ask'tir; ilk tam "
+                 "1dk mumdan hedef takibi ve ayri 5/15dk giris deneyleri yapilir. Kosulu "
                  "doguran kapanmis 1s mum fiyati ve bildirim gecikmesi ayri "
                  "satirlarda verilir.",
         "exit": "Dondurulmus sonuc ufku 4 saattir; +%2/+%3 dokunma ayrica "
@@ -5533,6 +5600,8 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "signal_price": sig.get("price"),
             "signal_price_source": sig.get("price_source") or "signal_bar_close",
             "notification_quote": sig.get("notification_quote"),
+            "entry_quote": sig.get("entry_quote"),
+            "price_reference_status": sig.get("price_reference_status"),
             "notified_at": sig.get("notified_at"),
             "delivered_at": delivery.get("delivered_at"),
             "delivery_confirmed": delivery.get("delivery_confirmed", False),
@@ -5587,7 +5656,8 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
     rows.reverse()
     strategies = []
     names = list(dict.fromkeys(["S1+S4", "S1", "S3", "S2", "S5", "S6", "G1", "G2", "DL1"]
-                              + sorted({r["strategy"] for r in rows})))
+                              + sorted({r["strategy"] for r in rows})
+                              + sorted(k for k in target_summary if not k.startswith("_"))))
     for key in names:
         bt = STRATEGY_TEST_STATS.get(key, {})
         conf, evid = signal_confidence(key)
@@ -5601,7 +5671,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
         ]
         strategies.append({
             "name": key, "confidence": conf, "evidence": evid,
-            "pushed": (ENABLE_TELEGRAM and key not in DISABLED_STRATEGIES and (
+            "pushed": (ENABLE_TELEGRAM and key != "G1 · 5m (eski)" and key not in DISABLED_STRATEGIES and (
                        S2_RESEARCH_PUSH if key == "S2" else
                        SHADOW_EXPERIMENTS_ENABLED and SHADOW_PUSH_ENABLED and G2_ENABLED and G2_PUSH if key == "G2" else
                        SHADOW_EXPERIMENTS_ENABLED and SHADOW_PUSH_ENABLED if key in SHADOW_STRATEGIES else
@@ -5667,7 +5737,10 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "round_trip_cost_bps": LIVE_ROUND_TRIP_COST_BPS,
             "funding_cost_status": "not_modeled",
             "engine_version": core_engine.ENGINE_VERSION,
+            "g1_entry_config_version": g1_entry.CONFIG_VERSION,
+            "g1_entry_measurement_version": g1_entry.MEASUREMENT,
             "measurement_versions": ["signal-reference-touch-v1",
+                                      g1_entry.MEASUREMENT,
                                       "paper-barriers-v1", g2.MEASUREMENT, "legacy_unknown"],
             "price_target_tracking_enabled": PRICE_TARGET_TRACKING_ENABLED,
             "price_target_levels_pct": list(PRICE_TARGET_LEVELS_PCT),
