@@ -61,6 +61,45 @@ class ForwardOIPeriodicReportTests(unittest.TestCase):
         self.assertIn("birikimli", text.lower())
         self.assertIn("OOS", text)
         self.assertNotIn("SHOULD_NEVER_APPEAR", text)
+        self.assertIn("Kaynak:", text)
+        self.assertIn("TRT", text)
+
+    def test_empty_archive_is_not_a_success_report(self):
+        report = fake_report()
+        report["data"]["accepted"] = 0
+        with self.assertRaisesRegex(ValueError, "archive_empty"):
+            bot.format_forward_oi_30d_report(report)
+
+    def test_manual_monthly_delivery_does_not_change_scheduler(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text(json.dumps({"last_status": "scheduled", "next_due_at_utc": "2026-11-01T12:00:00Z"}), encoding="utf-8")
+            before = path.read_bytes()
+            response = mock.Mock()
+            response.json.return_value = {"ok": True}
+            with mock.patch.object(bot, "FORWARD_OI_REPORT_STATE_FILE", path), \
+                    mock.patch.object(bot, "ENABLE_TELEGRAM", True), \
+                    mock.patch.object(bot, "TELEGRAM_CHAT_ID", "synthetic-chat"), \
+                    mock.patch.object(bot, "TELEGRAM_BOT_TOKEN", "synthetic-token"), \
+                    mock.patch.object(bot, "TELEGRAM_MIN_INTERVAL_SECONDS", 0), \
+                    mock.patch.object(bot, "_generate_forward_oi_30d_report", return_value=fake_report()), \
+                    mock.patch.object(bot, "_note_notify"), \
+                    mock.patch.object(bot.requests, "post", return_value=response) as post:
+                self.assertTrue(bot.run_research_report_test("monthly"))
+            self.assertEqual(path.read_bytes(), before)
+            message = post.call_args.kwargs["json"]["text"]
+            self.assertIn("TEST", message)
+            self.assertNotIn("synthetic-token", message)
+            self.assertNotIn("SHOULD_NEVER_APPEAR", message)
+
+    def test_subprocess_receives_the_configured_archive_and_json_is_validated(self):
+        from subprocess import CompletedProcess
+        with mock.patch.object(bot, "ARCHIVE_DIR", Path("synthetic-tablet-archive")), \
+                mock.patch.object(bot.subprocess, "run", return_value=CompletedProcess([], 0, json.dumps(fake_report()), "")) as run:
+            report = bot._generate_forward_oi_30d_report()
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("--dir")+1], "synthetic-tablet-archive")
+        self.assertEqual(report["data"]["accepted"], 123456)
 
     def test_first_check_schedules_30_days_without_running(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -106,7 +145,40 @@ class ForwardOIPeriodicReportTests(unittest.TestCase):
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["last_status"], "sent")
             self.assertIn("last_sent_at_utc", state)
+            self.assertEqual(state["archive_snapshot"]["rows"], 123456)
             self.assertEqual(len(delivered), 1)
+
+    def test_telegram_failure_never_marks_sent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            now = datetime(2026, 9, 30, 12, tzinfo=timezone.utc)
+            state_path.write_text(json.dumps({
+                "activated_at_utc": (now-timedelta(days=30)).isoformat(),
+                "next_due_at_utc": now.isoformat(), "last_status": "scheduled",
+            }), encoding="utf-8")
+            with mock.patch.object(bot, "FORWARD_OI_REPORT_STATE_FILE", state_path), \
+                    mock.patch.object(bot, "_generate_forward_oi_30d_report", return_value=fake_report()), \
+                    mock.patch.object(bot, "_telegram_send_text", return_value=False), \
+                    mock.patch.object(bot.threading, "Thread", ImmediateThread):
+                self.assertTrue(bot._start_forward_oi_30d_report_worker(now))
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["last_status"], "error")
+            self.assertNotIn("last_sent_at_utc", state)
+
+    def test_corrupt_state_does_not_reset_schedule_or_stop_scanner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            state_path.write_text("{broken", encoding="utf-8")
+            with mock.patch.object(bot, "FORWARD_OI_REPORT_STATE_FILE", state_path), \
+                    mock.patch.object(bot, "FORWARD_OI_30D_REPORT_ENABLED", True), \
+                    mock.patch.object(bot, "ENABLE_TELEGRAM", True), \
+                    mock.patch.object(bot, "ARCHIVE_MARKET_DATA", True), \
+                    mock.patch.object(bot, "_generate_forward_oi_30d_report") as generate:
+                self.assertFalse(bot._maybe_forward_oi_30d_report())
+                self.assertFalse(bot._start_forward_oi_30d_report_worker())
+            generate.assert_not_called()
+            self.assertEqual(state_path.read_text(encoding="utf-8"), "{broken")
+            self.assertFalse(bot._forward_oi_report_worker_lock.locked())
 
     def test_failed_report_retries_in_24_hours_without_escaping(self):
         with tempfile.TemporaryDirectory() as tmp:

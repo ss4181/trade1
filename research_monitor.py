@@ -428,6 +428,8 @@ def format_research_readiness(report: dict) -> str:
         f"• Temel alanları tam: {market.get('complete_research_rows', '—')} satır\n"
         f"• {market['symbols']} sembol · {market['span_days']} gün\n"
         f"• Saat kapsaması: %{shown(market['hour_coverage_pct'])}\n\n"
+        f"🕒 <b>Son arşiv kaydı:</b> {_html.escape(str(market.get('last_utc') or 'bilinmiyor'))}\n"
+        f"• Veri yaşı: {shown(market.get('stale_hours'), ' saat')}\n\n"
         "🧩 <b>Alan doluluğu</b>\n"
         f"• OI %{shown(fields['oi'])} · funding "
         f"%{shown(fields['funding_rate_snapshot'])}\n"

@@ -6,6 +6,7 @@ import statistics
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from atomic_state import replace_state
 
 
 def utcnow():
@@ -144,7 +145,7 @@ class DeliveryOutbox:
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp.write_text(json.dumps({"schema_version": 1, "events": self.items},
                                   ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.path)
+        replace_state(tmp, self.path)
 
     def enqueue(self, record: dict, recipients: list[str], now=None):
         now = now or utcnow()

@@ -59,6 +59,9 @@ get('reset').listeners.click();
 assert.equal(get('fMeasurement').value,'');
 assert.ok(get('rows').innerHTML.includes('funding hariç'));
 assert.ok(run('drawer(D.signals[0])').includes('Motor hash'));
+context.askRow={...base,entry_quote:{ask:100.1,spread_bps:2,age_seconds:1},entry_basis:'next_bar_open'};
+assert.ok(run('drawer(askRow)').includes('Bildirimdeki taze ask'));
+assert.ok(run('drawer(askRow)').includes('ask değil'));
 assert.equal(run("trTime('2026-09-24T12:00:00Z')"),'24.09.2026 15:00:00 TRT');
 assert.equal(run("trTime('invalid')"),'—');
 assert.equal(run("freshnessInfo({now:'2000-01-01T00:00:00Z'}).stale"),true);
@@ -68,6 +71,21 @@ context.liveRows=[{strategy:'G1',n:2,tp2:{hit:1,missed:1,pending:0,unavailable:0
 assert.equal(run("combineLiveRegimes(liveRows,'BULL')[0].tp2.resolved"),3);
 assert.equal(run("combineLiveRegimes(liveRows,'BULL')[0].tp2.hit_rate_pct"),200/3);
 assert.equal(run("combineLiveRegimes(liveRows,'BULL')[0].n"),5);
+context.liveRows[0].measurement_version='signal-reference-touch-v1';
+context.liveRows[1].measurement_version='signal-reference-touch-1m-v2';
+assert.equal(run("combineLiveRegimes(liveRows,'BULL').length"),2,'old 5m and new 1m cohorts must stay separate');
+run('D.status={};drawResearchReports()');
+assert.ok(get('researchReports').innerHTML.includes('bu yayında yok'));
+assert.ok(get('g1ReferenceNote').innerHTML.includes('ask'));
+context.reportStatus={source_label:'<img src=x onerror=alert(1)>',runtime_source:'Termux / tablet',
+  archive_files_present:true,archive_collection_enabled:true,monthly_interval_days:30,
+  weekly:{enabled:true,last_status:'error',retry_at_utc:'2026-10-13T12:00:00Z'},
+  monthly:{enabled:true,last_status:'sent',last_sent_at_utc:'2026-10-12T12:00:00Z'}};
+run('D.status.research_reports=reportStatus;drawResearchReports()');
+assert.ok(get('researchReports').innerHTML.includes('yeniden denenecek'));
+assert.ok(get('researchReports').innerHTML.includes('API kabul etti'));
+assert.ok(get('researchReports').innerHTML.includes('13.10.2026 15:00:00 TRT'));
+assert.ok(!get('researchReports').innerHTML.includes('<img'));
 
 const cohort = {strategy:'S3',direction:'LONG',performance_market:'spot',universe:'core30',
   config_version:'v1',engine_version:'v1',engine_config_hash:'h1',evidence_source:'forward_confirmed_delivery',

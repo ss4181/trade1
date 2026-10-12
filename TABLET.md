@@ -784,6 +784,60 @@ Son commit satırını, `--backup-status` ve `--research-status` çıktıların�
 paylaşabilirsin; `.env` içeriğini paylaşma. Günlük aktarım PC kapalıyken
 tamamlanamaz; iki cihaz yeniden çevrimiçi olunca eşitlenir.
 
+## Haftalık / 30 günlük rapor ve pano teslim kontrolü
+
+13 Ekim değişiklikleri tablete geldiğinde haftalık rapor ayrı worker'da
+hazırlanır. Telegram API hata verirse 1 saat sonra, aylık analiz hata verirse
+24 saat sonra yeniden denenir. Bozuk state dosyasını silmeyin: tekrar bildirim
+veya takvim sıfırlaması oluşmaması için hata incelenmelidir. Pano kaynak ve
+son gönderim/tekrar tarihini gösterir; eski yayında durum yoksa “arşiv boş” denmez.
+
+**Önemli:** Aşağıdaki güncelleme ancak bu değişiklikler GitHub `main` dalına
+aktarıldıktan sonra onları indirir. `Already up to date` yeni kodun yayımlandığını
+kanıtlamaz; `--help` içinde `--research-report-status` görünmeli.
+
+```bash
+cd ~/trade1
+touch .stop-signal-bot
+pkill -f "python signal_bot.py" 2>/dev/null || true
+pkill -f "uvicorn server:app" 2>/dev/null || true
+git pull --ff-only origin main
+python signal_bot.py --help
+python signal_bot.py --research-report-status
+python signal_bot.py --test-research-report weekly
+rm -f .stop-signal-bot
+nohup ./termux/boot-signal-bot.sh >/dev/null 2>&1 &
+```
+
+Güncelleme/test hata verirse çıktıyı kontrol etmeden ilerlemeyin. Yeni komut
+sahibine **TEST** raporu gönderir, haftalık/aylık takvimi değiştirmez ve ikinci
+komut dinleyici başlatmaz. Telegram'da `Kaynak: TABLET-ANA` (veya seçilen güvenli
+etiket), sıfırdan büyük arşiv sayısı ve güncel son kayıt zamanı görülmeli.
+İsteğe bağlı `python signal_bot.py --test-research-report monthly` tam 5dk
+hedef/stop analizini yeniden çalıştırır; veri indirmesi ve uzun süre gerekebilir.
+
+Durumda `archive_files_present=false` veya beklenmedik kaynak varsa `.env`
+dosyasındaki **ARCHIVE_DIR** ve **RESEARCH_REPORT_SOURCE** ayarlarını yerelde
+kontrol edin; sırları paylaşmayın. Doğru arşiv tablet proje dizinindeyse onu
+kullanın. Ayar değişince yukarıdaki durdur/başlat adımını tekrar yapın.
+Eski Render/GitHub Actions bot kopyasını da kapatın veya orada
+`RESEARCH_WEEKLY_SUMMARY_ENABLED=false` ve `FORWARD_OI_30D_REPORT_ENABLED=false`
+yapın; yeni sürümün güvenli varsayılanı eski çalışan süreci değiştirmez.
+
+Son kontrol:
+
+```bash
+pgrep -af "uvicorn server:app|python signal_bot.py"
+grep -E "haftalik arastirma|30 gunluk|tarama bitti|hata:|uyari:" bot.out.log | tail -15
+python signal_bot.py --research-report-status
+```
+
+Tek ana bot çalışmalı. GitHub Pages'ın yeni yayınını bekleyin ve gerekirse
+sayfayı yenileyin; “Araştırma raporları” ve “G1 giriş ve ölçüm ayrımı” görünmeli.
+TEST mesajının telefonunuzda görülmesi ve ilk zamanlanmış verili gönderim,
+tablet uçtan uca doğrulamasının son iki adımıdır. PC'deki çevrimdışı testler bu
+iki adımın yerine geçmez. Arşiv yedeğinin PC'ye bütünlüklü ulaşması ayrı kontroldür.
+
 ## Yeni G1 fiyat/1dk ölçüm sürümü
 
 Kod repoya aktarılıp tablet güncellendiğinde yeni G1 kartında "Teyit sonrası

@@ -72,7 +72,7 @@ class DashboardTests(unittest.TestCase):
         base=dict(symbol='BTCUSDT', strategy='G1', price=100.,direction='LONG',
                   bar_time=(now-timedelta(hours=2)).isoformat(),horizon_hours=4,
                   signal_market='usd_m_perp',performance_market='um_perp',universe='all_active_usdm_perpetuals')
-        records=[dict(base,event_id='live'),dict(base,event_id='event',performance_excluded=True),
+        records=[dict(base,event_id='live',price_target_measurement_version='signal-reference-touch-1m-v2'),dict(base,event_id='event',performance_excluded=True),
                  dict(base,event_id='waiting',bar_time=(now-timedelta(hours=5,minutes=30)).isoformat())]
         with patch.object(bot,'_reporting_signal_records',return_value=records), patch.object(bot,'_load_perf_cache',return_value={}), \
              patch.object(bot,'DISPLAY_PRICES',{('um_perp','BTCUSDT'):(110.,now.timestamp())}), \
@@ -80,6 +80,8 @@ class DashboardTests(unittest.TestCase):
             data=bot.build_dashboard_data()
         rows={r['event_id']:r for r in data['signals']}
         self.assertAlmostEqual(rows['live']['gross_pnl_pct'],10.)
+        self.assertEqual(rows['live']['measurement_version'], 'signal-reference-touch-1m-v2')
+        self.assertIn('research_reports', data['status'])
         self.assertEqual(rows['live']['universe'],'all_active_usdm_perpetuals')
         self.assertIsNone(rows['event']['pnl_pct'])
         self.assertEqual(rows['waiting']['status'],'HESAPLANIYOR')

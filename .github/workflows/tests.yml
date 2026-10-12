@@ -37,7 +37,7 @@ jobs:
       - name: Python sözdizimi
         run: |
           python -m py_compile signal_bot.py server.py watchdog.py \
-            cloud_report.py qc_export.py research_monitor.py \
+            cloud_report.py qc_export.py research_monitor.py research_report_delivery.py atomic_state.py \
             shadow_experiments.py derivatives_archive.py archive_backup.py \
             notification_delivery.py signal_outcomes.py backup_verify.py cloud_standby.py \
             strategy_engine.py paper_execution.py \

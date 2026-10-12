@@ -10,6 +10,7 @@ import html
 import json
 import math
 from pathlib import Path
+from atomic_state import replace_state
 
 import intraday_regime as regime
 from notification_delivery import DeliveryOutbox
@@ -121,7 +122,7 @@ class SignalWatch:
     def save(self):
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.state, ensure_ascii=False, allow_nan=False), encoding="utf-8")
-        tmp.replace(self.path)
+        replace_state(tmp, self.path)
 
     def enqueue(self, key, text, recipients, now_ms, expires_ms, *, signal_id=None, reasons=None):
         eid = "watch-" + hashlib.sha256(key.encode()).hexdigest()[:32]

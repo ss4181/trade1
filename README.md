@@ -324,6 +324,15 @@ mi geldiğini gösterir. Otomatik raporu gönderen süreç hiç piyasa arşivi
 görmüyorsa sıfırlı normal rapor yerine açık bir `ARŞİV BULUNAMADI` uyarısı
 gönderilir; manuel `/arastirma` teşhisi çalışmaya devam eder.
 
+Haftalık arşiv okuma ve Telegram gönderimi ayrı worker'da yapılır; ana tarama
+beklemez. Telegram API mesajı kabul etmeden hafta tamamlanmış sayılmaz.
+Başarısız gönderim **1 saat sonra** yeniden denenir; başarılı gönderim yeniden
+başlatmadan sonra da aynı hafta tekrar edilmez. Eski `last_week` state'i korunur.
+Bozuk durum dosyası otomatik sıfırlanmaz; pano `state_unreadable` gösterir.
+Render/GitHub Actions gibi geçici süreçlerde **iki otomatik rapor da varsayılan
+kapalıdır**. Eski sürüm veya açıkça etkinleştirilmiş ikinci kopya yine mesaj
+gönderebilir: yalnız doğru tablet süreci rapor lideri olmalıdır.
+
 Bu döngü modeli her hafta yeniden eğitmez. İlk 90 gün keşif/veri-kalitesi
 dönemidir. Kalite kapısı geçilince OI+funding+long/short+likidasyon adayı ayrıca
 ön-kaydedilip kural dondurulur ve o an `RESEARCH_OOS_START_UTC` yazılır. Sonraki
@@ -377,6 +386,26 @@ ve Telegram açık olmalıdır. Kapatmak için `.env` içine
 `FORWARD_OI_30D_REPORT_ENABLED=false` yazılabilir; süre gerekiyorsa
 `FORWARD_OI_REPORT_INTERVAL_DAYS=30` ile ayarlanır. Sayaç ve 5dk önbelleği
 `.gitignore` kapsamındadır; hiçbir token veya `.env` değeri rapora girmez.
+
+**Rapor teslimi ve kaynak kontrolü (13 Ekim güncellemesi):** Pano “Araştırma
+raporları” bölümünde kaynak, arşiv dosyası var/yok, son Telegram API kabulü,
+son raporda okunan satır sayısı ve aylık/tekrar tarihini gösterir. Bu sayaç son
+raporun anlık görüntüsüdür; sürekli güncel arşiv sayacı değildir. Saatler panoda
+TRT gösterilir. API kabulü, telefonda mesajın görüldüğünü kanıtlamaz.
+
+```bash
+python signal_bot.py --research-report-status
+python signal_bot.py --test-research-report weekly
+# İsteğe bağlı: bütün birikimli OI arşivi + 5dk hedef/stop analizi; uzun sürebilir.
+python signal_bot.py --test-research-report monthly
+```
+
+İlk komut ağsızdır. TEST komutları yalnız sahibine rapor gönderir; haftalık/
+aylık sayaçları değiştirmez, komut dinleyici veya tarama başlatmaz. Aylık test
+gereken resmî 5dk verisini indirebilir; aynı aylık analiz zaten çalışıyorsa
+bekletilir. Arşiv boşsa TEST başarılı sayılmaz. Otomatik aylık rapor da boş
+arşivi sıfırlı başarı tablosu olarak göndermez. `.env` değişikliklerinden sonra
+çalışan botu yeniden başlatmak gerekir; mevcut süreç eski değerleri kullanır.
 
 Dosyalar Git'e veya GitHub Pages'a gönderilmez. Varsayılan iki kanal da açıktır;
 `ARCHIVE_MARKET_DATA=false` ve/veya `ARCHIVE_FORCE_ORDERS=false` ile kapatılabilir.
@@ -556,7 +585,8 @@ cooldown veya 5 dakikalık tarama / 1 saatlik sinyal mumunu değiştirmez.
   ayrı gösterilir. OOS kalite hesabına eğitim satırları katılmaz. S2 top-position
   verisi için `BINANCE_MARKET_DATA_API_KEY` yalnız cihazdaki `.env` içine girilir;
   eksikse açık hazırlık uyarısı gösterilir. Anahtarı sohbete veya Git'e koymayın.
-- Panoda sinyal fiyatı, kayıtlı ticker fiyatı, güncel ticker fiyatı ve fiyat yaşı
+- Panoda sinyal referansı (yeni G1 için teyit sonrası taze best ask), varsa eski
+  kayıtlı ticker, güncel gösterim ticker'ı ve fiyat yaşı
   ayrıdır. Ticker worker'ı tarama sonunda iki ek toplu fiyat isteği yapar;
   gösterge mumları ve arşiv fiyatları değişmez. Tablo/filtreler son 400 log
   satırını kapsar; hedef karnesi saklanan hedef arşivini kapsar. “Kanıt sınıfı”

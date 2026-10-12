@@ -10,6 +10,7 @@ import threading
 import time
 
 import execution_shadow as engine
+from atomic_state import replace_state
 
 
 class ShadowStore:
@@ -39,7 +40,7 @@ class ShadowStore:
         tmp = self.path.with_suffix(self.path.suffix+".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, sort_keys=True, allow_nan=False),
                        encoding="utf-8")
-        tmp.replace(self.path)
+        replace_state(tmp, self.path)
 
     def enroll(self, record, event_id, now_ms=None):
         now_ms = int(time.time()*1000) if now_ms is None else int(now_ms)
