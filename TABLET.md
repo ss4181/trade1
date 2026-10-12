@@ -823,3 +823,53 @@ değeri/API anahtarı ve ağır araştırma bağımlılığı gerekmiyor.
 tek botu yeniden başlatıp panonun güncel `status.g1_entry_config_version`
 alanını kontrol etmek çalışan/yayımlayan süreci de doğrular. İlk yeni G1
 gelene kadar eski olayların v2 görünmesi normaldir.
+
+## S1/S3/G2 ileri gölge takibini başlatma
+
+Bu paket GitHub main'e aktarıldıktan sonra, komutları sırayla uygulayın.
+Güncelleme yalnız dosyayı değiştirir; çalışan botu yeniden başlatmak gerekir.
+
+```bash
+cd ~/trade1
+touch .stop-signal-bot
+pkill -f 'uvicorn server:app' 2>/dev/null || true
+pkill -f 'python signal_bot.py' 2>/dev/null || true
+pgrep -af 'boot-signal-bot.sh|uvicorn.*server:app|python.*signal_bot'
+```
+
+Son komutta bot/wrapper hâlâ görünüyorsa sonlanmasını bekleyin; ikinci kopya
+başlatmayın. Ardından:
+
+```bash
+git pull --ff-only origin main
+python -c "import execution_shadow; print(execution_shadow.VERSION)"
+```
+
+Pull başarılıysa ve `execution-shadow-v1` görünüyorsa:
+
+```bash
+rm -f .stop-signal-bot
+nohup sh ./termux/boot-signal-bot.sh >/dev/null 2>&1 &
+```
+
+20–30 saniye sonra:
+
+```bash
+grep -E 'giris-cikis golge takibi|signal_bot basladi|tarama bitti' bot.out.log | tail -8
+python research/review_execution_shadow.py --format text
+```
+
+Başlangıçta `giris-cikis golge takibi: execution-shadow-v1` beklenir. `.env`
+içinde `EXECUTION_SHADOW_ENABLED=false` varsa bu özellik kapalıdır; toplamak
+için `true` yapıp tek botu yeniden başlatın. Yeni anahtar veya paket gerekmez.
+
+İlk uygun **S1/extended59, S3/core30 veya G2/fixed87** teslimine kadar olay
+sayısı sıfır olabilir. S1+S4, S5/S6 ve G1 bu ayrı çalışmaya dahil değildir.
+Eski mesajlardan geriye dönük veri üretilmez. Rapor "state bulunamadı" diyorsa
+gölge takip henüz başlamamış veya farklı klasörde çalışıyor olabilir. Bozuk
+state uyarısında dosyayı silmeyin; mevcut veri korunarak hata incelenmelidir.
+
+Mumlar ayrı 5dk worker'ında ölçülür. Anlık fiyat takibi/borsa emri değildir;
+kısmi ilk mum kullanılmaz. Funding hariç G2 ölçümü tam net kâr gibi okunmamalı.
+State ve `execution_shadow_bars_YYYY-MM.jsonl` günlük yedekle PC'ye taşınabilir.
+PC'de aynı rapora `--state` ile yedek dosyasını göstermek yeterlidir.

@@ -608,3 +608,34 @@ ağ erişimi kapalıdır.
 PC/CI test bağımlılıkları `python -m pip install -r requirements-test.txt`
 ile kurulur. Bu liste Parquet motorunu da içerir; tabletteki hafif çalışma
 ortamı için yalnız `requirements.txt` kullanılmaya devam edilir.
+
+## S1/S3/G2 ileri giriş–çıkış gölge takibi
+
+`execution-shadow-v1`, yalnız güncellemeden sonra Telegram API onayı alınan
+yeni olayları ayrı ölçer. `EXECUTION_SHADOW_ENABLED=true` varsayılandır;
+toplama sürekli çalışan tek bot liderinde açılır. Ek bildirim veya emir üretmez.
+
+- S1 **extended59**: TP3/SL2 karşılaştırmasına karşı TP6/SL3.
+- S3 **core30**: TP3/SL2; 15dk teyit sonrası sabit TP3/SL3 ve %3 takip stopu.
+- G2 **fixed87**: TP3/SL2, önceki TP4/SL3 ve %6'da yarım çıkış + %3 takip stopu.
+
+S1/S3 giriş referansı ilk teslimden kesin sonraki 5dk açılışı; G2 planlanan
+saat açılışıdır. Bütün kolların son saati ortaktır. G2'nin mevcut hedef takibi
+erken kapanınca yeni deney durmaz. Eksik mumlar UNKNOWN kalır; eski kayıtlar
+ileri teste eklenmez. G2 funding dahil net getiri henüz hesaplanmaz.
+
+```bash
+python research/review_execution_shadow.py --format text
+python research/review_execution_shadow.py --state /yedek/.execution_shadow_state.json --format json
+```
+
+Rapor bekleyen/eksik/girişsiz olayları, 20/40bp maliyeti, eşleştirilmiş farkı,
+beklemeyi, MAE/MFE'yi ve rejimleri gösterir. Güncel pano JSON'unda
+`status.execution_shadow` worker ve veri durumunu gösterir. Özel
+`.execution_shadow_state.json` ve `execution_shadow_bars_*.jsonl` günlük yedek
+kapsamındadır; yeniden başlatınca takip sürer. Tablet kurulum adımları
+[TABLET.md](TABLET.md#s1s3g2-ileri-gölge-takibini-başlatma) içinde.
+
+[Dondurulmuş yöntem ve değerlendirme kapısı](research/EXECUTION_SHADOW_PROTOCOL.md).
+Yeni adayların başarısı ancak yeni veri oluştukça ölçülebilir; kodun çalışması
+adayın daha kârlı olduğu anlamına gelmez.

@@ -41,6 +41,7 @@ jobs:
             shadow_experiments.py derivatives_archive.py archive_backup.py \
             notification_delivery.py signal_outcomes.py backup_verify.py cloud_standby.py \
             strategy_engine.py paper_execution.py \
+            execution_shadow.py execution_shadow_store.py \
             research/*.py tests/*.py
 
       - name: Bot çevrimdışı testleri

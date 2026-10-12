@@ -9,6 +9,9 @@ signals.log
 .bot_state.json
 .perf_cache.json
 .price_target_state.json
+.execution_shadow_state.json
+.execution_shadow_state.json.tmp
+execution_shadow_bars_*.jsonl
 .experiment_state.json
 .research_monitor_state.json
 .forward_oi_report_state.json

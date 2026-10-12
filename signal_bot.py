@@ -74,6 +74,8 @@ from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
 import g2_notifications as g2
 import g1_entry
+import execution_shadow
+from execution_shadow_store import ShadowStore
 import notification_scorecard
 import dashboard_reporting
 from concurrent.futures import ThreadPoolExecutor, as_completed, CancelledError
@@ -830,6 +832,65 @@ SHADOW_STATE_FILE = Path(__file__).parent / _env(
 _shadow_worker_lock = threading.Lock()
 SHADOW_WORKER_ACTIVE = False
 SHADOW_WORKER_LAST_ERROR: str | None = None
+
+# Frozen forward execution candidates, collected only by the active leader.
+EXECUTION_SHADOW_ENABLED = _env("EXECUTION_SHADOW_ENABLED", True, cast=_flag)
+EXECUTION_SHADOW_STATE_FILE = Path(__file__).parent / ".execution_shadow_state.json"
+_execution_shadow_store: ShadowStore | None = None
+_execution_shadow_worker: DeliveryRetryWorker | None = None
+EXECUTION_SHADOW_LAST_ERROR: str | None = None
+
+
+def _register_execution_shadow(record: dict) -> None:
+    """Post-ACK metadata only. Failure must not affect Telegram delivery."""
+    global EXECUTION_SHADOW_LAST_ERROR
+    if not EXECUTION_SHADOW_ENABLED or _execution_shadow_store is None:
+        return
+    strategy, symbol = record.get("strategy"), record.get("symbol")
+    frozen_symbols = {
+        "S1": set(EXTENDED_SYMBOLS_DEFAULT.split(",")),
+        "S3": set(DEFAULT_SYMBOLS.split(",")),
+        "G2": set(g2.CONTRACTS),
+    }
+    if symbol not in frozen_symbols.get(strategy, set()):
+        return
+    try:
+        added = _execution_shadow_store.enroll(record, _signal_event_id(record))
+        if added and EXECUTION_SHADOW_LAST_ERROR == "execution_shadow_enrollment_failed":
+            EXECUTION_SHADOW_LAST_ERROR = None
+    except Exception:
+        EXECUTION_SHADOW_LAST_ERROR = "execution_shadow_enrollment_failed"
+
+
+def _poll_execution_shadow(stop_event=None) -> None:
+    global EXECUTION_SHADOW_LAST_ERROR
+    if _execution_shadow_store is None:
+        return
+    try:
+        def fetch(event, start, end):
+            # Explicit 5m; no G1 measurement marker or inferred perp mapping.
+            return fetch_price_target_klines({
+                "symbol": event["symbol"], "market": event["market"],
+                "performance_symbol": event["symbol"],
+            }, start, end)
+        _execution_shadow_store.poll(fetch, stop_event=stop_event, max_events=20)
+        if EXECUTION_SHADOW_LAST_ERROR == "execution_shadow_update_failed":
+            EXECUTION_SHADOW_LAST_ERROR = None
+    except Exception:
+        EXECUTION_SHADOW_LAST_ERROR = "execution_shadow_update_failed"
+
+
+def execution_shadow_status() -> dict:
+    status = {"enabled": EXECUTION_SHADOW_ENABLED,
+              "study_version": execution_shadow.VERSION,
+              "plan_hash": execution_shadow.PLAN_HASH,
+              "research_only": True,
+              "worker_alive": bool(_execution_shadow_worker and
+                                   _execution_shadow_worker.thread.is_alive()),
+              "last_error": EXECUTION_SHADOW_LAST_ERROR}
+    if _execution_shadow_store is not None:
+        status.update(_execution_shadow_store.status())
+    return status
 
 # Gerceklesen USD-M force-order snapshot'lari Binance tarafinda geriye donuk
 # oynatilamaz. Bu nedenle surekli modda ayri WebSocket thread'i tum piyasayi
@@ -2643,6 +2704,8 @@ def _retry_signal_deliveries(stop_event=None) -> None:
                     _telegram_signal_text(record), chat_id=cid)), stop_event=stop_event)
             delivered_any = delivered_any or result["delivery_confirmed"]
         if delivered_any:
+            for record in DELIVERY_OUTBOX.confirmed_records():
+                _register_execution_shadow(record)
             _backfill_price_targets_from_signal_log()
     except Exception as exc:
         print(f"uyari: bildirim tekrar denemesi: {type(exc).__name__}",
@@ -3651,6 +3714,7 @@ def notify(sig: dict, push: bool = True) -> dict:
         record.setdefault("delivery_status", "delivered" if delivered else "failed")
         if delivered:
             record.setdefault("delivered_at", datetime.now(timezone.utc).isoformat())
+            _register_execution_shadow(record)
             _register_price_targets(record, persist=True)
     try:
         with open(Path(__file__).parent / SIGNAL_LOG, "a", encoding="utf-8") as f:
@@ -4344,6 +4408,7 @@ def _release_instance_file_lock(handle) -> None:
 def run_forever(once: bool = False, state: ScanState | None = None) -> None:
     """Tek lider garantili tarama giris noktasi."""
     global INSTANCE_LOCK_HELD, LAST_LOOP_ERROR, _delivery_retry_worker, _g2_worker, _g1_worker
+    global _execution_shadow_store, _execution_shadow_worker, EXECUTION_SHADOW_LAST_ERROR
     if not _run_guard.acquire(blocking=False):
         LAST_LOOP_ERROR = "bu proseste baska bir tarama dongusu zaten calisiyor"
         raise RuntimeError(LAST_LOOP_ERROR)
@@ -4361,6 +4426,19 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             raise RuntimeError(LAST_LOOP_ERROR)
         INSTANCE_LOCK_HELD = True
         LAST_LOOP_ERROR = None
+        if EXECUTION_SHADOW_ENABLED and not once:
+            try:
+                # Persist activation before any delivery producer starts.
+                _execution_shadow_store = ShadowStore(EXECUTION_SHADOW_STATE_FILE, ARCHIVE_DIR)
+                _execution_shadow_worker = DeliveryRetryWorker(_poll_execution_shadow, interval_seconds=300)
+                _execution_shadow_worker.thread.name = "execution-shadow"
+                _execution_shadow_worker.start()
+                EXECUTION_SHADOW_LAST_ERROR = None
+            except Exception:
+                _execution_shadow_store = None
+                EXECUTION_SHADOW_LAST_ERROR = "execution_shadow_start_failed_check_state"
+                print("uyari: giris-cikis golge takibi baslatilamadi; mevcut state korundu",
+                      file=sys.stderr, flush=True)
         if ENABLE_TELEGRAM and not once:
             worker = DeliveryRetryWorker(_retry_signal_deliveries)
             worker.start()
@@ -4388,6 +4466,10 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
         if _delivery_retry_worker is not None:
             _delivery_retry_worker.stop()
             _delivery_retry_worker = None
+        if _execution_shadow_worker is not None:
+            _execution_shadow_worker.stop()
+            _execution_shadow_worker = None
+        _execution_shadow_store = None
         stop_market_regime_worker()
         if _signal_watch_worker:
             _signal_watch_worker.stop()
@@ -4463,6 +4545,9 @@ def _run_forever_locked(once: bool = False,
         print("gunluk arsiv yedegi acik: "
               f"her {ARCHIVE_BACKUP_INTERVAL_HOURS:g}saat, "
               "Android ortak depolama", flush=True)
+    if _execution_shadow_store is not None:
+        print(f"giris-cikis golge takibi: {execution_shadow.VERSION} · S1/S3/G2 · "
+              "yalniz yeni teslimler, ayri 5dk worker", flush=True)
     if not ENABLE_TELEGRAM:
         if not _ENV_FOUND:
             print(f"NOT: Telegram KAPALI cunku .env bulunamadi.\n"
@@ -5746,6 +5831,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "g1_entry_config_version": g1_entry.CONFIG_VERSION,
             "g1_entry_measurement_version": g1_entry.MEASUREMENT,
             "g1_entry_path_version": g1_entry.PATH_VERSION,
+            "execution_shadow": execution_shadow_status(),
             "measurement_versions": ["signal-reference-touch-v1",
                                       g1_entry.MEASUREMENT,
                                       "paper-barriers-v1", g2.MEASUREMENT, "legacy_unknown"],

@@ -37,6 +37,7 @@ ARCHIVE_GLOBS = (
     "shadow_events_*.jsonl",
     "g2_market_*.jsonl",
     "g2_events_*.jsonl",
+    "execution_shadow_bars_*.jsonl",
 )
 
 STATE_NAMES = (
@@ -46,6 +47,7 @@ STATE_NAMES = (
     ".notification_preferences.json",
     ".perf_cache.json",
     ".price_target_state.json",
+    ".execution_shadow_state.json",
     ".research_monitor_state.json",
     ".subscribers.json",
     ".forward_oi_report_state.json",
