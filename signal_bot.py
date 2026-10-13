@@ -74,6 +74,7 @@ from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
 import g2_notifications as g2
 import g1_entry
+import g1_alignment_shadow
 import execution_shadow
 from execution_shadow_store import ShadowStore
 import notification_scorecard
@@ -313,6 +314,11 @@ DELIVERY_OUTBOX = DeliveryOutbox(Path(__file__).parent / ".notification_outbox.j
 _delivery_worker_lock = threading.Lock()
 _delivery_retry_worker: DeliveryRetryWorker | None = None
 SIGNAL_WATCH_ENABLED = _env("SIGNAL_WATCH_ENABLED", True, cast=_flag)
+G1_ALIGNMENT_SHADOW_ENABLED = _env(
+    "G1_ALIGNMENT_SHADOW_ENABLED", not _is_ephemeral_research_runtime(), cast=_flag)
+_g1_alignment_study = None
+_g1_alignment_worker = None
+G1_ALIGNMENT_LAST_ERROR = None
 _signal_watch = None
 _signal_watch_worker = None
 SPOT_CATALOG = SpotCatalog()
@@ -1157,6 +1163,18 @@ def _poll_g1_notifications(stop_event=None) -> None:
         _g1_worker_lock.release()
 
 
+def _poll_g1_alignment(stop_event=None):
+    if _g1_alignment_study is not None:
+        _g1_alignment_study.tick(stop_event=stop_event)
+
+
+def g1_alignment_status():
+    return {"enabled": G1_ALIGNMENT_SHADOW_ENABLED, "version": g1_alignment_shadow.VERSION,
+            "research_only": True, "worker_alive": bool(_g1_alignment_worker and _g1_alignment_worker.thread.is_alive()),
+            "startup_error": G1_ALIGNMENT_LAST_ERROR,
+            **(dict(_g1_alignment_study.status) if _g1_alignment_study else {})}
+
+
 def run_shadow_experiments(*, include_g1: bool = True) -> int:
     """G1/DL1'i ana taramadan izole çalıştır; hata çekirdeği bozmasın."""
     global SHADOW_WORKER_LAST_ERROR
@@ -1730,6 +1748,49 @@ def _tick_signal_watch(stop_event=None):
         _signal_watch.tick(market_regime_snapshot(), stop_event=stop_event)
 
 
+_watch_g1_rank_boundary = None
+_watch_g1_ranks = {}
+
+
+def _watch_g1_conditions(event, now_ms):
+    """Same live G1 predicates, NOT an exit strategy or aligned replacement."""
+    global _watch_g1_rank_boundary, _watch_g1_ranks
+    boundary = now_ms//3_600_000*3_600_000
+    if _watch_g1_rank_boundary != boundary:
+        catalog = _futures_get("/fapi/v1/exchangeInfo").json()
+        active = {r["symbol"] for r in catalog["symbols"] if r.get("status") == "TRADING"
+                  and r.get("contractType") == "PERPETUAL" and r.get("quoteAsset") == "USDT"}
+        rows = _futures_get("/fapi/v1/ticker/24hr").json()
+        ranking = sorted(((float(r["priceChangePercent"]), r["symbol"]) for r in rows
+                          if r.get("symbol") in active), key=lambda x: (-x[0], x[1]))
+        if not ranking or any(not math.isfinite(x[0]) for x in ranking):
+            return {"status": "UNKNOWN"}
+        _watch_g1_ranks = {s: i+1 for i, (_, s) in enumerate(ranking)}
+        _watch_g1_rank_boundary = boundary
+    symbol = event["performance_symbol"]
+    if symbol not in _watch_g1_ranks:
+        return {"status": "UNKNOWN"}  # Delisting/catalog failure is not fake invalidation.
+    rank = _watch_g1_ranks[symbol]
+    klines = _futures_get("/fapi/v1/klines", dict(symbol=symbol, interval="1h",
+        startTime=boundary-25*3_600_000, endTime=boundary-1, limit=25)).json()
+    params = dict(symbol=symbol, period="1h", startTime=boundary-2*3_600_000, endTime=boundary, limit=5)
+    oi = _futures_get("/futures/data/openInterestHist", params).json()
+    ls = _futures_get("/futures/data/globalLongShortAccountRatio", params).json()
+    observed = int(time.time()*1000)
+    data = g1_alignment_shadow.evaluate(klines, oi, ls, boundary, rank, observed, max_delay_ms=3_600_000)
+    legacy = data["legacy_lag"]
+    if legacy["status"] == "UNKNOWN":
+        return {"status": "UNKNOWN"}
+    f = data["features"]
+    descriptions = dict(return24=f"24s kapanmış getiri %{f['return24']*100:.2f} < %5",
+        rank=f"Günlük yükselen sırası #{rank}, ilk 10 dışında",
+        volume=f"Saatlik hacim oranı {f['volume_ratio']:.2f}x < 2x",
+        oi=f"Özgün gecikmeli OI değişimi %{legacy['oi_change']*100:.2f} < %2",
+        long_short=f"Global hesap long/short {legacy['ls_ratio']:.4f} ≥ 1")
+    return dict(status="ACTIVE" if legacy["status"] == "ACTIVE" else "CONDITIONS_LOST",
+                bar_end_ms=boundary, failed_conditions=[descriptions[k] for k, v in legacy["conditions"].items() if not v])
+
+
 def start_signal_watch():
     global _signal_watch, _signal_watch_worker
     if not SIGNAL_WATCH_ENABLED or (_signal_watch_worker and _signal_watch_worker.thread.is_alive()):
@@ -1739,7 +1800,8 @@ def start_signal_watch():
         records=DELIVERY_OUTBOX.confirmed_records,
         recipients=DELIVERY_OUTBOX.confirmed_recipients,
         subscribers=lambda: list(TELEGRAM_SUBSCRIBERS),
-        sender=lambda text, cid: ENABLE_TELEGRAM and _telegram_send_text(text, chat_id=cid))
+        sender=lambda text, cid: ENABLE_TELEGRAM and _telegram_send_text(text, chat_id=cid),
+        condition_check=_watch_g1_conditions)
     _signal_watch_worker = DeliveryRetryWorker(_tick_signal_watch, interval_seconds=15)
     _signal_watch_worker.thread.name = "signal-watch"
     _signal_watch_worker.start()
@@ -2728,6 +2790,7 @@ def notification_delivery_status() -> dict:
               "scan_workers": SCAN_WORKERS,
               "scan_streaming_enabled": SCAN_STREAMING_ENABLED,
               "g1_independent_worker_alive": bool(_g1_worker and _g1_worker.thread.is_alive()),
+              "g1_alignment": g1_alignment_status(),
               "g1_last_error": G1_WORKER_LAST_ERROR,
               "g2_independent_worker_alive": bool(_g2_worker and _g2_worker.thread.is_alive()),
               "g2_last_error": G2_WORKER_LAST_ERROR,
@@ -4522,6 +4585,7 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
     """Tek lider garantili tarama giris noktasi."""
     global INSTANCE_LOCK_HELD, LAST_LOOP_ERROR, _delivery_retry_worker, _g2_worker, _g1_worker
     global _execution_shadow_store, _execution_shadow_worker, EXECUTION_SHADOW_LAST_ERROR
+    global _g1_alignment_study, _g1_alignment_worker, G1_ALIGNMENT_LAST_ERROR
     if not _run_guard.acquire(blocking=False):
         LAST_LOOP_ERROR = "bu proseste baska bir tarama dongusu zaten calisiyor"
         raise RuntimeError(LAST_LOOP_ERROR)
@@ -4539,6 +4603,19 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             raise RuntimeError(LAST_LOOP_ERROR)
         INSTANCE_LOCK_HELD = True
         LAST_LOOP_ERROR = None
+        if not once and SHADOW_EXPERIMENTS_ENABLED and G1_ALIGNMENT_SHADOW_ENABLED:
+            try:
+                _g1_alignment_study = g1_alignment_shadow.AlignmentStudy(
+                    Path(__file__).parent/".g1_alignment_state.json", ARCHIVE_DIR,
+                    fetch=lambda endpoint, params: _futures_get(endpoint, params).json(),
+                    context=market_regime_snapshot)
+                _g1_alignment_worker = DeliveryRetryWorker(_poll_g1_alignment, interval_seconds=60)
+                _g1_alignment_worker.thread.name = "g1-alignment-shadow"
+                _g1_alignment_worker.start()
+                G1_ALIGNMENT_LAST_ERROR = None
+            except Exception:
+                _g1_alignment_study = None
+                G1_ALIGNMENT_LAST_ERROR = "alignment_start_failed_state_preserved"
         if EXECUTION_SHADOW_ENABLED and not once:
             try:
                 # Persist activation before any delivery producer starts.
@@ -4570,6 +4647,10 @@ def run_forever(once: bool = False, state: ScanState | None = None) -> None:
             LAST_LOOP_ERROR = f"{type(e).__name__}: {e}"
         raise
     finally:
+        if _g1_alignment_worker is not None:
+            _g1_alignment_worker.stop()
+            _g1_alignment_worker = None
+        _g1_alignment_study = None
         if _g1_worker is not None:
             _g1_worker.stop()
             _g1_worker = None
@@ -4661,6 +4742,9 @@ def _run_forever_locked(once: bool = False,
     if _execution_shadow_store is not None:
         print(f"giris-cikis golge takibi: {execution_shadow.VERSION} · S1/S3/G2 · "
               "yalniz yeni teslimler, ayri 5dk worker", flush=True)
+    if _g1_alignment_study is not None:
+        print(f"G1 hizalama golgesi: {g1_alignment_shadow.VERSION} · "
+              "legacy/aligned, 5dk/15dk girisler; bildirim/emir yok", flush=True)
     if not ENABLE_TELEGRAM:
         if not _ENV_FOUND:
             print(f"NOT: Telegram KAPALI cunku .env bulunamadi.\n"

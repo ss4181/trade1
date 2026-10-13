@@ -42,6 +42,8 @@ jobs:
             notification_delivery.py signal_outcomes.py backup_verify.py cloud_standby.py \
             strategy_engine.py paper_execution.py \
             execution_shadow.py execution_shadow_store.py \
+            g1_alignment_shadow.py signal_watch.py position_risk.py \
+            tools/build_hyperliquid_handoff.py \
             research/*.py tests/*.py
 
       - name: Bot çevrimdışı testleri

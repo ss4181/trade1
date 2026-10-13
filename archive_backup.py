@@ -38,6 +38,8 @@ ARCHIVE_GLOBS = (
     "g2_market_*.jsonl",
     "g2_events_*.jsonl",
     "execution_shadow_bars_*.jsonl",
+    "g1_alignment_observations_*.jsonl",
+    "g1_alignment_bars_*.jsonl",
 )
 
 STATE_NAMES = (
@@ -54,6 +56,7 @@ STATE_NAMES = (
     ".notification_outbox.json",
     ".signal_watch_state.json",
     ".signal_watch_outbox.json",
+    ".g1_alignment_state.json",
     "signals.log",
 )
 

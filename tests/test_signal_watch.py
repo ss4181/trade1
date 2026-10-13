@@ -236,6 +236,61 @@ class WatchTests(unittest.TestCase):
                 bot._signal_watch_worker.stop()
             self.assertFalse(bot.signal_watch_snapshot()["worker_alive"])
 
+    def test_categories_and_expiry_are_not_execution_instructions(self):
+        with tempfile.TemporaryDirectory() as d:
+            sent = []
+            watch = self.make(Path(d), [signal()], sent)
+            watch.tick({"fresh": True, "label": "BULL"}, now_ms=NOW)
+            self.assertIn("Referans mum yapısı ihlal edildi", sent[0][0])
+            self.assertIn("doğrulanmış çıkış modeli değil", sent[0][0])
+            self.now = NOW+3*HOUR
+            watch.tick({"fresh": True, "label": "BULL"}, now_ms=self.now)
+            self.assertEqual(len(sent), 2)
+            self.assertIn("Sinyal takip süresi bitti", sent[1][0])
+            self.assertIn("Pozisyonun kapandığı anlamına gelmez", sent[1][0])
+            self.now += 300000
+            watch.tick({"fresh": True, "label": "BULL"}, now_ms=self.now)
+            self.assertEqual(len(sent), 2)
+
+    def test_closed_hour_g1_condition_loss_once_across_restart(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, sent = Path(d), []
+            records = [dict(signal(), strategy="G1")]
+            def callback(event, now):
+                return {"status":"CONDITIONS_LOST", "bar_end_ms":now//HOUR*HOUR,
+                        "failed_conditions":["Hacim 1.2x < 2x"]}
+            watch = self.make(root, records, sent)
+            watch.condition_check = callback
+            watch.tick({"fresh": True, "label": "BULL"}, now_ms=NOW)
+            self.assertEqual(len(sent), 1)
+            self.assertIn("G1 kurulum koşulları artık sağlanmıyor", sent[0][0])
+            self.assertIn("Hacim 1.2x", sent[0][0])
+            self.assertEqual(sent[0][1], "owner")
+            self.now += 300000
+            watch = self.make(root, records, sent)
+            watch.condition_check = callback
+            watch.tick({"fresh": True, "label": "BULL"}, now_ms=self.now)
+            self.assertEqual(len(sent), 1)
+
+    def test_unknown_condition_is_not_cancellation(self):
+        with tempfile.TemporaryDirectory() as d:
+            sent = []
+            watch = self.make(Path(d), [dict(signal(), strategy="G1")], sent)
+            watch.condition_check = lambda e, n: {"status":"UNKNOWN"}
+            watch.tick({"fresh": True, "label": "BULL"}, now_ms=NOW)
+            self.assertNotIn("conditions_lost", watch.state['events']['abc']['warned'])
+            self.assertEqual(watch.status['condition_errors'], 1)
+            self.assertTrue(all("G1 kurulum koşulları" not in t for t, _ in sent))
+
+    def test_fresh_or_pre_signal_hour_never_rechecks_older_conditions(self):
+        with tempfile.TemporaryDirectory() as d:
+            rec = dict(signal(), strategy="G1", bar_time=regime.iso(NOW//HOUR*HOUR-HOUR),
+                       delivered_at=regime.iso(NOW-1000), notified_at=regime.iso(NOW-1000))
+            watch = self.make(Path(d), [rec], [])
+            with patch.object(watch, 'condition_check') as callback:
+                watch.tick({"fresh": True, "label":"BULL"}, now_ms=NOW)
+            callback.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

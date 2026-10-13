@@ -669,3 +669,86 @@ kapsamındadır; yeniden başlatınca takip sürer. Tablet kurulum adımları
 [Dondurulmuş yöntem ve değerlendirme kapısı](research/EXECUTION_SHADOW_PROTOCOL.md).
 Yeni adayların başarısı ancak yeni veri oluştukça ölçülebilir; kodun çalışması
 adayın daha kârlı olduğu anlamına gelmez.
+
+## G1 zaman hizalaması ve anlaşılır takip uyarıları
+
+13 Ekim tanısında G1 OI/LS'nin fiyat mumundan bir saat geride olduğu bulundu.
+**Canlı G1 kuralı değiştirilmedi.** `g1-alignment-forward-v1`, iki ayrı
+araştırma kolunda özgün gecikmeli ve tam saat-sınırı metriklerini karşılaştırır.
+Her kol için anlık, 5dk/15dk bekleme ve 5dk/15dk teyitli girişler ölçülür.
+TP3/SL2 ve 20/40bp yalnız gölge varsayımları; gerçek emir veya yatırım modeli
+değildir. Eksik metrik UNKNOWN; geçmiş olaylar ileri teste eklenmez.
+
+`G1_ALIGNMENT_SHADOW_ENABLED=true` sürekli tablet liderinde varsayılandır;
+bilinen geçici bulutta varsayılan false. Ayrı worker'ın hatası taramayı
+durdurmaz, hiçbir araştırma olayı Telegram/QC/skor kartına karışmaz. Günlük
+yedek `.g1_alignment_state.json` ve `g1_alignment_*_YYYY-MM.jsonl` kanıtlarını
+kapsar. Rapor, ayrı ve ağsızdır:
+
+```bash
+python research/review_g1_alignment.py
+```
+
+[Yeni dondurulmuş protokol](research/G1_ALIGNMENT_FORWARD_PROTOCOL.md).
+Başlangıçta sonraki tam saat ve veri yayını beklenir; sıfır olay arıza veya
+%0 başarı demek değildir. Örnek hazırlığı kârlılık doğrulaması değildir.
+
+`SIGNAL_WATCH_ENABLED=true` uyarıları artık üç ayrı türdür:
+
+- **Piyasa riski arttı:** BTC/ETH yön veya günlük rejim olumsuz değişti.
+- **Referans mum yapısı ihlal edildi:** iki tamamen teslim-sonrası kapanmış
+  15dk mum, LONG için referans saatlik low altında (SHORT için high üstünde).
+- **G1 kurulum koşulları artık sağlanmıyor:** sonraki kapanmış saat verisinde
+  özgün G1 getiri/rank/hacim/OI/LS koşullarından en az biri kayboldu. Hizalı
+  araştırma kolu canlıya geçirilmiş değildir. Eksik veri iptal sayılmaz.
+
+Ayrıca **Sinyal takip süresi bitti** bildirimi, önceden izlenen olayın ufku
+biterken gönderilir. Geçmiş/arşivde süresi bitmiş sinyallerden alarm yağmuru
+üretilmez. Yalnız ilk sinyalin teslim edildiği onaylı abonelere gönderilir;
+tekrarlar kendi kalıcı kuyruğuyla engellenir.
+
+**Bunların hiçbiri işlem kapatma emri, doğrulanmış çıkış stratejisi veya
+başarısızlık hükmü değildir.** Ufuk bitince bot günlerce açık tutulan işlemi
+izlemez. İki 15dk mum teyidi ani düşüşte geç kalabilir. Telegram gecikebilir;
+borsadaki stop-loss emrinin yerine geçmez. Bot gerçek borsa pozisyonunu,
+cross teminatını, tasfiye fiyatını veya gerçekleşmiş TP/SL'yi bilmiyor.
+
+### Özel pozisyon için yerel risk hesabı
+
+`position_risk.py`, elle verdiğin fiyatlar için yönlü fiyat değişimini, girişe
+geri dönmek için gereken değişimi, TP'nin girişe göre kâr/zararını ve biliniyorsa
+tasfiye mesafesini hesaplar. Toparlanma olasılığı, kapat/bekle tahmini, sahte
+miktar, dolar PnL ve kaldıraçlı hesap ROI'si üretmez. Ücret/funding hariçtir.
+Cross hesabın toplam riskini tek pozisyon görüntüsünden çıkarmaz.
+
+```bash
+python position_risk.py --file .manual_positions.json
+```
+
+Dosya kullanıcıya ait JSON liste olmalı. Zorunlu alanlar `symbol`, `direction`
+(`LONG`/`SHORT`), `margin_mode` (`cross`/`isolated`), `entry_price`, `mark_price`.
+Opsiyonel alanlar `stop_price`, `target_price`, `liquidation_price`, timezone'lu
+`mark_observed_at`. Örnek yalnız sentetik veri:
+
+```json
+[{"symbol":"COINUSDT","direction":"LONG","margin_mode":"cross",
+  "entry_price":100,"mark_price":80,"stop_price":null,"target_price":103,
+  "liquidation_price":null}]
+```
+
+Dosya Git dışıdır, otomatik panoya/Telegram'a gönderilmez; terminal çıktısı
+kişisel pozisyon bilgisi içerdiğinden herkese açık yayımlanmaz. API anahtarı
+gerekmiyor. Eksik tasfiye fiyatı risksizlik anlamına gelmez; stop fiyatı
+girilmiş olması da borsada emrin gerçekten kurulduğunu doğrulamaz.
+
+## Bağımsız Hyperliquid projesine devralma
+
+[Başlangıç ve özel paket üretimi](handoff/hyperliquid/README.md),
+[strateji/kanıt haritası](handoff/hyperliquid/STRATEGIES_AND_FINDINGS.md),
+[otomasyon güvenlik tasarımı](handoff/hyperliquid/AUTOMATION_SPEC.md) ve
+[yeni oturum promptu](handoff/hyperliquid/START_PROMPT.md) hazırdır.
+Bu bir Hyperliquid emir botu/deploy değil; 100USDC paper bakiye, ardından
+testnet planıdır. Gerçek para/ana-ağ ayrıca onay ve strateji/operasyon kapıları
+gerektirir. Binance güven oranları ve LS verisi HL'ye aynen aktarılmaz.
+PC arşivi manifesti doğrulanmadan ham veri paketi oluşturulmaz; `.env`, bot
+state'i, aboneler ve özel gerçek pozisyonlar hiçbir pakete taşınmaz.

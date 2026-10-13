@@ -29,6 +29,12 @@ execution_shadow_bars_*.jsonl
 .signal_watch_state.tmp
 .signal_watch_outbox.json
 .signal_watch_outbox.json.tmp
+.g1_alignment_state.json
+.g1_alignment_state.json.tmp
+g1_alignment_observations_*.jsonl
+g1_alignment_bars_*.jsonl
+.manual_positions.json
+handoff/private/
 .g2_state.json
 .g2_state.tmp
 g2_market_*.jsonl

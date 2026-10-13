@@ -17,6 +17,7 @@ def main():
         files = list(root.glob("*.py")) + [root / "dashboard.html"]
         files += list((root / "tests").rglob("*.py"))
         files += list((root / "research").glob("*.py"))
+        files += list((root / "tools").glob("*.py"))
         for source in files:
             target = copy / source.relative_to(root)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -28,6 +29,7 @@ def main():
                    ENABLE_TELEGRAM="false", PUBLISH_QC_ENABLED="false",
                    G2_ENABLED="false",
                    EXECUTION_SHADOW_ENABLED="false",
+                   G1_ALIGNMENT_SHADOW_ENABLED="false",
                    SIGNAL_WATCH_ENABLED="false",
                    TELEGRAM_MIN_INTERVAL_SECONDS="0",
                    TELEGRAM_BOT_TOKEN="", TELEGRAM_CHAT_ID="", GITHUB_TOKEN="")

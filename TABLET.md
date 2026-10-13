@@ -927,3 +927,62 @@ Mumlar ayrı 5dk worker'ında ölçülür. Anlık fiyat takibi/borsa emri değil
 kısmi ilk mum kullanılmaz. Funding hariç G2 ölçümü tam net kâr gibi okunmamalı.
 State ve `execution_shadow_bars_YYYY-MM.jsonl` günlük yedekle PC'ye taşınabilir.
 PC'de aynı rapora `--state` ile yedek dosyasını göstermek yeterlidir.
+
+## G1 hizalama gölgesi ve koşul-kaybı uyarıları
+
+Bu bölüm ancak ilgili kod **GitHub main'e yayımlandıktan sonra** geçerlidir;
+yerel PC değişikliği otomatik olarak tablete geçmez. Önce çalışan tek botu
+kontrollü durdur, sonra fast-forward güncellemeyi al:
+
+```bash
+cd ~/trade1
+touch .stop-signal-bot
+pkill -f "python signal_bot.py" 2>/dev/null || true
+git pull --ff-only origin main
+python -c "import g1_alignment_shadow as s; print(s.VERSION)"
+```
+
+`g1-alignment-forward-v1` görünmüyorsa yeniden başlatıp özellik varmış gibi
+devam etme; sürüm yayımlanmamış olabilir. Var olan `.env` dosyasını silme veya
+örnek dosyayla ezme. İlgili satırlar şunlar (secret değerlerini paylaşma):
+
+```dotenv
+G1_ALIGNMENT_SHADOW_ENABLED=true
+SIGNAL_WATCH_ENABLED=true
+```
+
+Doğrulandıktan sonra **başlatma adımını atlama**:
+
+```bash
+rm -f .stop-signal-bot
+nohup sh ./termux/boot-signal-bot.sh >/dev/null 2>&1 &
+```
+
+20–30 saniye sonra:
+
+```bash
+pgrep -af "python signal_bot.py"
+grep -E 'G1 hizalama golgesi|signal_bot basladi|tarama bitti' bot.out.log | tail -8
+python research/review_g1_alignment.py
+```
+
+Araştırma ilk aktivasyondan sonraki tam saat +1dk'yı bekler; yeni olay yoksa
+rapor başlangıçta sıfır olabilir. H+10dk'ya kadar yayınlanmayan metrik UNKNOWN
+kalır. Özgün G1 bildirimi/eşikleri aynı, bu kolda ekstra sinyal/emir yoktur.
+Eski ve hizalı kolun 5/15dk giriş sonuçları yalnız ayrı raporda görünür.
+State/JSONL dosyaları günlük yedeğe dahildir; özel pozisyon dosyası dahil
+değildir. Bozuk state'i silerek yeniden başlatmak araştırma başlangıcını
+değiştirir; önce hata incelenmelidir.
+
+Telegram'da yeni başlıklar “Piyasa riski arttı”, “Referans mum yapısı ihlal
+edildi”, G1 için “Kurulum koşulları artık sağlanmıyor” ve “Takip süresi bitti”.
+**Hiçbiri gerçek pozisyon kapatma emri değildir.** G1'in 4h ufku bittikten
+sonra açık tuttuğun işlem takip edilmiyor; borsadaki stop-loss yerine bu
+mesajları beklememelisin. 15dk teyit ve Telegram teslimi gecikebilir.
+
+Sadece elle girilmiş pozisyon aritmetiği için `.manual_positions.json` dosyasını
+kendin oluşturup `python position_risk.py --file .manual_positions.json`
+çalıştırabilirsin. [Alanlar ve sentetik örnek README'de](README.md#özel-pozisyon-için-yerel-risk-hesabı).
+Bu yerel hesap canlı fiyat çekmez, kâr olasılığı veya kapat/bekle kararı üretmez;
+dosyayı GitHub/Pages'e yükleme. Borsa ve gerçek dolum bilgileri doğrulanmadan
+kişisel açık işlem takibi veya otomatik emir başlatılmış değildir.

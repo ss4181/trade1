@@ -91,12 +91,14 @@ def structure_reason(event, reference_raw, recent_raw, now_ms):
 
 
 class SignalWatch:
-    def __init__(self, path, *, fetch, records, recipients, subscribers, sender, max_symbols=20):
+    def __init__(self, path, *, fetch, records, recipients, subscribers, sender, max_symbols=20,
+                 condition_check=None):
         self.path = Path(path)
         self.outbox = DeliveryOutbox(self.path.with_name(".signal_watch_outbox.json"))
         self.fetch, self.records, self.recipients = fetch, records, recipients
         self.subscribers, self.sender = subscribers, sender
         self.max_symbols = max_symbols
+        self.condition_check = condition_check
         self.state = None
         self.fast = {"hourly": "UNKNOWN", "early": "UNKNOWN", "fresh": False}
         self.status = {"enabled": True, "active_signals": 0, "last_error": None}
@@ -200,6 +202,19 @@ class SignalWatch:
         events = self.state["events"]
         for eid in list(events):
             if now_ms >= events[eid]["end_ms"]:
+                event = events[eid]
+                # Only previously registered, recently expired signals. Never
+                # flood historical signals on startup or imply a closed position.
+                if now_ms-event["end_ms"] < 5*regime.MINUTE:
+                    description = html.escape(f"{event['strategy']} — {event['symbol']} {event['direction']}")
+                    text = (f"⏳ <b>Sinyal takip süresi bitti</b>\n<b>{description}</b>"
+                            + f"\n🕒 Takip sonu: {tr(regime.iso(event['end_ms']))}"
+                            + "\n<i>Pozisyonun kapandığı anlamına gelmez. Bu sinyalin otomatik "
+                              "bağlam takibi sona erdi; açık pozisyonun ve borsadaki TP/SL emirlerin "
+                              "bu bot tarafından izlenmiyor.</i>")
+                    self.enqueue(eid+"|horizon_end", text,
+                                 [cid for cid in self.recipients(eid) if cid in self.subscribers()],
+                                 now_ms, event["end_ms"]+BAR, signal_id=eid, reasons=["horizon_end"])
                 del events[eid]
         for record in self.records():
             if record.get("event_id") not in events:
@@ -214,6 +229,8 @@ class SignalWatch:
         cache = {}
         symbols = set()
         price_errors = 0
+        condition_errors = 0
+        condition_budget = self.max_symbols
         market_blocked = self.fast.get("last_error") in {"MarketRateLimitError", "MarketTransientError"}
         for event in sorted(events.values(), key=lambda e:e["last_checked_ms"]):
             if stop_event is not None and stop_event.is_set():
@@ -247,19 +264,46 @@ class SignalWatch:
                     price_errors += 1
                     market_blocked = type(exc).__name__ in {"MarketRateLimitError", "MarketTransientError"}
                 event["last_checked_ms"] = now_ms
+            if (event["strategy"] == "G1" and self.condition_check is not None
+                    and "conditions_lost" not in event["warned"] and not market_blocked
+                    and condition_budget > 0
+                    and event.get("last_condition_bar_ms", 0) < now_ms//regime.HOUR*regime.HOUR
+                    and now_ms//regime.HOUR*regime.HOUR > event["reference_ms"]+regime.HOUR):
+                condition_budget -= 1
+                try:
+                    check = self.condition_check(event, now_ms)
+                    if (not isinstance(check, dict) or check.get("status") not in {"ACTIVE", "CONDITIONS_LOST"}
+                            or check.get("bar_end_ms") != now_ms//regime.HOUR*regime.HOUR):
+                        condition_errors += 1
+                        event["condition_status"] = "UNKNOWN"
+                    else:
+                        event["last_condition_bar_ms"] = check["bar_end_ms"]
+                        event["condition_status"] = check["status"]
+                        if check["status"] == "CONDITIONS_LOST" and check.get("failed_conditions"):
+                            reasons["conditions_lost"] = "Özgün G1 yeniden kontrolü: " + "; ".join(check["failed_conditions"])
+                except Exception as exc:
+                    condition_errors += 1
+                    event["condition_status"] = "UNKNOWN"
+                    event["condition_error"] = type(exc).__name__
+                    market_blocked = type(exc).__name__ in {"MarketRateLimitError", "MarketTransientError"}
             if reasons:
                 description = html.escape(f"{event['strategy']} — {event['symbol']} {event['direction']}")
-                text = (f"⚠️ <b>Sinyal koşulu zayıfladı</b>\n<b>{description}</b>\n"
+                title = ("G1 kurulum koşulları artık sağlanmıyor" if "conditions_lost" in reasons else
+                         "Referans mum yapısı ihlal edildi" if "structure" in reasons else "Piyasa riski arttı")
+                text = (f"⚠️ <b>{title}</b>\n<b>{description}</b>\n"
                         + "\n".join("• "+html.escape(s) for s in reasons.values())
                         + f"\n🔔 İlk bildirim: {tr(regime.iso(event['delivered_ms']))}"
                         + f"\n🕒 Kontrol: {tr(regime.iso(now_ms))}"
                         + f"\n⏳ Takip sonu: {tr(regime.iso(event['end_ms']))}"
-                        + "\n<i>Risk uyarısıdır; kesin başarısızlık veya işlem kapatma emri değildir.</i>")
+                        + "\n🧭 <b>Tür:</b> Kurulum/risk gözlemi · doğrulanmış çıkış modeli değil"
+                        + "\n<i>Kesin başarısızlık veya kapat/bekle önerisi değildir. Gerçek pozisyonunu "
+                          "ve emirlerini görmez; borsadaki stop-loss emrinin yerine geçmez.</i>")
                 self.enqueue(event["event_id"]+"|"+"|".join(sorted(reasons)), text,
                              [cid for cid in self.recipients(event["event_id"]) if cid in self.subscribers()],
                              now_ms, event["end_ms"], signal_id=event["event_id"], reasons=list(reasons))
                 event["warned"].extend(reasons)
         self.status.update(active_signals=len(events), price_errors=price_errors,
+                           condition_errors=condition_errors,
                            price_backlog=sum(e["last_checked_ms"] != now_ms and "structure" not in e["warned"]
                                              for e in events.values()),
                            fast_error=self.fast.get("last_error"))
