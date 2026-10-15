@@ -930,6 +930,14 @@ PC'de aynı rapora `--state` ile yedek dosyasını göstermek yeterlidir.
 
 ## G1 hizalama gölgesi ve koşul-kaybı uyarıları
 
+15 Ekim toplulaştırması: aynı kontroldeki zayıflamalar tek mesajda, ortak
+nedenler ve etkilenen sinyaller halinde gelir. Genel piyasa yönü ve takip sonu
+da aynı özete katılır. Çok uzun özetler yalnız Telegram sınırı nedeniyle
+numaralı parçalara ayrılır. Eski gönderilmemiş uyarılar da birleştirilir;
+teslim edilmiş uyarılar tekrarlanmaz. Yeni env ayarı gerektirmez. Yerel kod
+değişikliği tableti güncellemez: ilgili sürüm GitHub'a yayımlandıktan sonra
+aşağıdaki durdur/güncelle/**yeniden başlat** adımlarını uygulamalısın.
+
 Bu bölüm ancak ilgili kod **GitHub main'e yayımlandıktan sonra** geçerlidir;
 yerel PC değişikliği otomatik olarak tablete geçmez. Önce çalışan tek botu
 kontrollü durdur, sonra fast-forward güncellemeyi al:

@@ -672,6 +672,18 @@ adayın daha kârlı olduğu anlamına gelmez.
 
 ## G1 zaman hizalaması ve anlaşılır takip uyarıları
 
+**15 Ekim — toplu takip mesajı:** aynı kontrol turundaki piyasa yönü değişimi,
+sinyal zayıflamaları ve takip süresi bitişleri alıcı başına tek özette toplanır.
+Ortak neden bir kez yazılır; altında ilgili strateji/coin/yön, ilk bildirim ve
+takip sonu listelenir. Alıcı yalnız kendisine teslim edilmiş sinyalleri görür;
+genel piyasa yönü bilgisi tüm aktif abonelere açık kalır. Telegram uzunluk
+sınırı aşılırsa numaralı parçalara bölünür; sinyal listesi sessizce kesilmez.
+Eski kuyrukta henüz gönderilmemiş uyarılar da toplulaştırılır; başarılı teslimler
+yeniden gönderilmez, retry beklemesi ve 15dk kuyruk ömrü uzatılmaz. Retry anında
+süresi biten sinyal çıkarılır. Telegram timeout'unda teslim belirsizliği yine
+mümkündür; mutlak exactly-once garantisi değildir. Sinyal koşulları, tarama
+aralığı, strateji cooldown'ları ve fiyat/başarı ölçümü değişmez.
+
 13 Ekim tanısında G1 OI/LS'nin fiyat mumundan bir saat geride olduğu bulundu.
 **Canlı G1 kuralı değiştirilmedi.** `g1-alignment-forward-v1`, iki ayrı
 araştırma kolunda özgün gecikmeli ve tam saat-sınırı metriklerini karşılaştırır.

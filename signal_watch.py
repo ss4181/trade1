@@ -5,11 +5,13 @@ The signal outbox and scorecards are read-only inputs. This module owns its own
 state/outbox, and never imports the bot. Call tick from one background worker.
 """
 from datetime import datetime, timezone
+import copy
 import hashlib
 import html
 import json
 import math
 from pathlib import Path
+import re
 from atomic_state import replace_state
 
 import intraday_regime as regime
@@ -17,6 +19,182 @@ from notification_delivery import DeliveryOutbox
 
 SUPPORTED = {"S1", "S1+S4", "S2", "S3", "S5", "S6", "G1", "G2"}
 BAR = 15 * regime.MINUTE
+MESSAGE_LIMIT = 3900  # Conservative HTML/UTF-16 budget below Telegram's limit.
+
+
+def warning_links(record):
+    """Both pre-upgrade individual alerts and new digests recover per-event dedup."""
+    if record.get("signal_id"):
+        yield record["signal_id"], record.get("reasons", [])
+    for item in record.get("watch_items", []):
+        if item.get("signal_id"):
+            yield item["signal_id"], list(item.get("details", {}))
+        elif item.get("legacy_signal_id"):
+            yield item["legacy_signal_id"], item.get("legacy_reasons", [])
+
+
+def digest_messages(items, now_ms):
+    """Group identical causes; split only when the transport limit requires it."""
+    header = "⚠️ <b>Sinyal koşulları — toplu güncelleme</b>"
+    footer = ("\n\n🧭 <i>Kurulum/risk gözlemidir; doğrulanmış çıkış modeli değil. "
+              "Gerçek pozisyonu/emirleri izlemez; borsadaki stop-loss yerine geçmez.</i>")
+    def size(text):
+        return len(text.encode("utf-16-le"))//2
+    groups = {}
+    for item in items:
+        if item["expires_ms"] <= now_ms:
+            continue
+        if item["kind"] == "signal":
+            for key, detail in sorted(item["details"].items()):
+                label = ("G1 kurulum koşulları artık sağlanmıyor" if key == "conditions_lost" else
+                         "Referans mum yapısı ihlal edildi" if key == "structure" else "Piyasa riski arttı")
+                # One shared cause even when each signal has other distinct
+                # causes too. Metadata covers exactly the reasons on this page.
+                member = {**item, "details": {key: detail}}
+                groups.setdefault((label, detail), []).append(member)
+            continue
+        if item["kind"] == "regime":
+            label = "🌐 Piyasa yönü değişti"
+            detail = "\n".join(item["details"].values())
+        elif item["kind"] == "horizon":
+            label = "⏳ Sinyal takip süresi bitti"
+            detail = "Pozisyonun kapandığı anlamına gelmez; bu sinyalin bağlam takibi sona erdi."
+        elif item["kind"] == "legacy":
+            label, detail = "Önceki kontrolden bekleyen uyarı", item["text"]
+        else:
+            raise ValueError("invalid_watch_item_kind")
+        groups.setdefault((label, detail), []).append(item)
+    # Each block retains its event metadata even if the same reason spans pages.
+    blocks = []
+    for (label, detail), members in groups.items():
+        base = f"\n\n<b>{html.escape(label)}</b>\n{html.escape(detail)}"
+        current, linked = base, []
+        for item in members:
+            line = ""
+            if item.get("signal_id"):
+                line = ("\n• <b>"+html.escape(f"{item['strategy']} — {item['symbol']} {item['direction']}")+"</b>"
+                        + f" · İlk: {tr(regime.iso(item['delivered_ms']))}"
+                        + f" · Takip sonu: {tr(regime.iso(item['end_ms']))}")
+            if size(header+current+line+footer)+100 > MESSAGE_LIMIT:
+                if not linked:
+                    raise ValueError("watch_item_exceeds_message_limit")
+                blocks.append((current, linked))
+                current, linked = base, []
+            current += line
+            linked.append(item)
+        blocks.append((current, linked))
+    pages, body, linked = [], "", []
+    for block, members in blocks:
+        if size(header+body+block+footer)+100 > MESSAGE_LIMIT and linked:
+            pages.append((body, linked))
+            body, linked = "", []
+        body += block
+        linked += members
+    if linked:
+        pages.append((body, linked))
+    messages = []
+    for i, (body, members) in enumerate(pages, 1):
+        suffix = f" ({i}/{len(pages)})" if len(pages)>1 else ""
+        times = sorted({m["observed_ms"] for m in members})
+        stamp = tr(regime.iso(times[0]))
+        if times[-1] != times[0]:
+            stamp += " — "+tr(regime.iso(times[-1]))
+        text = header+suffix+"\n🕒 Kontrol: "+stamp+body+footer
+        if size(text) > MESSAGE_LIMIT:
+            raise ValueError("watch_message_exceeds_limit")
+        messages.append((text, members))
+    return messages
+
+
+class WatchOutbox(DeliveryOutbox):
+    """Atomic per-recipient digests, retaining each source event's dedup evidence."""
+    def enqueue_groups(self, groups, now_ms):
+        now = datetime.fromtimestamp(now_ms/1000, timezone.utc)
+        with self.lock:
+            items = self._load()
+            previous = copy.deepcopy(items)
+            try:
+                self._add_groups(items, groups, now)
+                self._save()
+            except Exception:
+                self.items = previous
+                raise
+
+    def _add_groups(self, queue, groups, now, *, created_at=None, attempts=0):
+        ids = set()
+        for cid, members in groups.items():
+            for text, page in digest_messages(members, int(now.timestamp()*1000)):
+                identity = json.dumps([cid, page], sort_keys=True, ensure_ascii=False)
+                eid = "watch-digest-"+hashlib.sha256(identity.encode()).hexdigest()[:32]
+                ids.add(eid)
+                if eid not in queue:
+                    queue[eid] = {"created_at": created_at or now.isoformat(),
+                        "record": {"event_id": eid, "text": text, "watch_items": page,
+                                   "watch_format": "digest-v1", "expires_ms": max(m["expires_ms"] for m in page)},
+                        "recipients": {cid: {"status": "pending", "attempts": attempts}}}
+        return ids
+
+    def coalesce_due(self, now_ms, subscribers):
+        """Old unsent individual alerts/retries must not burst after an upgrade.
+
+        One atomic save replaces due unsent recipients with digest recipients.
+        Successful deliveries are never replayed; backoff/TTL are not reset.
+        """
+        now = datetime.fromtimestamp(now_ms/1000, timezone.utc)
+        with self.lock:
+            queue = self._load()
+            if not any(r["status"] in {"pending", "sending"}
+                       for item in queue.values() for r in item["recipients"].values()):
+                return
+            previous = copy.deepcopy(queue)
+            groups = {}
+            try:
+                for eid, item in list(queue.items()):
+                    for cid, recipient in item["recipients"].items():
+                        if (recipient["status"] not in {"pending", "sending"}
+                                or (eid, cid) in self._inflight):
+                            continue
+                        expired = (now_ms >= item["record"]["expires_ms"] or
+                            (now-datetime.fromisoformat(item["created_at"])).total_seconds() > self.ttl_minutes*60)
+                        if expired or cid not in subscribers or recipient["attempts"] >= self.max_attempts:
+                            recipient["status"] = "failed"
+                            continue
+                        if recipient.get("next_attempt_at") and now < datetime.fromisoformat(recipient["next_attempt_at"]):
+                            continue
+                        record = item["record"]
+                        members = record.get("watch_items")
+                        if members is None:
+                            plain = html.unescape(re.sub(r"<[^>]+>", "", record["text"]))
+                            members = [dict(kind="legacy", text=plain, observed_ms=millis(item["created_at"]),
+                                expires_ms=record["expires_ms"], legacy_signal_id=record.get("signal_id"),
+                                legacy_reasons=record.get("reasons", []))]
+                        deadline = millis(item["created_at"])+self.ttl_minutes*60_000
+                        live = [{**m, "expires_ms": min(m["expires_ms"], deadline)} for m in members
+                                if min(m["expires_ms"], deadline) > now_ms]
+                        if not live:
+                            recipient["status"] = "failed"
+                            continue
+                        groups.setdefault(cid, []).append((eid, item, recipient, live))
+                for cid, sources in groups.items():
+                    if (len(sources) == 1 and sources[0][1]["record"].get("watch_format") == "digest-v1"
+                            and len(sources[0][3]) == len(sources[0][1]["record"]["watch_items"])):
+                        continue
+                    members = [m for _, _, _, page in sources for m in page]
+                    newest = max(item["created_at"] for _, item, _, _ in sources)
+                    attempts = max(r["attempts"] for _, _, r, _ in sources)
+                    # Each member keeps its original TTL. An older retry must
+                    # neither prolong itself nor prematurely expire new alerts.
+                    replacements = self._add_groups(queue, {cid: members}, now, created_at=newest, attempts=attempts)
+                    for eid, _, r, _ in sources:
+                        # Reformatting already split pages can yield the exact
+                        # same IDs. Never supersede a pending page with itself.
+                        if eid not in replacements:
+                            r.update(status="failed", superseded_by_digest=True)
+                if queue != previous:
+                    self._save()
+            except Exception:
+                self.items = previous
+                raise
 
 
 def millis(value):
@@ -94,7 +272,7 @@ class SignalWatch:
     def __init__(self, path, *, fetch, records, recipients, subscribers, sender, max_symbols=20,
                  condition_check=None):
         self.path = Path(path)
-        self.outbox = DeliveryOutbox(self.path.with_name(".signal_watch_outbox.json"))
+        self.outbox = WatchOutbox(self.path.with_name(".signal_watch_outbox.json"))
         self.fetch, self.records, self.recipients = fetch, records, recipients
         self.subscribers, self.sender = subscribers, sender
         self.max_symbols = max_symbols
@@ -133,17 +311,23 @@ class SignalWatch:
                             recipients, now=datetime.fromtimestamp(now_ms/1000, timezone.utc))
 
     def flush(self, now_ms, stop_event=None):
-        for eid in self.outbox.pending_ids(due_only=True):
+        if stop_event is not None and stop_event.is_set():
+            return
+        self.outbox.coalesce_due(now_ms, set(self.subscribers()))
+        now = datetime.fromtimestamp(now_ms/1000, timezone.utc)
+        for eid in self.outbox.pending_ids(due_only=True, now=now):
             if stop_event is not None and stop_event.is_set():
                 break
             def send(cid, record):
                 if int(record["expires_ms"]) <= now_ms or cid not in self.subscribers():
                     return False
                 return self.sender(record["text"], cid)
-            self.outbox.deliver(eid, send, stop_event=stop_event)
-        records = self.outbox.all_records()
-        self.status["pending_alerts"] = sum(r.get("delivery_pending_count", 0) for r in records)
-        self.status["failed_alert_deliveries"] = sum(r.get("delivery_failed_count", 0) for r in records)
+            self.outbox.deliver(eid, send, now=now, stop_event=stop_event)
+        with self.outbox.lock:
+            recipients = [r for item in self.outbox._load().values() for r in item["recipients"].values()
+                          if not r.get("superseded_by_digest")]
+        self.status["pending_alerts"] = sum(r["status"] in {"pending", "sending"} for r in recipients)
+        self.status["failed_alert_deliveries"] = sum(r["status"] == "failed" for r in recipients)
 
     def tick(self, daily, *, now_ms=None, stop_event=None):
         now_ms = int(datetime.now(timezone.utc).timestamp()*1000) if now_ms is None else now_ms
@@ -165,8 +349,14 @@ class SignalWatch:
         except Exception as exc:
             # Preserve corrupt files; no silent reset/replay. Do not expose payloads.
             self.status["last_error"] = type(exc).__name__
+            # Queue/state IO failed: retry from durable state, not half-mutated
+            # condition timestamps that could silently skip the warning.
+            self.state = None
+            self.last_fast_slot = None
 
     def _check(self, daily, now_ms, stop_event):
+        # Persist all recipients/pages atomically before marking any event warned.
+        updates = []
         slot = now_ms // BAR
         if slot != self.last_fast_slot:
             try:
@@ -187,17 +377,20 @@ class SignalWatch:
                   "early": self.fast.get("early", "UNKNOWN") if fast_fresh else "UNKNOWN"}
         titles = {"daily": "Günlük ana rejim", "hourly": "Saatlik yön", "early": "15dk erken yön"}
         changes = []
+        queued = self.outbox.all_records()
+        known_transitions = {m.get("transition_key") for row in queued for m in row.get("watch_items", [])
+                             if m.get("kind") == "regime"}
         for key, label in labels.items():
             if label == "UNKNOWN":
                 continue
             previous = self.state["regimes"].get(key)
             if previous and previous != label:
                 changes.append(f"• {titles[key]}: {regime.NAMES[previous]} → {regime.NAMES[label]}")
-        if changes:
-            text = ("🌐 <b>Piyasa yönü değişti</b>\n" + "\n".join(changes)
-                    + f"\n🕒 {tr(regime.iso(now_ms))}\n<i>Gün içi ölçüm BTC ve ETH teyitlidir; günlük rejim ayrı izlenir.</i>")
-            self.enqueue("regime|"+str(slot)+"|"+json.dumps(labels, sort_keys=True), text,
-                         list(self.subscribers()), now_ms, now_ms+BAR)
+        transition_key = "regime|"+str(slot)+"|"+json.dumps(labels, sort_keys=True)
+        if changes and transition_key not in known_transitions:
+            updates.append((dict(kind="regime", observed_ms=now_ms, expires_ms=now_ms+BAR,
+                details={"regime": "\n".join(changes)},
+                transition_key=transition_key), list(self.subscribers())))
         self.state["regimes"].update({k:v for k,v in labels.items() if v != "UNKNOWN"})
         events = self.state["events"]
         for eid in list(events):
@@ -206,15 +399,8 @@ class SignalWatch:
                 # Only previously registered, recently expired signals. Never
                 # flood historical signals on startup or imply a closed position.
                 if now_ms-event["end_ms"] < 5*regime.MINUTE:
-                    description = html.escape(f"{event['strategy']} — {event['symbol']} {event['direction']}")
-                    text = (f"⏳ <b>Sinyal takip süresi bitti</b>\n<b>{description}</b>"
-                            + f"\n🕒 Takip sonu: {tr(regime.iso(event['end_ms']))}"
-                            + "\n<i>Pozisyonun kapandığı anlamına gelmez. Bu sinyalin otomatik "
-                              "bağlam takibi sona erdi; açık pozisyonun ve borsadaki TP/SL emirlerin "
-                              "bu bot tarafından izlenmiyor.</i>")
-                    self.enqueue(eid+"|horizon_end", text,
-                                 [cid for cid in self.recipients(eid) if cid in self.subscribers()],
-                                 now_ms, event["end_ms"]+BAR, signal_id=eid, reasons=["horizon_end"])
+                    updates.append((self._watch_item(event, {"horizon_end": "Süre bitti"}, now_ms,
+                        kind="horizon", expires_ms=event["end_ms"]+BAR), self.recipients(eid)))
                 del events[eid]
         for record in self.records():
             if record.get("event_id") not in events:
@@ -222,10 +408,11 @@ class SignalWatch:
                 if event:
                     events[event["event_id"]] = event
         # Recover an enqueue-before-state-save crash without re-warning a reason.
-        for alert in self.outbox.all_records():
-            event = events.get(alert.get("signal_id"))
-            if event:
-                event["warned"] = sorted(set(event["warned"]) | set(alert.get("reasons", [])))
+        for alert in queued:
+            for signal_id, reasons in warning_links(alert):
+                event = events.get(signal_id)
+                if event:
+                    event["warned"] = sorted(set(event["warned"]) | set(reasons))
         cache = {}
         symbols = set()
         price_errors = 0
@@ -287,23 +474,26 @@ class SignalWatch:
                     event["condition_error"] = type(exc).__name__
                     market_blocked = type(exc).__name__ in {"MarketRateLimitError", "MarketTransientError"}
             if reasons:
-                description = html.escape(f"{event['strategy']} — {event['symbol']} {event['direction']}")
-                title = ("G1 kurulum koşulları artık sağlanmıyor" if "conditions_lost" in reasons else
-                         "Referans mum yapısı ihlal edildi" if "structure" in reasons else "Piyasa riski arttı")
-                text = (f"⚠️ <b>{title}</b>\n<b>{description}</b>\n"
-                        + "\n".join("• "+html.escape(s) for s in reasons.values())
-                        + f"\n🔔 İlk bildirim: {tr(regime.iso(event['delivered_ms']))}"
-                        + f"\n🕒 Kontrol: {tr(regime.iso(now_ms))}"
-                        + f"\n⏳ Takip sonu: {tr(regime.iso(event['end_ms']))}"
-                        + "\n🧭 <b>Tür:</b> Kurulum/risk gözlemi · doğrulanmış çıkış modeli değil"
-                        + "\n<i>Kesin başarısızlık veya kapat/bekle önerisi değildir. Gerçek pozisyonunu "
-                          "ve emirlerini görmez; borsadaki stop-loss emrinin yerine geçmez.</i>")
-                self.enqueue(event["event_id"]+"|"+"|".join(sorted(reasons)), text,
-                             [cid for cid in self.recipients(event["event_id"]) if cid in self.subscribers()],
-                             now_ms, event["end_ms"], signal_id=event["event_id"], reasons=list(reasons))
-                event["warned"].extend(reasons)
+                updates.append((self._watch_item(event, reasons, now_ms), self.recipients(event["event_id"])))
+        subscribers, groups = set(self.subscribers()), {}
+        for item, recipients in updates:
+            for cid in sorted(set(recipients) & subscribers):
+                groups.setdefault(cid, []).append(item)
+        if groups:
+            self.outbox.enqueue_groups(groups, now_ms)
+        for item, _ in updates:
+            event = events.get(item.get("signal_id"))
+            if event:
+                event["warned"] = sorted(set(event["warned"]) | set(item["details"]))
         self.status.update(active_signals=len(events), price_errors=price_errors,
                            condition_errors=condition_errors,
                            price_backlog=sum(e["last_checked_ms"] != now_ms and "structure" not in e["warned"]
                                              for e in events.values()),
                            fast_error=self.fast.get("last_error"))
+
+    @staticmethod
+    def _watch_item(event, reasons, now_ms, *, kind="signal", expires_ms=None):
+        return dict(kind=kind, signal_id=event["event_id"], strategy=event["strategy"],
+            symbol=event["symbol"], direction=event["direction"], delivered_ms=event["delivered_ms"],
+            end_ms=event["end_ms"], details=dict(reasons), observed_ms=now_ms,
+            expires_ms=expires_ms if expires_ms is not None else event["end_ms"])
