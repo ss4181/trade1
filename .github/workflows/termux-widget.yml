@@ -1,0 +1,23 @@
+name: Termux widget scripts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "termux/widget/**"
+      - ".github/workflows/termux-widget.yml"
+  pull_request:
+    paths:
+      - "termux/widget/**"
+      - ".github/workflows/termux-widget.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  shell-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate Termux scripts
+        run: sh -n termux/widget/*.sh termux/widget/widget-*

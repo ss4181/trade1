@@ -1,0 +1,2 @@
+#!/data/data/com.termux/files/usr/bin/sh
+exec sh "$HOME/trade1/termux/widget/restart.sh"
