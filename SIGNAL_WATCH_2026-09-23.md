@@ -1,5 +1,10 @@
 # Rejim değişimi ve sinyal koşulu uyarıları — 23 Eylül 2026
 
+> Güncel politika: **28 Ekim 2026** itibarıyla rutin güncellemeler otomatik
+> gönderilmez. Üretim varsayılanı yalnız kritik ters yön + fiyat kırılmasıdır;
+> [güncel kurallar](SIGNAL_WATCH_CRITICAL_2026-10-28.md). Aşağıdaki daha geniş
+> bildirim davranışı eski sürümün tarihsel açıklamasıdır.
+
 Kullanıcı tercihi: teslim edilmiş sinyali stratejinin mevcut ufku boyunca izle.
 Uyarı katmanı performans sonuçlarını, eski başarı tanımını, strateji eşiklerini
 ve emirleri değiştirmez. Rejim bozulması sinyalin kesin başarısızlığı değildir.

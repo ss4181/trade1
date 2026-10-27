@@ -982,11 +982,17 @@ State/JSONL dosyaları günlük yedeğe dahildir; özel pozisyon dosyası dahil
 değildir. Bozuk state'i silerek yeniden başlatmak araştırma başlangıcını
 değiştirir; önce hata incelenmelidir.
 
-Telegram'da yeni başlıklar “Piyasa riski arttı”, “Referans mum yapısı ihlal
-edildi”, G1 için “Kurulum koşulları artık sağlanmıyor” ve “Takip süresi bitti”.
-**Hiçbiri gerçek pozisyon kapatma emri değildir.** G1'in 4h ufku bittikten
+28 Ekim 2026 güncellemesiyle eski rutin rejim/koşul/takip-sonu mesajları
+susturulmuştur. Otomatik başlık artık **“Kritik risk — toplu uyarı”**:
+BTC+ETH 1h ve 15m ters yön teyidi **ve** coinin kendi piyasasında iki kapalı
+15m mumla ATR tamponunu aşan referans kırılması birlikte gerekir. `/status`
+çıktısında `critical-reversal-v1` görünmelidir. Yeni paket/env anahtarı gerekmez;
+kod GitHub'a aktarıldıktan sonra güncelleme ve yeniden başlatma gerekir.
+**Bu gerçek pozisyon kapatma emri değildir.** G1'in 4h ufku bittikten
 sonra açık tuttuğun işlem takip edilmiyor; borsadaki stop-loss yerine bu
 mesajları beklememelisin. 15dk teyit ve Telegram teslimi gecikebilir.
+Uyarı gelmemesi güvenlik veya bekleme onayı değildir. Sinyal girişleri,
+hedef alarmları ve araştırma kuralları bu bildirim filtresiyle değişmez.
 
 Sadece elle girilmiş pozisyon aritmetiği için `.manual_positions.json` dosyasını
 kendin oluşturup `python position_risk.py --file .manual_positions.json`

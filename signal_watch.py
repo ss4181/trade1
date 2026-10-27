@@ -20,6 +20,8 @@ from notification_delivery import DeliveryOutbox
 SUPPORTED = {"S1", "S1+S4", "S2", "S3", "S5", "S6", "G1", "G2"}
 BAR = 15 * regime.MINUTE
 MESSAGE_LIMIT = 3900  # Conservative HTML/UTF-16 budget below Telegram's limit.
+CRITICAL_POLICY = "critical-reversal-v1"
+CRITICAL_REASON = "critical_reversal"
 
 
 def warning_links(record):
@@ -35,9 +37,16 @@ def warning_links(record):
 
 def digest_messages(items, now_ms):
     """Group identical causes; split only when the transport limit requires it."""
-    header = "⚠️ <b>Sinyal koşulları — toplu güncelleme</b>"
+    critical = bool(items) and all(is_critical_item(item) for item in items)
+    header = ("🚨 <b>Kritik risk — toplu uyarı</b>" if critical else
+              "⚠️ <b>Sinyal koşulları — toplu güncelleme</b>")
     footer = ("\n\n🧭 <i>Kurulum/risk gözlemidir; doğrulanmış çıkış modeli değil. "
               "Gerçek pozisyonu/emirleri izlemez; borsadaki stop-loss yerine geçmez.</i>")
+    if critical:
+        footer = ("\n\n🛡️ <b>Aynı yönde açık pozisyonun varsa önceden belirlediğin stop/çıkış planını kontrol et.</b>"
+                  "\n<i>Bu, kesin kapat emri veya toparlanma tahmini değildir. Gerçek girişini, "
+                  "pozisyonunu, kaldıraç ve teminatını bilmez; emir açmaz/kapatmaz. "
+                  "Teyit gecikebilir; borsadaki stop-loss yerine geçmez.</i>")
     def size(text):
         return len(text.encode("utf-16-le"))//2
     groups = {}
@@ -47,7 +56,9 @@ def digest_messages(items, now_ms):
         if item["kind"] == "signal":
             for key, detail in sorted(item["details"].items()):
                 label = ("G1 kurulum koşulları artık sağlanmıyor" if key == "conditions_lost" else
-                         "Referans mum yapısı ihlal edildi" if key == "structure" else "Piyasa riski arttı")
+                         "Referans mum yapısı ihlal edildi" if key == "structure" else
+                         "Ters yön ve belirgin fiyat kırılması birlikte teyit edildi" if key == CRITICAL_REASON else
+                         "Piyasa riski arttı")
                 # One shared cause even when each signal has other distinct
                 # causes too. Metadata covers exactly the reasons on this page.
                 member = {**item, "details": {key: detail}}
@@ -104,6 +115,13 @@ def digest_messages(items, now_ms):
             raise ValueError("watch_message_exceeds_limit")
         messages.append((text, members))
     return messages
+
+
+def is_critical_item(item):
+    """An old context warning must never become critical merely by reformatting."""
+    return (item.get("kind") == "signal" and item.get("alert_policy") == CRITICAL_POLICY
+            and isinstance(item.get("details"), dict)
+            and set(item["details"]) == {CRITICAL_REASON})
 
 
 class WatchOutbox(DeliveryOutbox):
@@ -196,6 +214,30 @@ class WatchOutbox(DeliveryOutbox):
                 self.items = previous
                 raise
 
+    def suppress_context(self):
+        """Cancel unsent pre-upgrade context pages without deleting ACK evidence.
+
+        New critical-only pages have their own IDs and remain retryable. Mixed
+        or unversioned pages fail closed rather than replaying routine updates.
+        """
+        with self.lock:
+            queue = self._load()
+            previous = copy.deepcopy(queue)
+            try:
+                for eid, item in queue.items():
+                    members = item["record"].get("watch_items")
+                    if isinstance(members, list) and members and all(is_critical_item(m) for m in members):
+                        continue
+                    for cid, recipient in item["recipients"].items():
+                        if (recipient["status"] in {"pending", "sending"}
+                                and (eid, cid) not in self._inflight):
+                            recipient.update(status="failed", suppressed_by_policy=CRITICAL_POLICY)
+                if queue != previous:
+                    self._save()
+            except Exception:
+                self.items = previous
+                raise
+
 
 def millis(value):
     dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -244,6 +286,7 @@ def register(record, now_ms, fast, daily):
                 "symbol": record["symbol"], "direction": record["direction"],
                 "market": market, "performance_symbol": record.get("performance_symbol") or record["symbol"],
                 "delivered_ms": delivered, "end_ms": end, "reference_ms": reference,
+                "monitor_from_ms": max(delivered, start),
                 "baseline": {"daily": record.get("market_regime") or daily.get("label", "UNKNOWN"),
                              "hourly": record.get("intraday_regime", {}).get("hourly", fast.get("hourly", "UNKNOWN")),
                              "early": record.get("intraday_regime", {}).get("early", fast.get("early", "UNKNOWN"))},
@@ -268,18 +311,77 @@ def structure_reason(event, reference_raw, recent_raw, now_ms):
     return f"İki kapanmış 15dk mum, referans saatlik mumun {level:.8g} seviyesinin {side}."
 
 
+def critical_reversal_reason(event, reference_raw, recent_raw, now_ms, fast):
+    """Conservative notification policy, NOT an optimized/validated exit rule.
+
+    Require closed BTC+ETH hourly AND 15m consensus against this event, plus
+    two post-delivery/post-planned-entry closes beyond its reference extreme.
+    A fixed 0.5 pre-confirmation ATR14 / 0.2% floor rejects marginal crossings.
+    No live bars, future or stale context, fabricated positions, or PnL.
+    """
+    if event.get("direction") not in {"LONG", "SHORT"} or now_ms >= event["end_ms"]:
+        return None
+    refs = regime.closed_bars(reference_raw, regime.HOUR,
+                             event["reference_ms"] + regime.HOUR, minimum=1)
+    if len(refs) != 1 or refs[0]["time"] != event["reference_ms"]:
+        raise ValueError("wrong_critical_reference_candle")
+    bars = regime.closed_bars(recent_raw, BAR, now_ms, minimum=17)
+    if not fast.get("fresh"):
+        return None
+    opposite = "BEAR" if event["direction"] == "LONG" else "BULL"
+    try:
+        if millis(fast.get("reference_at")) != now_ms // BAR * BAR:
+            return None
+        if millis(fast.get("hourly_reference_at")) != now_ms // regime.HOUR * regime.HOUR:
+            return None
+    except (ValueError, TypeError, OverflowError):
+        return None
+    if fast.get("hourly") != opposite or fast.get("early") != opposite:
+        return None
+    monitor_from = event.get("monitor_from_ms")
+    if monitor_from is None:
+        # Old G2 state cannot invent the planned entry; refresh from the
+        # original delivered record before allowing a critical notification.
+        if event["strategy"] == "G2":
+            return None
+        monitor_from = event["delivered_ms"]
+    pair, prior = bars[-2:], bars[:-2]
+    if pair[0]["time"] < monitor_from:
+        return None
+    ranges = [max(b["high"] - b["low"], abs(b["high"] - a["close"]),
+                  abs(b["low"] - a["close"])) for a, b in zip(prior, prior[1:])][-14:]
+    atr = sum(ranges) / 14
+    level = refs[0]["low"] if event["direction"] == "LONG" else refs[0]["high"]
+    buffer = max(.5 * atr, level * .002)
+    threshold = level - buffer if event["direction"] == "LONG" else level + buffer
+    broken = (all(b["close"] < threshold for b in pair) if event["direction"] == "LONG"
+              else all(b["close"] > threshold for b in pair))
+    if not broken:
+        return None
+    side = "altında" if event["direction"] == "LONG" else "üstünde"
+    return (f"Saatlik yön + 15dk yön: BTC ve ETH birlikte {regime.NAMES[opposite]}. "
+            f"İki kapanmış 15dk mum, referans {level:.8g} seviyesinin {side}; "
+            f"{buffer:.8g} tamponu da aştı (0.5 ATR14, en az %0.2). "
+            f"Teyit sınırı {threshold:.8g}; son kapanış {pair[-1]['close']:.8g}. "
+            "Sinyalin yön varsayımıyla belirgin çelişki; gerçek işlem K/Z hesabı değildir.")
+
+
 class SignalWatch:
     def __init__(self, path, *, fetch, records, recipients, subscribers, sender, max_symbols=20,
-                 condition_check=None):
+                 condition_check=None, critical_only=True):
         self.path = Path(path)
         self.outbox = WatchOutbox(self.path.with_name(".signal_watch_outbox.json"))
         self.fetch, self.records, self.recipients = fetch, records, recipients
         self.subscribers, self.sender = subscribers, sender
         self.max_symbols = max_symbols
         self.condition_check = condition_check
+        # Legacy context mode is retained only for explicit offline replay.
+        # Production wiring always selects critical_only=True.
+        self.critical_only = critical_only
         self.state = None
         self.fast = {"hourly": "UNKNOWN", "early": "UNKNOWN", "fresh": False}
-        self.status = {"enabled": True, "active_signals": 0, "last_error": None}
+        self.status = {"enabled": True, "active_signals": 0, "last_error": None,
+                       "alert_policy": CRITICAL_POLICY if critical_only else "all-context-legacy"}
         self.next_check_ms = 0
         self.last_fast_slot = None
 
@@ -310,16 +412,19 @@ class SignalWatch:
                              "signal_id": signal_id, "reasons": reasons or []},
                             recipients, now=datetime.fromtimestamp(now_ms/1000, timezone.utc))
 
-    def flush(self, now_ms, stop_event=None):
+    def flush(self, now_ms, stop_event=None, *, live_clock=False):
         if stop_event is not None and stop_event.is_set():
             return
+        if self.critical_only:
+            self.outbox.suppress_context()
         self.outbox.coalesce_due(now_ms, set(self.subscribers()))
         now = datetime.fromtimestamp(now_ms/1000, timezone.utc)
         for eid in self.outbox.pending_ids(due_only=True, now=now):
             if stop_event is not None and stop_event.is_set():
                 break
             def send(cid, record):
-                if int(record["expires_ms"]) <= now_ms or cid not in self.subscribers():
+                send_ms = int(datetime.now(timezone.utc).timestamp()*1000) if live_clock else now_ms
+                if int(record["expires_ms"]) <= send_ms or cid not in self.subscribers():
                     return False
                 return self.sender(record["text"], cid)
             self.outbox.deliver(eid, send, now=now, stop_event=stop_event)
@@ -327,9 +432,11 @@ class SignalWatch:
             recipients = [r for item in self.outbox._load().values() for r in item["recipients"].values()
                           if not r.get("superseded_by_digest")]
         self.status["pending_alerts"] = sum(r["status"] in {"pending", "sending"} for r in recipients)
-        self.status["failed_alert_deliveries"] = sum(r["status"] == "failed" for r in recipients)
+        self.status["failed_alert_deliveries"] = sum(r["status"] == "failed" and not r.get("suppressed_by_policy") for r in recipients)
+        self.status["suppressed_context_deliveries"] = sum(bool(r.get("suppressed_by_policy")) for r in recipients)
 
     def tick(self, daily, *, now_ms=None, stop_event=None):
+        live_clock = now_ms is None
         now_ms = int(datetime.now(timezone.utc).timestamp()*1000) if now_ms is None else now_ms
         try:
             self.load()
@@ -337,7 +444,7 @@ class SignalWatch:
             if now_ms % (5*regime.MINUTE) < 30_000:
                 return
             if now_ms < self.next_check_ms:
-                self.flush(now_ms, stop_event)
+                self.flush(now_ms, stop_event, live_clock=live_clock)
                 return
             self.next_check_ms = now_ms + regime.MINUTE
             self._check(daily, now_ms, stop_event)
@@ -345,7 +452,8 @@ class SignalWatch:
             self.status["last_error"] = None
             self.status["last_check_at"] = regime.iso(now_ms)
             self.next_check_ms = (now_ms//(5*regime.MINUTE)+1)*(5*regime.MINUTE)+30_000
-            self.flush(now_ms, stop_event)
+            completed_ms = int(datetime.now(timezone.utc).timestamp()*1000) if live_clock else now_ms
+            self.flush(completed_ms, stop_event, live_clock=live_clock)
         except Exception as exc:
             # Preserve corrupt files; no silent reset/replay. Do not expose payloads.
             self.status["last_error"] = type(exc).__name__
@@ -387,7 +495,7 @@ class SignalWatch:
             if previous and previous != label:
                 changes.append(f"• {titles[key]}: {regime.NAMES[previous]} → {regime.NAMES[label]}")
         transition_key = "regime|"+str(slot)+"|"+json.dumps(labels, sort_keys=True)
-        if changes and transition_key not in known_transitions:
+        if not self.critical_only and changes and transition_key not in known_transitions:
             updates.append((dict(kind="regime", observed_ms=now_ms, expires_ms=now_ms+BAR,
                 details={"regime": "\n".join(changes)},
                 transition_key=transition_key), list(self.subscribers())))
@@ -398,7 +506,7 @@ class SignalWatch:
                 event = events[eid]
                 # Only previously registered, recently expired signals. Never
                 # flood historical signals on startup or imply a closed position.
-                if now_ms-event["end_ms"] < 5*regime.MINUTE:
+                if not self.critical_only and now_ms-event["end_ms"] < 5*regime.MINUTE:
                     updates.append((self._watch_item(event, {"horizon_end": "Süre bitti"}, now_ms,
                         kind="horizon", expires_ms=event["end_ms"]+BAR), self.recipients(eid)))
                 del events[eid]
@@ -407,6 +515,10 @@ class SignalWatch:
                 event = register(record, now_ms, self.fast if fast_fresh else {}, daily)
                 if event:
                     events[event["event_id"]] = event
+            elif "monitor_from_ms" not in events[record["event_id"]]:
+                refreshed = register(record, now_ms, {}, {})
+                if refreshed:
+                    events[record["event_id"]]["monitor_from_ms"] = refreshed["monitor_from_ms"]
         # Recover an enqueue-before-state-save crash without re-warning a reason.
         for alert in queued:
             for signal_id, reasons in warning_links(alert):
@@ -427,24 +539,28 @@ class SignalWatch:
                 initial = event["baseline"].get(key, "UNKNOWN")
                 if label != "UNKNOWN" and initial == "UNKNOWN":
                     event["baseline"][key] = label
-                elif changed_against(initial, label, event["direction"]) and key not in event["warned"]:
+                elif (not self.critical_only and changed_against(initial, label, event["direction"])
+                      and key not in event["warned"]):
                     reasons[key] = f"{titles[key]}: {regime.NAMES[initial]} → {regime.NAMES[label]}."
             symbol_key = event["market"], event["performance_symbol"]
-            if (not market_blocked and "structure" not in event["warned"]
+            price_reason = CRITICAL_REASON if self.critical_only else "structure"
+            if (not market_blocked and price_reason not in event["warned"]
                     and (symbol_key in symbols or len(symbols) < self.max_symbols)):
                 symbols.add(symbol_key)
                 try:
                     if symbol_key not in cache:
-                        cache[symbol_key] = self.fetch(*symbol_key, "15m", {"limit": 4})
+                        cache[symbol_key] = self.fetch(*symbol_key, "15m", {"limit": 32 if self.critical_only else 4})
                     reference = event.get("reference_raw")
                     if not reference:
                         reference = self.fetch(*symbol_key, "1h", {
                             "startTime": event["reference_ms"],
                             "endTime": event["reference_ms"]+regime.HOUR-1, "limit": 1})
-                    reason = structure_reason(event, reference, cache[symbol_key], now_ms)
+                    reason = (critical_reversal_reason(event, reference, cache[symbol_key], now_ms,
+                              {**self.fast, "fresh": bool(fast_fresh)}) if self.critical_only else
+                              structure_reason(event, reference, cache[symbol_key], now_ms))
                     event["reference_raw"] = reference
                     if reason:
-                        reasons["structure"] = reason
+                        reasons[price_reason] = reason
                     event["last_error"] = None
                 except Exception as exc:
                     event["last_error"] = type(exc).__name__
@@ -466,7 +582,8 @@ class SignalWatch:
                     else:
                         event["last_condition_bar_ms"] = check["bar_end_ms"]
                         event["condition_status"] = check["status"]
-                        if check["status"] == "CONDITIONS_LOST" and check.get("failed_conditions"):
+                        if (not self.critical_only and check["status"] == "CONDITIONS_LOST"
+                                and check.get("failed_conditions")):
                             reasons["conditions_lost"] = "Özgün G1 yeniden kontrolü: " + "; ".join(check["failed_conditions"])
                 except Exception as exc:
                     condition_errors += 1
@@ -474,7 +591,11 @@ class SignalWatch:
                     event["condition_error"] = type(exc).__name__
                     market_blocked = type(exc).__name__ in {"MarketRateLimitError", "MarketTransientError"}
             if reasons:
-                updates.append((self._watch_item(event, reasons, now_ms), self.recipients(event["event_id"])))
+                item = self._watch_item(event, reasons, now_ms)
+                if self.critical_only:
+                    item.update(alert_policy=CRITICAL_POLICY,
+                                expires_ms=min(event["end_ms"], (now_ms//BAR+1)*BAR))
+                updates.append((item, self.recipients(event["event_id"])))
         subscribers, groups = set(self.subscribers()), {}
         for item, recipients in updates:
             for cid in sorted(set(recipients) & subscribers):
@@ -487,7 +608,8 @@ class SignalWatch:
                 event["warned"] = sorted(set(event["warned"]) | set(item["details"]))
         self.status.update(active_signals=len(events), price_errors=price_errors,
                            condition_errors=condition_errors,
-                           price_backlog=sum(e["last_checked_ms"] != now_ms and "structure" not in e["warned"]
+                           price_backlog=sum(e["last_checked_ms"] != now_ms
+                                             and (CRITICAL_REASON if self.critical_only else "structure") not in e["warned"]
                                              for e in events.values()),
                            fast_error=self.fast.get("last_error"))
 

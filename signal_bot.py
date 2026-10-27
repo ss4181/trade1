@@ -1801,7 +1801,7 @@ def start_signal_watch():
         recipients=DELIVERY_OUTBOX.confirmed_recipients,
         subscribers=lambda: list(TELEGRAM_SUBSCRIBERS),
         sender=lambda text, cid: ENABLE_TELEGRAM and _telegram_send_text(text, chat_id=cid),
-        condition_check=_watch_g1_conditions)
+        condition_check=_watch_g1_conditions, critical_only=True)
     _signal_watch_worker = DeliveryRetryWorker(_tick_signal_watch, interval_seconds=15)
     _signal_watch_worker.thread.name = "signal-watch"
     _signal_watch_worker.start()
@@ -6507,11 +6507,13 @@ def _format_status_for_telegram() -> str:
          f"🌐 <b>Piyasa rejimi:</b> {_html.escape(regime_text)} · "
          f"veri {_html.escape(_display_tr_time(regime.get('data_close_at')))}\n\n"
          f"👁️ <b>Sinyal takibi:</b> {watch_text} · {watch['active_signals']} sinyal\n"
+         f"• Uyarı filtresi: {_html.escape(str(watch.get('alert_policy') or 'henüz başlamadı'))}\n"
          f"• Kontrol: {_html.escape(_display_tr_time(watch.get('last_check_at')))}\n"
          f"• Hata: {_html.escape(str(watch.get('last_error') or watch.get('fast_error') or 'yok'))} · "
          f"fiyat hatası: {watch.get('price_errors', 0)} · bekleyen kontrol: {watch.get('price_backlog', 0)}\n\n"
          f"• Uyarı teslimi: {watch.get('pending_alerts', 0)} bekliyor · "
          f"{watch.get('failed_alert_deliveries', 0)} başarısız alıcı teslimi\n\n"
+         f"• Susturulan eski güncelleme: {watch.get('suppressed_context_deliveries', 0)}\n\n"
          "🔔 <b>Bildirim kapısı</b>\n"
         f"• Genel eşik: {_html.escape(str(NOTIFY_MIN_CONFIDENCE))}+\n"
         f"• Sessiz stratejiler: {_html.escape(disabled)}\n"

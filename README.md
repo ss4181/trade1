@@ -705,25 +705,37 @@ python research/review_g1_alignment.py
 Başlangıçta sonraki tam saat ve veri yayını beklenir; sıfır olay arıza veya
 %0 başarı demek değildir. Örnek hazırlığı kârlılık doğrulaması değildir.
 
-`SIGNAL_WATCH_ENABLED=true` uyarıları artık üç ayrı türdür:
+`SIGNAL_WATCH_ENABLED=true` için **28 Ekim 2026 itibarıyla varsayılan otomatik
+uyarı politikası `critical-reversal-v1`**: yalnız **kritik ters yön + belirgin
+fiyat yapısı kırılması birlikte** bildirilir. Aşağıdakilerin hepsi gerekir:
 
-- **Piyasa riski arttı:** BTC/ETH yön veya günlük rejim olumsuz değişti.
-- **Referans mum yapısı ihlal edildi:** iki tamamen teslim-sonrası kapanmış
-  15dk mum, LONG için referans saatlik low altında (SHORT için high üstünde).
-- **G1 kurulum koşulları artık sağlanmıyor:** sonraki kapanmış saat verisinde
-  özgün G1 getiri/rank/hacim/OI/LS koşullarından en az biri kayboldu. Hizalı
-  araştırma kolu canlıya geçirilmiş değildir. Eksik veri iptal sayılmaz.
+- BTC ve ETH'nin hem saatlik hem 15dk yönü sinyalin tersinde olmalı. Mevcut
+  iki farklı kapanmış mum teyidi korunur; geçiş/ayrışma/UNKNOWN yeterli değil.
+- İlgili coinin kendi spot/perp piyasasında iki ardışık kapanmış 15dk mum,
+  LONG için referans saatlik low'un `max(0.5 ATR14, low × 0.002)` altına;
+  SHORT için high'ın simetrik üstüne kapanmalı. ATR önceki 14 gerçek aralıktan,
+  teyit mumları hariç hesaplanır. Bu bir bildirim gürültüsü filtresidir,
+  backtest ile optimize edilmiş stop veya strateji eşiği değildir.
+- Her iki fiyat mumu da teslimden sonra; G2'de ayrıca planlanan girişten sonra
+  başlamalı. Bayat/eksik/açık mumlar ve veri hataları iptal sayılmaz.
 
-Ayrıca **Sinyal takip süresi bitti** bildirimi, önceden izlenen olayın ufku
-biterken gönderilir. Geçmiş/arşivde süresi bitmiş sinyallerden alarm yağmuru
-üretilmez. Yalnız ilk sinyalin teslim edildiği onaylı abonelere gönderilir;
-tekrarlar kendi kalıcı kuyruğuyla engellenir.
+Küçük günlük/saatlik/15dk rejim değişimleri, iyileşmeler, tek başına G1 koşul
+kaybı, tek başına fiyat kırılması ve takip süresinin bitmesi **otomatik mesaj
+göndermez**. Piyasa bağlamı `/piyasa`, veri/worker durumu `/status` ile elle
+görülebilir. Uyarı sadece ilk sinyali teslim almış ve hâlen abone olan kişiye,
+sinyal başına bir kez ve aynı kontroldeki diğer kritik olaylarla toplu gider.
+Bekleyen eski rutin güncellemeler silinmeden susturulur; teslim kanıtları ve
+kritik uyarı tekrar denemeleri korunur. Kritik mesaj en geç sonraki 15dk
+bağlam sınırında zaman aşımına uğrar. Sinyal taraması, giriş eşikleri, cooldown,
+hedef alarmları, performans ve araştırma ölçümleri değiştirilmez.
 
 **Bunların hiçbiri işlem kapatma emri, doğrulanmış çıkış stratejisi veya
 başarısızlık hükmü değildir.** Ufuk bitince bot günlerce açık tutulan işlemi
 izlemez. İki 15dk mum teyidi ani düşüşte geç kalabilir. Telegram gecikebilir;
 borsadaki stop-loss emrinin yerine geçmez. Bot gerçek borsa pozisyonunu,
 cross teminatını, tasfiye fiyatını veya gerçekleşmiş TP/SL'yi bilmiyor.
+**Uyarı gelmemesi pozisyonun güvenli olduğu anlamına gelmez.** Seçici teyit
+ani düşüşleri kaçırabilir/geç yakalayabilir. [Kural ve sürüm geçişi](SIGNAL_WATCH_CRITICAL_2026-10-28.md).
 
 ### Özel pozisyon için yerel risk hesabı
 

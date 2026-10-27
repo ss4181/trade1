@@ -110,7 +110,8 @@ class WatchTests(unittest.TestCase):
             return candles(HOUR if interval == "1h" else 900000, now=self.now, down=down)
         return SignalWatch(root/"watch.json", fetch=fetch, records=lambda: delivered,
                            recipients=lambda eid: ["owner"], subscribers=lambda: ["owner", "other"],
-                           sender=lambda text, cid: sent.append((text, cid)) or True)
+                           sender=lambda text, cid: sent.append((text, cid)) or True,
+                           critical_only=False)  # Explicit legacy replay, not production defaults.
 
     def setUp(self):
         self.now = NOW
@@ -228,6 +229,7 @@ class WatchTests(unittest.TestCase):
             try:
                 bot.start_signal_watch()
                 first = bot._signal_watch_worker
+                self.assertTrue(bot.signal_watch_engine.SignalWatch.call_args.kwargs["critical_only"])
                 self.assertTrue(event.wait(2))
                 bot.start_signal_watch()
                 self.assertIs(first, bot._signal_watch_worker)
