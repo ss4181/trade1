@@ -113,6 +113,14 @@ kaldıraç önerisi değildir; G1 koşulları, ölçüm ve skor kartları deği�
 1–3×ATR aralığının ortasıdır, geçmişte en iyi sonucu veren değer diye seçilmedi.
 Kişisel risk tutarı bota girilmez; kart her alıcıya aynı "1 USDT risk başına" değeri verir.
 
+**G1 çıkış gölgesi (`g1-exit-shadow-v1`):** Her yeni G1'de aynı ilk tam dakika
+girişinden, aynı 1.5×ATR stop ve 4 saat sınırıyla dört çıkış planı ölçülür:
+`tp2`, `half_tp2` (yarısı +%2, kalanı başabaş stopla), `tp10`, `no_target`.
+Bildirim/emir yok; kurallar [ön kayıtta](research/PREREG_G1_EXIT_SHADOW_2026-11-02.md)
+donduruldu. 30 olay / 20 gün / 4 hafta kapısından önce plan sıralanmaz.
+Rapor: `python research/review_g1_exit_shadow.py` (tablet state) veya
+`--data-json data.json` (public pano, son 400 olay).
+
 `shadow_market_YYYY-MM.jsonl` tüm G1 ilk-10 incelemelerini ve aktif DL1
 snapshot'larını; `shadow_events_YYYY-MM.jsonl` yalnız tetiklenen olayları tutar.
 Dosyalar Git'e/Pages'e gitmez. Durum: `python signal_bot.py --shadow-status`.

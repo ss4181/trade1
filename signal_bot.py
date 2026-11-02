@@ -3100,6 +3100,7 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
         "measurement_version": event.get("measurement_version", "legacy_unknown"),
         "bar_interval_minutes": g1_entry.tracking_step(event) // 60_000,
         "entry_shadow": g1_entry.public_shadow(event),
+        "exit_shadow": g1_entry.public_exit_shadow(event),
         "unobserved_initial_seconds": event.get("unobserved_initial_seconds"),
         "entry_definition": event.get("entry_definition", "signal_reference_not_executed_price"),
         "universe": event.get("universe", "UNKNOWN"),
@@ -3209,7 +3210,7 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
             if minute_mode:
                 # Point-in-time research labels only; never an entry filter.
                 event["entry_study_origin"] = "forward_live_delivery"
-                for field in ("market_regime", "market_regime_data_close_at"):
+                for field in ("market_regime", "market_regime_data_close_at", "atr14_1h_pct"):
                     if field in record:
                         event[field] = record[field]
             if persist:
@@ -3266,6 +3267,7 @@ def _apply_price_target_bars(event: dict, bars: list[dict],
                     or int(bar.get("close_time", -1)) != open_ms+step-1):
                 break
         g1_entry.advance_entry_shadow(event, [bar])
+        g1_entry.advance_exit_shadow(event, [bar])
         if direction == "LONG":
             favorable = (high / entry - 1) * 100
             adverse = (low / entry - 1) * 100
@@ -3400,6 +3402,7 @@ def update_price_target_tracking(now: datetime | None = None) -> dict:
                     and int(current.get("next_start_ms") or 0) >= horizon_end_ms):
                 current["status"] = "expired"
                 g1_entry.finish_entry_shadow(current)
+                g1_entry.finish_exit_shadow(current)
                 changed = True
     with _price_target_lock:
         if PRICE_TARGET_RETENTION_DAYS > 0:
