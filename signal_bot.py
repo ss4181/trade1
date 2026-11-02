@@ -1404,8 +1404,33 @@ def _start_archive_backup_worker(now: datetime | None = None) -> bool:
     return True
 
 
+def _git_code_version(root: Path = Path(__file__).parent) -> str:
+    """Short commit this process started from; read once at import, no subprocess.
+
+    A later `git pull` without a restart does not change it, so it shows the
+    code actually running. Local uncommitted edits are not reflected."""
+    try:
+        git = root / ".git"
+        if git.is_file():  # worktree: "gitdir: <path>"
+            git = Path(git.read_text(encoding="utf-8").split(":", 1)[1].strip())
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        sha = head
+        if head.startswith("ref: "):
+            ref = head[5:].strip()
+            if (git / ref).is_file():
+                sha = (git / ref).read_text(encoding="utf-8").strip()
+            else:
+                sha = next((line.split()[0] for line in
+                            (git / "packed-refs").read_text(encoding="utf-8").splitlines()
+                            if line.endswith(" " + ref)), "")
+        return sha[:7] if re.fullmatch(r"[0-9a-f]{40}", sha) else "UNKNOWN"
+    except (OSError, IndexError):
+        return "UNKNOWN"
+
+
 # Servis saglik durumu (server.py /health endpoint'i okur).
 STARTED_AT = datetime.now(timezone.utc).isoformat()
+CODE_VERSION = _git_code_version()
 LAST_SCAN_AT: str | None = None
 LAST_SCAN_STARTED_AT: str | None = None
 LAST_SCAN_FINISHED_AT: str | None = None
@@ -6052,6 +6077,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             "s2_research_push": S2_RESEARCH_PUSH,
             "disabled": sorted(DISABLED_STRATEGIES),
             "started": STARTED_AT,
+            "code_version": CODE_VERSION,
             "round_trip_cost_bps": LIVE_ROUND_TRIP_COST_BPS,
             "funding_cost_status": "not_modeled",
             "engine_version": core_engine.ENGINE_VERSION,
@@ -6526,6 +6552,8 @@ def _format_status_for_telegram() -> str:
         "ℹ️ <b>BOT DURUMU</b>\n"
         "<i>Çalışma, bildirim ve araştırma özeti</i>\n\n"
         "📡 <b>Tarama</b>\n"
+        f"• Çalışan kod: {_html.escape(CODE_VERSION)} · başlangıç "
+        f"{_html.escape(_display_tr_time(STARTED_AT))}\n"
         f"• Evren: {len(SYMBOLS)} sembol · {mode}\n"
         f"• Spot tarama dışı: {_html.escape(excluded + catalog_note)}\n"
         f"• Tamamlanan tur: {SCANS_COMPLETED}\n"
