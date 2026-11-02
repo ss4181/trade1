@@ -6,11 +6,15 @@ widget_begin
 branch=$(git branch --show-current)
 [ "$branch" = main ] || widget_error "Dal main degil ('$branch'); hicbir sey degistirilmedi."
 
-changes=$(git status --porcelain --untracked-files=normal)
+# Only edits to tracked files block the update. Untracked files are never
+# touched, so a stray file (typo, rotated log) cannot freeze every update.
+changes=$(git status --porcelain --untracked-files=no)
 [ -z "$changes" ] || {
   printf 'Trade1 dosyalarinda korunmasi gereken yerel degisiklik var; guncelleme durduruldu.\n%s\n' "$changes" >&2
   widget_error "Degisiklikleri kaybetmemek icin elle incele; otomatik temizleme yapilmadi."
 }
+strays=$(git status --porcelain --untracked-files=normal | sed -n 's/^?? //p')
+[ -z "$strays" ] || printf 'Not: Git disi dosyalar (dokunulmadi):\n%s\n' "$strays"
 
 GIT_TERMINAL_PROMPT=0 git fetch --quiet origin main || widget_error "GitHub erisimi basarisiz; bot calismaya devam ediyor. Termux'ta git pull erisimini duzelt."
 git merge-base --is-ancestor HEAD origin/main || widget_error "Yerel dal uzak main ile ayrismis; bot calismaya devam ediyor."
@@ -25,6 +29,16 @@ remote_head=$(git rev-parse origin/main)
     widget_start_bot
   fi
   exit 0
+}
+
+# Refuse before stopping the bot if the update would add a path that already
+# exists locally: git would refuse the merge and the bot would stay down.
+blocked=$(git diff --name-only --no-renames --diff-filter=A HEAD origin/main | while IFS= read -r path; do
+  if [ -e "$path" ]; then printf '%s\n' "$path"; fi
+done)
+[ -z "$blocked" ] || {
+  printf 'Guncelleme su yerel dosyalarin uzerine yazacakti:\n%s\n' "$blocked" >&2
+  widget_error "Dosyalar korunuyor, bot calismaya devam ediyor. Bu dosyalari proje klasorunun disina tasi."
 }
 
 printf 'Yeni surum bulundu. Bot guvenli sekilde durduruluyor...\n'

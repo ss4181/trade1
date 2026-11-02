@@ -1,8 +1,15 @@
 # Termux ana ekran kısayolları
 
 Bu kısayollar Trade1'i tablette yönetmek içindir. Emir göndermez; botun tarama,
-sinyal ve bildirim mantığını değiştirmez. Kısayollar arka plan görevleri olarak
-çalışır ve sonuçları Termux bildiriminde gösterir.
+sinyal ve bildirim mantığını değiştirmez. Her düğme bir Termux penceresi açar,
+sonucu (`TAMAM` veya `HATA` ve nedeni) gösterir ve Enter'a basınca kapanır.
+
+**3 Kasım 2026:** Eski kurulum düğmeleri arka planda sessiz çalıştırıyordu;
+güncelleme durunca nedeni görünmüyordu. Ayrıca Git dışı herhangi bir dosya
+(ör. dönen `bot.out.log.1` veya yanlış yazılmış bir dosya adı) bütün
+güncellemeleri durduruyordu. Artık yalnız Git'teki dosyalarda yapılmış yerel
+değişiklik güncellemeyi durdurur; Git dışı dosyalara dokunulmaz ve listesi
+not olarak gösterilir. Yeni düğmeler için kurulum komutunu bir kez yeniden çalıştır.
 
 ## Bir defalık kurulum
 
@@ -34,8 +41,9 @@ sinyal ve bildirim mantığını değiştirmez. Kısayollar arka plan görevleri
   süreçlerini nazikçe durdurur. Kapatılamayan süreci zorla öldürmez.
 - **04-Trade1-Durum:** süreç var mı ve yerel sürüm kısa kimliği nedir gösterir.
 
-Güncelleme, yerel değişiklik veya farklılaşmış Git dalı görürse **hiçbir dosyayı
-silmez/geri almaz** ve ilerlemeyi durdurur. Böyle bir durumda Termux'ta çıktıyı
+Güncelleme, Git'teki dosyalarda yerel değişiklik, farklılaşmış Git dalı veya
+güncellemenin üzerine yazacağı Git dışı bir dosya görürse **hiçbir dosyayı
+silmez/geri almaz** ve bot çalışmaya devam ederken ilerlemeyi durdurur. Böyle bir durumda Termux'ta çıktıyı
 incele; `.env`, arşiv ve state dosyalarını silme. Kısayol kilitli kaldıysa önce
 başka bir widget işleminin çalışmadığını doğrula; ardından yalnız şu kilit
 klasörünü kaldırabilirsin:
@@ -44,6 +52,6 @@ klasörünü kaldırabilirsin:
 rmdir "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/trade1-widget-operation.lock"
 ```
 
-İlk kurulumdan sonra bir düğmeye bastığında Termux'un arka plan görev
-bildirimlerini görmelisin. Android pil ayarlarında Termux ve Termux:Widget'i
+İlk kurulumdan sonra bir düğmeye bastığında Termux penceresi açılmalı ve sonuç
+satırı görünmeli. Android pil ayarlarında Termux ve Termux:Widget'i
 kısıtlamasız tut; tablet kapanırsa kısayol botu uzaktan çalıştırmaz.
