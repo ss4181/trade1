@@ -105,6 +105,14 @@ kanonik tarihsel performans tanımı değişmez: sonraki 1 saatlik mum açılı�
 +4 saat kapanış. Yeni hedef takibi doğrulanmış teslimden sonraki ilk tam 1dk
 mumuyla başlar; eski 5dk kayıtlar ayrı kalır. [G1 v3 yayın ve tablet kontrolü](G1_RELEASE.md).
 
+**G1 kart risk referansı (2 Kasım 2026):** Kart, kapanmış son 14 saatlik mumun
+true range ortalamasından (ATR14, fiyatın yüzdesi) `1.5×ATR` referans stop fiyatını,
+her 1 USDT risk için pozisyon büyüklüğünü (`100 / stop%`) ve 4 saatlik süre sınırının
+saatini gösterir. Bunlar aritmetik referanstır: emir, doğrulanmış çıkış kuralı veya
+kaldıraç önerisi değildir; G1 koşulları, ölçüm ve skor kartları değişmez. 1.5 katsayısı
+1–3×ATR aralığının ortasıdır, geçmişte en iyi sonucu veren değer diye seçilmedi.
+Kişisel risk tutarı bota girilmez; kart her alıcıya aynı "1 USDT risk başına" değeri verir.
+
 `shadow_market_YYYY-MM.jsonl` tüm G1 ilk-10 incelemelerini ve aktif DL1
 snapshot'larını; `shadow_events_YYYY-MM.jsonl` yalnız tetiklenen olayları tutar.
 Dosyalar Git'e/Pages'e gitmez. Durum: `python signal_bot.py --shadow-status`.

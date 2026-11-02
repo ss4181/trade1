@@ -65,6 +65,8 @@ class ShadowExperimentTests(unittest.TestCase):
         self.assertAlmostEqual(result["return_24h"], .06, places=6)
         self.assertAlmostEqual(result["volume_ratio"], 2.5)
         self.assertAlmostEqual(result["oi_change_1h"], .03)
+        # Display-only ATR: 14 true ranges of 0.25 on the last close of 106.
+        self.assertAlmostEqual(result["atr14_1h_pct"], 0.25 / 106 * 100)
         crowded_long = [{**self.ls[0], "longShortRatio": "1.01"}]
         failed = shadow.evaluate_g1_snapshot(
             klines(self.now), self.oi, crowded_long, 1, 6.0,

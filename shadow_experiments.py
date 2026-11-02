@@ -285,6 +285,13 @@ def evaluate_g1_snapshot(klines: list, oi_rows: list, ls_rows: list,
     current_volume = float(closed[-1][7])
     volume_ratio = current_volume / prior_median if prior_median > 0 else None
     cutoff_ms = int(closed[-1][6])
+    # Display-only volatility: simple mean of the last 14 closed 1h true ranges.
+    true_ranges = [max(float(row[2]) - float(row[3]),
+                       abs(float(row[2]) - float(prev[4])),
+                       abs(float(row[3]) - float(prev[4])))
+                   for prev, row in zip(closed[-15:], closed[-14:])]
+    atr14_pct = (statistics.fmean(true_ranges) / close_now * 100
+                 if close_now > 0 else None)
 
     usable_oi = sorted(
         [row for row in oi_rows if isinstance(row, dict)
@@ -326,6 +333,7 @@ def evaluate_g1_snapshot(klines: list, oi_rows: list, ls_rows: list,
         "oi_change_1h": oi_change, "global_long_short_ratio": long_short,
         "global_long_account": _float(usable_ls[-1].get("longAccount")),
         "global_short_account": _float(usable_ls[-1].get("shortAccount")),
+        "atr14_1h_pct": atr14_pct,
         "condition": condition,
     }
 
@@ -471,6 +479,8 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
                 "global_short_account_pct": (round(
                     metrics["global_short_account"] * 100, 2)
                     if metrics["global_short_account"] is not None else None),
+                "atr14_1h_pct": (round(metrics["atr14_1h_pct"], 3)
+                                 if metrics.get("atr14_1h_pct") else None),
                 "note": ("İlk-10 yükselen + hacim/OI artışı + short hesap "
                          "çoğunluğu. Tarihsel 4h train: N=401, net medyan "
                          "−%0,30, isabet %45,9; doğrulanmadı, yalnız gölge takip."),

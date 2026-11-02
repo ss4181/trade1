@@ -2344,6 +2344,10 @@ def _signal_detail_rows(sig: dict) -> list[tuple[str, str]]:
         rows.append(("Global hesap long/short", str(sig["global_long_short_ratio"])))
     if sig.get("global_short_account_pct") is not None:
         rows.append(("Short hesap payi", f"%{sig['global_short_account_pct']:.2f}"))
+    if sig.get("strategy") == "G1" and sig.get("atr14_1h_pct"):
+        rows.append(("ATR14 1s", f"%{sig['atr14_1h_pct']:.2f}; referans stop "
+                     f"{g1_entry.REFERENCE_STOP_ATR_MULT:g}×ATR = "
+                     f"%{g1_entry.REFERENCE_STOP_ATR_MULT * sig['atr14_1h_pct']:.1f}"))
     if sig.get("strategy") == "G1" and sig.get("condition_price") is not None:
         rows.append(("Koşul mumu kapanışı", _fmt_price(sig["condition_price"])))
     if sig.get("strategy") == "G1" and sig.get("entry_quote"):
@@ -2476,6 +2480,7 @@ _TELEGRAM_DETAIL_ICONS = {
     "Global hesap long/short": "🌍",
     "Short hesap payi": "🎯",
     "Koşul mumu kapanışı": "🕯️",
+    "ATR14 1s": "🛑",
     "Bildirim gecikmesi": "⏳",
     "Ölçüm girişi": "📐",
     "Resmî duyuru": "📣",
@@ -2602,6 +2607,23 @@ def _telegram_evidence_lines(sig: dict) -> list[str]:
     return lines
 
 
+def _g1_risk_lines(sig: dict) -> list[str]:
+    """ATR-scaled reference stop and per-1-USDT-risk size; arithmetic, not an order."""
+    atr, price = sig.get("atr14_1h_pct"), sig.get("price")
+    if not isinstance(atr, (int, float)) or not isinstance(price, (int, float)) or atr <= 0 or price <= 0:
+        return []
+    stop_pct = g1_entry.REFERENCE_STOP_ATR_MULT * atr
+    if stop_pct >= 100:
+        return []
+    return [
+        f"🛑 <b>Referans stop ({g1_entry.REFERENCE_STOP_ATR_MULT:g}×ATR):</b> "
+        f"{_fmt_price(float(f'{price * (1 - stop_pct / 100):.5g}'))} · girişin %{stop_pct:.1f} altı "
+        f"(ATR14 1s %{atr:.2f})",
+        f"📏 <b>Boyut:</b> her 1 USDT risk ≈ {100 / stop_pct:.1f} USDT pozisyon · kayma/gap hariç",
+        "🧯 Tasfiye fiyatı stopun altında kalmalı; borsa ekranında kontrol et.",
+    ]
+
+
 def _telegram_g1_signal_text(sig: dict) -> str:
     """G1 için kısa, tek bakışta okunabilen araştırma bildirimi."""
     profile = sig.get("price_target")
@@ -2616,13 +2638,18 @@ def _telegram_g1_signal_text(sig: dict) -> str:
         score = {**score, "target_pct": USER_SUCCESS_TARGET_PCT}
     scorecard = notification_scorecard.format_html(score)
     hours = sig.get("horizon_hours", 4)
+    if isinstance(hours, (int, float)):
+        deadline = (datetime.now(TR_ZONE) + timedelta(hours=hours)).strftime("%H:%M TRT")
+        horizon = f"⏱️ <b>Beklenen ufuk / süre sınırı:</b> ~{hours:g} saat · ≈ {deadline}"
+    else:
+        horizon = f"⏱️ <b>Beklenen ufuk:</b> ~{_html.escape(str(hours))} saat"
     lines = [
         f"🔔 <b>G1 — {_html.escape(str(sig.get('symbol') or '?'))} "
         f"{_html.escape(str(sig.get('direction') or ''))}</b> 🔬",
         f"💰 <b>{'Teyit sonrası alış kotasyonu (ask)' if sig.get('entry_quote') else 'Eski fiyat referansı · taze kotasyon yok' if sig.get('price_target_measurement_version') == g1_entry.MEASUREMENT else 'Tarama anı fiyatı'}:</b> {_fmt_price(sig.get('price'))}",
         f"🎯 <b>Kişisel fiyat takibi:</b> {target_text}",
-        f"⏱️ <b>Beklenen ufuk:</b> ~{hours:g} saat" if isinstance(hours, (int, float))
-        else f"⏱️ <b>Beklenen ufuk:</b> ~{_html.escape(str(hours))} saat",
+        horizon,
+        *_g1_risk_lines(sig),
         scorecard,
     ]
     quote = sig.get("entry_quote")

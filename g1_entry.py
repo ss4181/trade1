@@ -7,6 +7,9 @@ MEASUREMENT = "signal-reference-touch-1m-v2"
 CONFIG_VERSION = "G1-prereg-2026-10-03-v3-fresh-ask"
 PATH_VERSION = "g1-entry-path-v1"
 MINUTE = 60_000
+# Card-only risk reference (user decision 2026-11-02); not a validated exit or
+# an order. Mid-point of the 1-3x ATR grid, not the best in-sample value.
+REFERENCE_STOP_ATR_MULT = 1.5
 
 
 def book_reference(payload, symbol, received_ms, max_age_ms=30_000):
