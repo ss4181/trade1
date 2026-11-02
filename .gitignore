@@ -6,6 +6,8 @@
 # calisma ciktilari
 signals.log
 *.log
+# termux/boot-signal-bot.sh rotates bot.out.log; an untracked copy blocks the update widget.
+*.log.1
 .bot_state.json
 .perf_cache.json
 .price_target_state.json
