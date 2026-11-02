@@ -13,10 +13,29 @@ widget_begin() {
   [ -d "$TRADE1_DIR/.git" ] || widget_error "Proje bulunamadi: $TRADE1_DIR"
   cd "$TRADE1_DIR" || widget_error "Proje klasorune girilemedi."
   if ! mkdir "$TRADE1_LOCK" 2>/dev/null; then
-    widget_error "Baska bir Trade1 widget islemi suruyor. Bitmesini bekle."
+    widget_lock_is_stale || widget_error "Baska bir Trade1 widget islemi suruyor. Bitmesini bekle."
+    # A widget killed by Android never runs its EXIT trap; reclaim that lock.
+    rm -f "$TRADE1_LOCK/pid"
+    rmdir "$TRADE1_LOCK" 2>/dev/null || true
+    mkdir "$TRADE1_LOCK" 2>/dev/null || widget_error "Baska bir Trade1 widget islemi suruyor. Bitmesini bekle."
+    printf 'Not: yarida kalmis eski widget kilidi temizlendi.\n'
   fi
-  trap 'rmdir "$TRADE1_LOCK" 2>/dev/null || true' EXIT
+  printf '%s\n' "$$" > "$TRADE1_LOCK/pid"
+  trap 'rm -f "$TRADE1_LOCK/pid"; rmdir "$TRADE1_LOCK" 2>/dev/null || true' EXIT
   trap 'exit 1' HUP INT TERM
+}
+
+# Stale = recorded owner is no longer a running widget script, or an old
+# pid-less lock is more than 10 minutes old (a normal update takes ~1 min).
+widget_lock_is_stale() {
+  owner=$(cat "$TRADE1_LOCK/pid" 2>/dev/null || true)
+  if [ -n "$owner" ]; then
+    case "$(tr '\000' ' ' 2>/dev/null < "/proc/$owner/cmdline" || true)" in
+      *termux/widget/*) return 1 ;;
+    esac
+    return 0
+  fi
+  [ -n "$(find "$TRADE1_LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]
 }
 
 widget_owned_processes() {

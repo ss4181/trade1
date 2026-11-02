@@ -83,6 +83,18 @@ class UpdateWidgetTests(unittest.TestCase):
         self.assertEqual((self.repo / "newfile.txt").read_text(), "local\n")
         self.assertEqual(self.head(), "init")
 
+    def test_lock_left_by_a_killed_widget_is_reclaimed(self):
+        self.commit(self.seed, "update")
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        lock = self.tmp / "trade1-widget-operation.lock"
+        lock.mkdir()
+        (lock / "pid").write_text(f"{dead.pid}\n")
+        result = self.update()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("eski widget kilidi temizlendi", result.stdout)
+        self.assertFalse(lock.exists())
+
     def test_tracked_local_edit_still_blocks(self):
         self.commit(self.seed, "update")
         with open(self.repo / "signal_watch.py", "a") as stream:
