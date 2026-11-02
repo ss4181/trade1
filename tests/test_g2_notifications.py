@@ -10,6 +10,7 @@ import g2_notifications as g2
 import notification_scorecard as scores
 import configure_notifications as settings
 import signal_bot as bot
+from notification_delivery import DeliveryOutbox
 
 
 class Response:
@@ -52,6 +53,34 @@ class G2Tests(unittest.TestCase):
         state=json.loads((self.root/'s.json').read_text())
         self.assertEqual(state['last_fire'],{})
         self.assertNotIn('completed_hour',state)
+
+    def test_scheduled_notification_survives_restart_and_sends_once(self):
+        path = self.root/'scheduled.json'
+        g2.scan_g2(self.fetch,path,self.root,self.now,contracts=('BTCUSDT',))
+        sent = []
+        at = lambda minutes: datetime.fromtimestamp((self.h+minutes*60000)/1000,timezone.utc)
+        g2.deliver_scheduled(path,sent.append,at(54))
+        self.assertEqual(sent,[])
+        g2.deliver_scheduled(path,sent.append,at(55))
+        g2.deliver_scheduled(path,sent.append,at(56))
+        self.assertEqual(len(sent),1)
+        self.assertEqual(sent[0]['planned_entry_at'],g2.iso(self.h+g2.HOUR))
+
+    def test_expired_notification_not_sent(self):
+        path = self.root/'expired.json'
+        g2.scan_g2(self.fetch,path,self.root,self.now,contracts=('BTCUSDT',))
+        sent = []
+        g2.deliver_scheduled(path,sent.append,datetime.fromtimestamp((self.h+g2.HOUR)/1000,timezone.utc))
+        self.assertEqual(sent,[])
+        self.assertEqual(json.loads(path.read_text())['expired_notifications'],1)
+
+    def test_delivery_retry_stops_at_entry_time(self):
+        outbox = DeliveryOutbox(self.root/'outbox.json')
+        outbox.enqueue({'event_id':'test-g2', 'notification_deadline':self.now.isoformat()},
+                       ['test-chat'], now=self.now)
+        sent = []
+        outbox.deliver('test-g2',lambda *args: sent.append(args),now=self.now)
+        self.assertEqual(sent,[])
 
     def test_future_and_stale_oi_not_used(self):
         rows=[{'timestamp':self.h,'sumOpenInterest':10000}]
@@ -169,6 +198,24 @@ class ScorecardTests(unittest.TestCase):
             self.assertNotIn('TELEGRAM_BOT_TOKEN',settings.load(path))
             path.write_text('{"overrides":{"TELEGRAM_BOT_TOKEN":"bad"}}')
             with self.assertRaises(ValueError):settings.load(path)
+
+    def test_mute_g2_only_turns_off_g2_push_and_is_reversible(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'settings.json'
+            with self.assertRaises(ValueError):settings.mute_g2(path)
+            self.assertFalse(path.exists())
+            settings.enable(path)
+            muted=settings.mute_g2(path)
+            self.assertEqual(muted['G2_PUSH'],'false')
+            self.assertEqual(muted['G2_ENABLED'],'true')
+            self.assertEqual({k:v for k,v in muted.items() if k!='G2_PUSH'},
+                             {k:v for k,v in settings.OVERRIDES.items() if k!='G2_PUSH'})
+            self.assertEqual(settings.load(path),muted)
+            value=json.loads(path.read_text(encoding='utf-8'))
+            value['overrides']['G2_PUSH']='true'
+            path.write_text(json.dumps(value))
+            with self.assertRaises(ValueError):settings.load(path)
+            self.assertEqual(settings.enable(path)['G2_PUSH'],'true')
 
     def test_g2_state_and_preferences_are_backed_up(self):
         import archive_backup

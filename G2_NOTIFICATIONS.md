@@ -1,5 +1,24 @@
 # G2 ve tüm bildirimleri açma — 14 Eylül 2026
 
+## G2 Telegram bildirimini susturma — 2 Kasım 2026
+
+İleri ölçümde G2 TP3/SL2 hedef oranı başabaşın altında kaldığı için Telegram
+bildirimi kapatılabilir. Tüm-bildirimler profili `.env` değerini ezdiğinden
+`.env` içine `G2_PUSH=false` yazmak profil varken etkisizdir. Önce bakın:
+
+```bash
+python configure_notifications.py
+```
+
+`"profile": "all-alerts-2026-09-14"` görünüyorsa `python configure_notifications.py --mute-g2`
+çalıştırıp botu yeniden başlatın; yeni profil `all-alerts-g2-muted-2026-11-02` olur.
+`existing-env-settings` görünüyorsa `.env` içine `G2_PUSH=false` yazıp yeniden başlatın.
+Diğer kanallar değişmez. Geri açmak: `python configure_notifications.py --enable-all`.
+
+G2 taraması ve `g2_events_*.jsonl` / `g2_market_*.jsonl` arşivi sürer. Canlı TP3/SL2
+karnesi ise yalnız Telegram teslimi doğrulanan olaylarda başladığı için susturulmuşken
+yeni olay eklemez; sonuçlar gerekirse arşivden çevrimdışı ölçülür.
+
 16 Eylül gecikme incelemesi ve ortak hızlı bildirim güncellemesi:
 [ölçüm, değişiklikler ve tablet adımları](TELEGRAM_LATENCY_AUDIT_2026-09-16.md).
 
@@ -106,3 +125,16 @@ sonuçları içerir. İlk doğal mesajdaki Son 5 satırını kontrol edin.
 OI zamanları, yeniden başlatma, TP/SL sırası, belirsiz mum, geç teslim,
 24 saat zaman aşımı, son beş seçimi, Telegram metni ve yedek kapsamı testlidir.
 Tablet çalışması ve gerçek Hyperliquid limit dolumu yerel test sonucu değildir.
+# Bildirim zamanı (2026-10-01)
+
+G2 koşulları kapanışta hesaplanır ve kalıcı `.g2_state.json` kuyruğuna alınır.
+Telegram hazırlık bildirimi, planlanan girişten 5 dakika önceki ilk worker
+kontrolünde gönderilir. Örnek: 00.00 kapanışı → yaklaşık 00.55 bildirim →
+01.00 planlanan Binance giriş referansı (TRT). İnternet/worker gecikmesi olabilir.
+Giriş saati gelmiş eski bildirimler ve teslim tekrarları gönderilmez.
+Yeniden başlatma bekleyen kuyruğu korur. Mevcut sürüme geçmeden önce üretilmiş
+olaylar geriye dönük kuyruğa alınmaz.
+
+Bu bir güncel güç doğrulaması değildir: koşullar kapanış anına aittir;
+kullanıcı giriş öncesi fiyatı takip eder. Strateji eşikleri, TP3/SL2, 24 saat
+ufuk ve ölçüm giriş saati değişmez. Gerçek emir açılmaz.

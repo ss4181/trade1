@@ -131,6 +131,9 @@ def scan_g2(futures_get,state_path,archive_dir,now=None,contracts=CONTRACTS,on_e
                     "performance_excluded":True,"performance_exclusion_reason":"G2 uses scheduled TP3 SL2 reference tracker",
                     "note":"İlk-10 düşen, 24s düşüş ≥%5 ve 1s OI artışı ≥%1. Planlanan giriş kapanış+1s; TP3/SL2, azami24s. Binance referansı; Hyperliquid limit dolumu ölçülmedi."}
             signals.append(signal)
+            signal["notification_not_before"] = iso(close_ms+HOUR-5*60_000)
+            signal["notification_deadline"] = signal["planned_entry_at"]
+            state.setdefault("pending_notifications", []).append(signal)
             state["last_fire"][symbol]=close_ms
         except Exception as exc:
             errors.append(type(exc).__name__)
@@ -141,6 +144,29 @@ def scan_g2(futures_get,state_path,archive_dir,now=None,contracts=CONTRACTS,on_e
     append_jsonl(Path(archive_dir),"g2_market",snapshots,now)
     append_jsonl(Path(archive_dir),"g2_events",signals,now)
     return signals
+
+
+def deliver_scheduled(state_path, deliver, now=None):
+    """Persistent five-minute pre-entry window; never replay expired alerts."""
+    now = now or datetime.now(timezone.utc)
+    path = Path(state_path)
+    if not path.exists():
+        return
+    state = json.loads(path.read_text(encoding="utf-8"))
+    pending = state.get("pending_notifications", [])
+    for signal in list(pending):
+        deadline = datetime.fromisoformat(signal["planned_entry_at"])
+        if now < deadline - timedelta(minutes=5):
+            continue
+        if now < deadline:
+            # notify persists failures in the existing delivery outbox.
+            deliver(dict(signal))
+        else:
+            state["expired_notifications"] = state.get("expired_notifications", 0) + 1
+        pending.remove(signal)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, allow_nan=False), encoding="utf-8")
+        tmp.replace(path)
 
 
 def initialize_tracking(event,record,delivered_ms):

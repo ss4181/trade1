@@ -1119,10 +1119,14 @@ def _poll_g2_notifications(stop_event=None) -> None:
     errors = []
     G2_LAST_SCAN_STARTED_AT = datetime.now(timezone.utc).isoformat()
     try:
-        for sig in g2.scan_g2(_futures_get, Path(__file__).parent / ".g2_state.json", ARCHIVE_DIR,
-                              on_error=errors.append, workers=SCAN_WORKERS):
+        state_path = Path(__file__).parent / ".g2_state.json"
+        def deliver(sig):
             sig["push_policy_enabled"] = SHADOW_PUSH_ENABLED and G2_PUSH
             notify(sig, push=SHADOW_PUSH_ENABLED and G2_PUSH)
+        g2.deliver_scheduled(state_path, deliver)
+        g2.scan_g2(_futures_get, state_path, ARCHIVE_DIR,
+                   on_error=errors.append, workers=SCAN_WORKERS)
+        g2.deliver_scheduled(state_path, deliver)
     except Exception as e:
         errors.append(f"G2 {type(e).__name__}: {_redact(str(e))}")
     G2_WORKER_LAST_ERROR = " | ".join(errors)[:500] or None
@@ -2745,6 +2749,8 @@ def _telegram_signal_text(sig: dict) -> str:
     lines.append(f"⏱️ <b>{horizon_label}:</b> ~{sig.get('horizon_hours', '?')} saat")
     if strategy == "G2":
         lines += [f"📅 <b>Planlanan referans giriş:</b> {_html.escape(_display_tr_time(sig.get('planned_entry_at')))}",
+                  "🔔 <b>Zamanlama:</b> Girişten önceki son 5 dakikada hazırlık bildirimi.",
+                  "🔎 <b>Koşullar:</b> Aşağıdaki değerler tespit mumuna aittir; güncel güç teyidi yapılmadı. Giriş öncesi fiyatı takip edin.",
                   "🎯 <b>Plan:</b> TP %3 · SL %2 · azami 24 saat · coin başına 24 saat bekleme",
                   "🏦 <b>Hyperliquid:</b> Limit / ALO · dolum doğrulanmadı; planlanan Binance referansı."]
     lines.append(notification_scorecard.format_html(sig.get("last_five_scorecard")))

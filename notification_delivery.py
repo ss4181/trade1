@@ -270,6 +270,11 @@ class DeliveryOutbox:
                 if recipient["status"] not in ("pending", "sending"):
                     continue
                 age = attempt_at - datetime.fromisoformat(item["created_at"])
+                deadline = item["record"].get("notification_deadline")
+                if deadline and attempt_at >= datetime.fromisoformat(deadline):
+                    recipient["status"] = "failed"
+                    self._save()
+                    continue
                 if age > timedelta(minutes=self.ttl_minutes) or recipient["attempts"] >= self.max_attempts:
                     recipient["status"] = "failed"
                     self._save()
