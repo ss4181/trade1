@@ -98,6 +98,12 @@ if ensure_core_deps && ! have_server_stack; then
   fi
 fi
 
+# Widget kisayollarini her baslangicta koddaki surumle esitle: guncellemeden
+# sonra yeni dugmeler icin elle install.sh calistirmak gerekmesin.
+if [ -d "$HOME/.shortcuts" ] && [ -f termux/widget/install.sh ]; then
+  sh termux/widget/install.sh >/dev/null 2>&1 || log "uyari: widget kisayollari guncellenemedi"
+fi
+
 fails=0
 while [ ! -f "$STOP_FILE" ]; do
   rotate_log

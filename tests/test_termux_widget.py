@@ -12,6 +12,13 @@ ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": 
        "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
 
+class BootSyncTests(unittest.TestCase):
+    def test_boot_wrapper_syncs_shortcuts_before_starting_the_bot(self):
+        script = (ROOT / "termux" / "boot-signal-bot.sh").read_text(encoding="utf-8")
+        self.assertLess(script.index("termux/widget/install.sh"), script.index('while [ ! -f "$STOP_FILE" ]'))
+        self.assertIn('|| log "uyari: widget kisayollari guncellenemedi"', script)
+
+
 @unittest.skipUnless(shutil.which("sh") and shutil.which("git") and os.path.isdir("/proc/self"),
                      "needs POSIX sh, git and /proc (CI/Termux)")
 class UpdateWidgetTests(unittest.TestCase):

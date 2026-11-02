@@ -3,7 +3,9 @@
 ## G2 Telegram bildirimini susturma — 2 Kasım 2026
 
 İleri ölçümde G2 TP3/SL2 hedef oranı başabaşın altında kaldığı için Telegram
-bildirimi kapatılabilir. Tüm-bildirimler profili `.env` değerini ezdiğinden
+bildirimi kapatılabilir. **En kolay yol:** bot sahibi Telegram'da `/g2 kapat`
+yazar (açmak: `/g2 ac`, durum: `/g2`). Ayar hemen uygulanır, profile yazılır ve
+yeniden başlatmada korunur. Terminalden aynı iş için: tüm-bildirimler profili `.env` değerini ezdiğinden
 `.env` içine `G2_PUSH=false` yazmak profil varken etkisizdir. Önce bakın:
 
 ```bash

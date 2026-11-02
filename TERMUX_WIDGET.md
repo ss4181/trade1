@@ -9,7 +9,9 @@ güncelleme durunca nedeni görünmüyordu. Ayrıca Git dışı herhangi bir dos
 (ör. dönen `bot.out.log.1` veya yanlış yazılmış bir dosya adı) bütün
 güncellemeleri durduruyordu. Artık yalnız Git'teki dosyalarda yapılmış yerel
 değişiklik güncellemeyi durdurur; Git dışı dosyalara dokunulmaz ve listesi
-not olarak gösterilir. Yeni düğmeler için kurulum komutunu bir kez yeniden çalıştır.
+not olarak gösterilir. Bot her başladığında kısayolları koddaki sürümle
+kendiliğinden eşitler (`termux/boot-signal-bot.sh`); güncellemeden sonra kurulum
+komutunu elle çalıştırmak gerekmez. Düğmeler değişmediyse Termux:Widget'ta REFRESH yap.
 
 ## Bir defalık kurulum
 

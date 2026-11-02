@@ -83,6 +83,7 @@ import research_report_delivery as report_delivery
 from atomic_state import replace_state
 from concurrent.futures import ThreadPoolExecutor, as_completed, CancelledError
 from configure_notifications import load as load_notification_preferences
+import configure_notifications as notification_preferences
 from derivatives_archive import (
     DEFAULT_STREAM_URL as DEFAULT_FORCE_ORDER_STREAM_URL,
     ForceOrderArchiveWorker,
@@ -137,6 +138,7 @@ def _display_tr_time(value, *, seconds: bool = True) -> str:
 
 
 _load_env()
+NOTIFICATION_PREFERENCES_PATH = notification_preferences.PATH
 _NOTIFICATION_OVERRIDES = load_notification_preferences()
 
 def _env(name: str, default, cast=None):
@@ -6583,6 +6585,7 @@ def _format_status_for_telegram() -> str:
         f"• Sessiz stratejiler: {_html.escape(disabled)}\n"
         f"• S2 araştırma bildirimi: {'AÇIK' if S2_RESEARCH_PUSH else 'sessiz'} "
         "(güven DÜŞÜK)\n"
+        f"• G2 bildirimi: {'AÇIK' if G2_ENABLED and G2_PUSH else 'sessiz'}\n"
         f"• Gözlem kanalı: {observe}\n\n"
         "👥 <b>Erişim</b>\n"
         f"• Telegram aboneleri: {len(TELEGRAM_SUBSCRIBERS)}\n\n"
@@ -6643,6 +6646,27 @@ def _format_daily_regime_for_telegram() -> str:
             "ℹ️ BTC günlük eğilimidir; tek başına coin alım sinyali değildir.")
 
 
+def _set_g2_push(enabled: bool) -> str:
+    """Owner /g2 command: persist in the notification profile and apply now.
+
+    The G2 worker reads G2_PUSH on every poll, so no restart is needed; the
+    profile keeps the choice across restarts. Scanning and archives continue."""
+    global G2_PUSH
+    try:
+        if not notification_preferences.load(NOTIFICATION_PREFERENCES_PATH):
+            return ("Bildirim profili yok; bu kurulum .env ile çalışıyor. "
+                    f"Değişiklik yapılmadı: .env içine G2_PUSH={'true' if enabled else 'false'} "
+                    "yazıp botu yeniden başlat.")
+        notification_preferences.enable(
+            NOTIFICATION_PREFERENCES_PATH,
+            notification_preferences.ALL_ALERTS if enabled else notification_preferences.G2_MUTED)
+    except (OSError, ValueError):
+        return "Bildirim profili okunamadı; değişiklik yapılmadı."
+    G2_PUSH = enabled
+    return (f"G2 Telegram bildirimi {'AÇILDI' if enabled else 'SUSTURULDU'}. "
+            "G2 taraması ve kaydı sürüyor; ayar yeniden başlatmada korunur.")
+
+
 def handle_telegram_command(text: str, chat_id: str) -> None:
     """Tek bir /komutu isler ve cevabi KOMUTU GONDEREN chat'e yollar."""
     parts = text.strip().split()
@@ -6653,7 +6677,8 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
         admin_help = ("\n<b>Yonetim (yalniz sen):</b>\n"
                       "/aboneler — abone listesi\n"
                       "/onayla &lt;id&gt; — bekleyen arkadasi ekle\n"
-                      "/kaldir &lt;id&gt; — aboneligi kaldir\n") if owner else ""
+                      "/kaldir &lt;id&gt; — aboneligi kaldir\n"
+                      "/g2 kapat · /g2 ac — G2 bildirimini sustur / aç\n") if owner else ""
         _telegram_send_text(
             "🤖 <b>SIGNAL BOT</b> ✅\n"
             "<i>Telegram bildirim ve ölçüm merkezi</i>\n\n"
@@ -6740,6 +6765,19 @@ def handle_telegram_command(text: str, chat_id: str) -> None:
                 "(onu .env'den silmen gerekir).", chat_id=chat_id)
     elif cmd == "status":
         _telegram_send_text(_format_status_for_telegram(), chat_id=chat_id)
+    elif cmd == "g2":
+        if not owner:
+            _telegram_send_text("Bu komut yalniz bot sahibine acik.", chat_id=chat_id)
+            return
+        choice = args[0].lower() if args else ""
+        if choice in ("kapat", "sustur", "off"):
+            reply = _set_g2_push(False)
+        elif choice in ("ac", "aç", "on"):
+            reply = _set_g2_push(True)
+        else:
+            reply = (f"G2 Telegram bildirimi şu an {'AÇIK' if G2_PUSH else 'sessiz'}.\n"
+                     "/g2 kapat — sustur · /g2 ac — aç")
+        _telegram_send_text(reply, chat_id=chat_id)
     elif cmd in ("piyasa", "rejim", "market"):
         _telegram_send_text(_format_market_regime_for_telegram(), chat_id=chat_id)
     elif cmd in ("performans", "performance", "perf"):

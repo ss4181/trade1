@@ -1155,7 +1155,7 @@ def test_readable_telegram_report_cards():
     assert "ayrıca" in crowded, "uzun /check Telegram limitine sigmali"
 
     status = bot._format_status_for_telegram()
-    for required in ("BOT DURUMU", "Tarama", "Çalışan kod:", "Bildirim kapısı", "Erişim",
+    for required in ("BOT DURUMU", "Tarama", "Çalışan kod:", "Bildirim kapısı", "G2 bildirimi:", "Erişim",
                      "Bot emir açmaz"):
         assert required in status, required
     assert len(status) < 4000
