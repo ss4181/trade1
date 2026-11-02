@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from atomic_state import replace_state
@@ -63,9 +64,29 @@ def public_state(state: dict) -> dict:
               for key in timestamps}
     allowed = {"scheduled", "running", "sent", "warning", "error"}
     result["last_status"] = state.get("last_status") if state.get("last_status") in allowed else "not_run"
-    result["last_archive"] = archive_snapshot({"market": state.get("archive_snapshot") or {}})
+    # Legacy schedules may record only a week, with no delivery ACK or archive
+    # snapshot. Missing historical evidence is not an empty archive/zero rows.
+    week = state.get("last_week")
+    legacy_week = None
+    if isinstance(week, str) and re.fullmatch(r"\d{4}-W\d{2}", week):
+        try:
+            datetime.fromisocalendar(int(week[:4]), int(week[-2:]), 1)
+            legacy_week = week
+        except ValueError:
+            pass
+    result["legacy_week"] = legacy_week
+    if result["last_status"] == "not_run" and legacy_week:
+        result["last_status"] = "legacy_unverified"
+    snapshot = state.get("archive_snapshot")
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    def count(key):
+        value = snapshot.get(key)
+        return value if type(value) is int and value >= 0 else None
+    result["last_archive"] = {"rows": count("rows"), "symbols": count("symbols")}
     # last_record_at_utc is the persisted snapshot spelling, not market.last_utc.
-    last = utc_time((state.get("archive_snapshot") or {}).get("last_record_at_utc"))
+    last = utc_time(snapshot.get("last_record_at_utc"))
     result["last_archive"]["last_record_at_utc"] = last.isoformat() if last else None
-    result["delivery_evidence"] = "telegram_api_ack" if result["last_sent_at_utc"] else "not_confirmed"
+    result["archive_snapshot_available"] = result["last_archive"]["rows"] is not None
+    result["delivery_evidence"] = ("telegram_api_ack" if result["last_sent_at_utc"] else
+                                   "legacy_period_only" if legacy_week else "not_confirmed")
     return result
