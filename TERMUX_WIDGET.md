@@ -17,6 +17,10 @@ komutunu elle çalıştırmak gerekmez. Düğmeler değişmediyse Termux:Widget'
 
 1. Termux ve Termux:Widget aynı kaynaktan kurulmuş olmalı (ör. ikisi de F-Droid).
    Farklı imza/kaynakla kurulan eklentiler birbirleriyle çalışmayabilir.
+   Termux'a **"Diğer uygulamaların üzerinde göster"** (Samsung'da "Üstte
+   görünme") izni ver: Ayarlar → Uygulamalar → Termux. Android 10+ bu izin
+   olmadan widget'tan pencere açtırmaz; düğmeye basınca yalnız "Termux requires
+   Display over other apps permission" uyarısı çıkar ve komut hiç çalışmaz.
 2. Termux'u en az bir kez aç. Proje `~/trade1` konumunda olmalı ve tabletin
    GitHub erişimi çalışıyor olmalı.
 3. Termux'ta çalıştır:
