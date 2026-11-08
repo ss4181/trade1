@@ -2891,6 +2891,15 @@ NOTIFY_HEALTH = {
 TELEGRAM_IDENTITY: str | None = None       # getMe sonucu (@botadi) ya da hata
 
 
+def _telegram_token_status() -> str:
+    """Public panel state; the bot's @username and raw errors stay private."""
+    if TELEGRAM_IDENTITY is None:
+        return "unknown"
+    if TELEGRAM_IDENTITY.startswith("@"):
+        return "valid"
+    return "invalid" if TELEGRAM_IDENTITY.startswith("GECERSIZ") else "disabled"
+
+
 def _note_notify(channel: str, ok: bool, error: str = "") -> None:
     h = NOTIFY_HEALTH.setdefault(
         channel, {"ok": 0, "fail": 0, "last_ok": None, "last_error": None})
@@ -6114,7 +6123,7 @@ def build_dashboard_data(max_rows: int = 400) -> dict:
             # bildirim kanali sagligi: sinyal uretilse de gonderim
             # basarisiz olabilir; uzaktan gorunur olmali (2026-07-26)
             "telegram_enabled": ENABLE_TELEGRAM,
-             "telegram_identity": TELEGRAM_IDENTITY,
+             "telegram_token_status": _telegram_token_status(),
              "notify_health": NOTIFY_HEALTH,
              "notification_delivery": notification_delivery_status(),
              "notification_activity": activity,

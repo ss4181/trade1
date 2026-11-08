@@ -1031,8 +1031,10 @@ def test_notify_health_visibility():
 
         # panoda gorunuyor mu
         st = bot.build_dashboard_data(max_rows=1)["status"]
-        for key in ("telegram_enabled", "telegram_identity", "notify_health"):
+        for key in ("telegram_enabled", "telegram_token_status", "notify_health"):
             assert key in st, key
+        assert st["telegram_token_status"] == "invalid"
+        assert "telegram_identity" not in st, "bot kullanici adi herkese acik panoya cikmamali"
         assert st["notify_health"]["telegram"]["fail"] >= 1
     finally:
         (bot._telegram_send_text, bot.requests.post, bot.ENABLE_TELEGRAM,

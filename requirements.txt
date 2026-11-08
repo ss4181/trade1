@@ -8,6 +8,9 @@
 #  Rust ile derlenen watchfiles kurulamadi ve bot 3 gun ayaga kalkamadi.
 #  Cekirdek artik o zincire bagimli DEGIL.)
 requests>=2.31,<3.0
+# TLS guvenlik tabani: eski certifi ele gecirilmis CA'lara guvenir.
+certifi>=2026.10.18
+urllib3>=2.8.0,<3.0
 # Binance'in geriye oynatilamayan USD-M forceOrder akisini arka planda arsivler.
 # Saf Python'dur; Termux/Android'de derleyici veya Rust gerektirmez.
 websocket-client>=1.8,<2.0

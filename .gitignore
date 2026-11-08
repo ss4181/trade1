@@ -8,6 +8,11 @@ signals.log
 *.log
 # termux/boot-signal-bot.sh rotates bot.out.log; an untracked copy blocks the update widget.
 *.log.1
+# Gercek hesap disa aktarimlari ve turevleri: herkese acik repoya ASLA.
+tools/*.csv
+tools/mae_cache/
+*Trade-History*.csv
+binance_position_history*.csv
 .bot_state.json
 .perf_cache.json
 .price_target_state.json

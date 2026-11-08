@@ -32,9 +32,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Secrets stay on the step that uses them so dependency installs never see them.
     env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_BOT_ID }}
       WATCHDOG_MAX_AGE_MIN: "60"
       WATCHDOG_REALERT_HOURS: "6"
     steps:
@@ -66,6 +65,9 @@ jobs:
             trade1-watchdog-
 
       - name: Tabletin son taramasini kontrol et
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_BOT_ID }}
         run: |
           if [ ! -f trade1-data/data.json ]; then
             echo "trade1-data/data.json yok — yayin kurulu degil, sessiz kaliniyor"

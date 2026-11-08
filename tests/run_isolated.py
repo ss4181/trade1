@@ -19,6 +19,7 @@ def main():
         files += list((root / "research").glob("*.py"))
         files += list((root / "tools").glob("*.py"))
         files += [p for p in (root / "termux").rglob("*") if p.is_file()]
+        files += list((root / ".github" / "workflows").glob("*.yml"))
         for source in files:
             target = copy / source.relative_to(root)
             target.parent.mkdir(parents=True, exist_ok=True)
