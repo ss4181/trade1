@@ -28,6 +28,8 @@ execution_shadow_bars_*.jsonl
 .stop-signal-bot
 .server-stack-unavailable
 .watchdog_state.json
+.liveness_state.json
+.liveness_state.json.tmp
 .notification_outbox.json
 .notification_outbox.json.tmp
 .notification_preferences.json

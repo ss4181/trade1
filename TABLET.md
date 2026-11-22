@@ -323,6 +323,62 @@ Tablet yeniden başladığında bot kendiliğinden kalksın:
    cevap geliyorsa otomatik başlatma çalışıyor. Çıktılar `~/trade1/bot.out.log`
    dosyasına yazılır.
 
+### Android güncellemesi / yeniden başlama sonrası (22 Kasım 2026 dersi)
+
+Tablet bir sistem güncellemesiyle kapandı; bot saatlerce taramadı ve GitHub
+bekçisinin uyarısı ancak 5,1 saat sonra geldi. İki ayrı sorun var:
+
+**1) Açılışta bot neden kalkmayabilir?** Her açılışta boot betiği
+`bot.out.log`'a iz bırakır. Yeniden başlamadan sonra kontrol et:
+
+```bash
+grep "boot betigi basladi" ~/trade1/bot.out.log | tail -n 3
+```
+
+Yeni satır yoksa Termux:Boot betiği hiç çalıştırmamıştır. Sık nedenler:
+
+- **Ekran kilidi (PIN/desen/şifre):** Şifreli Android cihazlarda açılış
+  olayı, yeniden başlamadan sonra **ilk kilit açılışına kadar** uygulamalara
+  gelmez. Gece güncellemesinden sonra tablet kilit ekranında beklerse bot da
+  bekler. Yalnız bot için kullanılan tablette ekran kilidini **Yok/Kaydırma**
+  yap, ya da her güncellemeden sonra kilidi bir kez açmayı alışkanlık edin.
+- **Pil kısıtlaması:** Termux **ve** Termux:Boot için Ayarlar → Uygulamalar →
+  Pil → **Kısıtlanmamış**. Samsung'da "Uyuyan uygulamalar" listesinden çıkar;
+  bazı markalarda ayrıca "Otomatik başlatma" izni gerekir.
+- **Termux:Boot hiç açılmadı / güncellendi:** uygulamayı bir kez aç, sonra
+  `ls -l ~/.termux/boot/` ile betik bağlantısının durduğunu doğrula.
+- **Otomatik sistem güncellemesi:** Ayarlar → Yazılım güncelleme →
+  otomatik indirme/yüklemeyi kapat; güncellemeyi sen yanındayken yap.
+- Tablet güncellemeden sonra **kapalı kaldıysa** cihazda hiçbir ayar yardım
+  edemez; geriye yalnız hızlı haber almak kalır (aşağıda).
+
+Bot uzun bir boşluktan sonra (varsayılan 20 dk+) ilk taramasını yapınca
+Telegram'a **"🟢 Bot yeniden ayakta"** mesajı gelir: boşluk süresi ve
+tabletin o arada yeniden başlayıp başlamadığı yazar. Widget ile güncelleme
+gibi kısa yeniden başlatmalar sessiz kalır (`LIVENESS_RECOVERY_MIN_GAP_MIN`).
+
+**2) Hızlı haber al: dış canlılık bekçisi (önerilir).** GitHub'ın zamanlanmış
+işleri yoğunlukta saatlerce gecikir; `watchdog.py` bu yüzden yalnız son
+çaredir. Tablet her başarılı taramadan sonra bir bekçi servisine "canlıyım"
+pingi atabilir; ping gelmezse servis kendisi haber verir (~20 dk):
+
+1. [healthchecks.io](https://healthchecks.io) → ücretsiz hesap → **Add Check**.
+   Schedule: **Period 5 dakika, Grace 15 dakika**.
+2. **Integrations → Telegram** seç, ekrandaki adımlarla kendi sohbetine bağla
+   (istersen e-posta da ekle).
+3. Check'in ping adresini kopyala (`https://hc-ping.com/...`) ve tabletteki
+   `~/trade1/.env` dosyasına ekle — adres gizlidir, repoya/sohbete yazma:
+   ```
+   HEARTBEAT_PING_URL=https://hc-ping.com/<senin-uuid>
+   ```
+4. Botu yeniden başlat (widget **Yeniden başlat**). Telegram `/status` içinde
+   `Dış canlılık bekçisi: açık` görünmeli; healthchecks panelinde check
+   birkaç dakika içinde **up** olur.
+5. Test: botu widget ile durdur → ~20 dk içinde uyarı gelmeli → tekrar başlat.
+
+Bot Binance'e ek istek atmaz; ping yalnız tarama başarılıysa gider, hata
+olursa sessizce atlanır ve taramayı etkilemez.
+
 > Boot betiği kuruluyken bot açılışta zaten çalışır. Elle ikinci kopya
 > başlatma; tek-instance kilidi bunu reddeder. Durumu
 > `pgrep -af "signal_bot.py|uvicorn server:app"` ile kontrol et

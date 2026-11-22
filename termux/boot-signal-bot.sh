@@ -78,6 +78,12 @@ have_server_stack() {
 # derlendigi ve wheel olmadigi icin bu genelde BASARISIZ olur ve dakikalar
 # surer. Her yeniden baslatmada tekrarlamamak icin sonuc isaretlenir; isaret
 # requirements-server.txt'in imzasini tasir, dosya degisirse yeniden denenir.
+# Her acilista iz birak: tablet yeniden basladiginda Termux:Boot'un betigi
+# gercekten calistirip calistirmadigi bot.out.log'dan gorulebilsin.
+rotate_log
+uptime_s="$(cut -d' ' -f1 /proc/uptime 2>/dev/null | cut -d. -f1)"
+log "boot betigi basladi (cihaz acik kalma: ${uptime_s:-bilinmiyor} sn)"
+
 SERVER_FAIL_MARK=".server-stack-unavailable"
 warn_python_pin
 if ensure_core_deps && ! have_server_stack; then

@@ -74,6 +74,7 @@ from notification_delivery import DeliveryOutbox, DeliveryRetryWorker
 from signal_outcomes import hourly_outcome
 import g2_notifications as g2
 import g1_entry
+import liveness
 import g1_alignment_shadow
 import execution_shadow
 from execution_shadow_store import ShadowStore
@@ -643,6 +644,13 @@ GITHUB_PAGES_BRANCH = _env("GITHUB_PAGES_BRANCH", "gh-pages")
 # build'i tetiklemez. Boylece 15 dakikada bir gereksiz Pages kuyrugu olusmaz.
 GITHUB_DATA_BRANCH = _env("GITHUB_DATA_BRANCH", "trade1-data")
 PUBLISH_INTERVAL_MIN = _env("PUBLISH_INTERVAL_MIN", 5)
+# Hizli dis canlilik bekcisi (healthchecks.io vb.). Gizli UUID icerir: yalniz
+# .env'de tutulur, loga/panoya yazilmaz. Bos = kapali. Bkz. TABLET.md.
+HEARTBEAT_PING_URL = os.environ.get("HEARTBEAT_PING_URL", "").strip()
+# Bu kadar dakikalik tarama boslugundan sonraki ilk taramada "yeniden ayakta"
+# mesaji gider. Widget guncellemesi gibi kisa yeniden baslatmalar sessiz kalir.
+LIVENESS_RECOVERY_MIN_GAP_MIN = _env("LIVENESS_RECOVERY_MIN_GAP_MIN", 20.0)
+_liveness_checked = False
 # Yayin, ancak token ACIKCA verildiyse (env ya da URL'e gomulu) acilir.
 PUBLISH_ENABLED = _env("PUBLISH_ENABLED", bool(GITHUB_TOKEN and GITHUB_REPO),
                        cast=_truthy)
@@ -4857,6 +4865,8 @@ def _run_forever_locked(once: bool = False,
             target_note = (f", fiyat-hedefi {target_result['hits']} yeni dokunus"
                            if target_result.get("hits") else "")
             print(f"[{t0}] tarama bitti: {n} sinyal{target_note}", flush=True)
+            if not once:
+                _note_liveness(datetime.fromisoformat(completed))
             if once:
                 archive_market_state()
             else:
@@ -4901,6 +4911,31 @@ def _run_forever_locked(once: bool = False,
         if once:
             break
         time.sleep(_seconds_until_next_scan(time.time()))
+
+
+def _note_liveness(completed: datetime) -> None:
+    """Basarili kalici tarama: dis bekciye ping, uzun bosluktan sonra bildirim.
+
+    Yalniz kalici tablet sureci cagirir (--once/bulut cagirmaz). Ping ve
+    Telegram ayri thread'de gider; tarama dongusunu bloklamaz, hata firlatmaz.
+    """
+    global _liveness_checked
+    try:
+        liveness.ping_async(HEARTBEAT_PING_URL)
+        if not _liveness_checked:
+            _liveness_checked = True
+            msg = liveness.recovery_message(
+                liveness.load_last_scan(), completed, liveness.device_uptime(),
+                LIVENESS_RECOVERY_MIN_GAP_MIN)
+            if msg:
+                print("canlilik: uzun bosluktan sonra ilk tarama; bildirim "
+                      "gonderiliyor", flush=True)
+                threading.Thread(target=_telegram_send_text, args=(msg,),
+                                 name="liveness-recovery", daemon=True).start()
+        liveness.save_last_scan(completed)
+    except Exception as e:  # canlilik yardimcisi taramayi asla dusurmemeli
+        print(f"uyari: canlilik kaydi atlandi: {type(e).__name__}",
+              file=sys.stderr, flush=True)
 
 
 def _seconds_until_next_scan(now: float) -> float:
@@ -6575,7 +6610,9 @@ def _format_status_for_telegram() -> str:
         f"• Spot tarama dışı: {_html.escape(excluded + catalog_note)}\n"
         f"• Tamamlanan tur: {SCANS_COMPLETED}\n"
         f"• Son tarama: {_html.escape(last_scan)}\n"
-        f"• Son tarama hatası: {LAST_SCAN_ERRORS}\n\n"
+        f"• Son tarama hatası: {LAST_SCAN_ERRORS}\n"
+        f"• Dış canlılık bekçisi: "
+        f"{'açık' if liveness.valid_ping_url(HEARTBEAT_PING_URL) else 'kapalı (TABLET.md)'}\n\n"
         f"• Kapanış payı: {SCAN_CLOSE_DELAY_SECONDS} sn · tekrar kontrolü: 5 sn\n"
         f"• Bekleyen bildirim: {delivery.get('pending_events', 'bilinmiyor')}\n"
          f"• Son sinyal referansı → Telegram API kabulü: {delivery_note}\n\n"
