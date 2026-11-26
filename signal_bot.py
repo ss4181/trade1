@@ -2646,79 +2646,63 @@ def _telegram_evidence_lines(sig: dict) -> list[str]:
     return lines
 
 
-def _g1_risk_lines(sig: dict) -> list[str]:
-    """ATR-scaled reference stop; arithmetic, not an order."""
+def _g1_stop_line(sig: dict, target_pct: float | None) -> str | None:
+    """ATR-scaled reference stop and reward/risk; arithmetic, not an order."""
     atr, price = sig.get("atr14_1h_pct"), sig.get("price")
     if not isinstance(atr, (int, float)) or not isinstance(price, (int, float)) or atr <= 0 or price <= 0:
-        return []
+        return None
     stop_pct = g1_entry.REFERENCE_STOP_ATR_MULT * atr
     if stop_pct >= 100:
-        return []
-    return [
-        f"🛑 <b>Referans stop ({g1_entry.REFERENCE_STOP_ATR_MULT:g}×ATR):</b> "
-        f"{_fmt_price(float(f'{price * (1 - stop_pct / 100):.5g}'))} · girişin %{stop_pct:.1f} altı "
-        f"(ATR14 1s %{atr:.2f})",
-    ]
+        return None
+    line = (f"🛑 <b>Stop:</b> {_fmt_price(float(f'{price * (1 - stop_pct / 100):.5g}'))} "
+            f"(−%{stop_pct:.1f})")
+    if target_pct:
+        line += f" · kazanç/risk {target_pct / stop_pct:.2f}"
+    return line
 
 
 def _telegram_g1_signal_text(sig: dict) -> str:
-    """G1 için kısa, tek bakışta okunabilen araştırma bildirimi."""
+    """G1 kartı: yalnız karar için gereken satırlar; uyarılar sadece sorun varken."""
     profile = sig.get("price_target")
     profile = profile if isinstance(profile, dict) else {}
     targets = profile.get("targets") or []
     target_text = " · ".join(
-        f"TP{float(t['level_pct']):g} {_fmt_price(t.get('price'))}"
+        f"{_fmt_price(t.get('price'))} (+%{float(t['level_pct']):g})"
         for t in targets
     ) or "henüz oluşturulmadı"
-    score = sig.get("last_five_scorecard")
-    if isinstance(score, dict) and "target_pct" not in score:
-        score = {**score, "target_pct": USER_SUCCESS_TARGET_PCT}
-    scorecard = notification_scorecard.format_html(score)
+    first_target = float(targets[0]["level_pct"]) if targets else None
+    quote = sig.get("entry_quote")
+    no_fresh_quote = (not quote and sig.get("price_target_measurement_version")
+                      == g1_entry.MEASUREMENT)
+    price_label = ("Giriş (ask)" if quote else
+                   "Fiyat (eski referans)" if no_fresh_quote else "Fiyat (tarama anı)")
+    lines = [
+        f"🔔 <b>G1 — {_html.escape(str(sig.get('symbol') or '?'))} "
+        f"{_html.escape(str(sig.get('direction') or ''))}</b>",
+        f"💰 <b>{price_label}:</b> {_fmt_price(sig.get('price'))}",
+        f"🎯 <b>Hedef:</b> {target_text}",
+    ]
+    stop = _g1_stop_line(sig, first_target)
+    if stop:
+        lines.append(stop)
     hours = sig.get("horizon_hours", 4)
     if isinstance(hours, (int, float)):
         deadline = (datetime.now(TR_ZONE) + timedelta(hours=hours)).strftime("%H:%M TRT")
-        horizon = f"⏱️ <b>Beklenen ufuk / süre sınırı:</b> ~{hours:g} saat · ≈ {deadline}"
-    else:
-        horizon = f"⏱️ <b>Beklenen ufuk:</b> ~{_html.escape(str(hours))} saat"
-    lines = [
-        f"🔔 <b>G1 — {_html.escape(str(sig.get('symbol') or '?'))} "
-        f"{_html.escape(str(sig.get('direction') or ''))}</b> 🔬",
-        f"💰 <b>{'Teyit sonrası alış kotasyonu (ask)' if sig.get('entry_quote') else 'Eski fiyat referansı · taze kotasyon yok' if sig.get('price_target_measurement_version') == g1_entry.MEASUREMENT else 'Tarama anı fiyatı'}:</b> {_fmt_price(sig.get('price'))}",
-        f"🎯 <b>Kişisel fiyat takibi:</b> {target_text}",
-        horizon,
-        *_g1_risk_lines(sig),
-        scorecard,
-    ]
-    quote = sig.get("entry_quote")
+        lines.append(f"⏱️ <b>Süre sınırı:</b> {deadline} (~{hours:g} saat)")
+    score = sig.get("last_five_scorecard")
+    if isinstance(score, dict) and "target_pct" not in score:
+        score = {**score, "target_pct": USER_SUCCESS_TARGET_PCT}
+    lines.append(notification_scorecard.format_html(score))
+    # Uyarılar: yalnız gerçekten dikkat gerektiğinde görünür.
     if quote:
         age = max(0., (datetime.now(timezone.utc).timestamp()*1000-quote['exchange_time_ms'])/1000)
-        # Sade kart: kotasyon yaşı/spread ve ölçüm tanımı yalnız sorun varken görünür.
         if age > 30:
             lines.append("⚠️ Teslim gecikti: kotasyon eski, giriş fiyatı olarak kullanma; yeni hedef ölçümüne alınmaz.")
-    elif sig.get("price_target_measurement_version") == g1_entry.MEASUREMENT:
-        lines.append("⚠️ Taze kotasyon alınamadı: bu referanstan hedef başarı oranı hesaplanmaz.")
-    wanted = {
-        "24s yükselen sırası", "Kapanmış mum 24s getirisi",
-        "1s hacim / önceki 24s medyan", "Open interest 1s",
-        "Global hesap long/short", "Short hesap payi", "Ölçüm girişi",
-    }
-    for label, value in _signal_detail_rows(sig):
-        if label == "Ölçüm girişi" and sig.get("price_target_measurement_version") == g1_entry.MEASUREMENT:
-            continue  # Canonical hourly backtest entry is not the user's delivered ask reference.
-        if label in wanted:
-            lines.append(f"{_TELEGRAM_DETAIL_ICONS.get(label, '•')} "
-                         f"<b>{_html.escape(label)}:</b> {_html.escape(str(value))}")
-    lines += ["", f"💡 <b>Neden geldi?</b> {_html.escape(_telegram_reason(sig))}"]
-    try:
-        live = price_target_summary().get("G1", {}).get(
-            _target_level_key(USER_SUCCESS_TARGET_PCT), {})
-        if live.get("resolved"):
-            small = " · küçük N" if live.get("sample_warning") else ""
-            lines.append(
-                f"📡 <b>Toplu hedef arşivi TP{USER_SUCCESS_TARGET_PCT:g}:</b> "
-                f"%{live['hit_rate_pct']:g} ({live['hit']}/{live['resolved']}{small})")
-    except Exception:
-        pass
+    elif no_fresh_quote:
+        lines.append("⚠️ Taze kotasyon alınamadı: fiyatı borsada kontrol et; bu referanstan hedef başarı oranı hesaplanmaz.")
+    delay = sig.get("notification_delay_minutes")
+    if isinstance(delay, (int, float)) and delay >= 10:
+        lines.append(f"⚠️ Bildirim koşul mumundan {float(delay):.0f} dakika sonra geldi; hareket kaçmış olabilir.")
     return "\n".join(lines)
 
 
