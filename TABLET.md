@@ -703,18 +703,29 @@ Telegram'ı susturup veri toplamayı sürdürmek için `SHADOW_PUSH_ENABLED=fals
 Bu JSONL dosyalarını silme: anlamlı değerlendirme için en az 3–6 ay ve yeterli
 bağımsız olay günü gerekecek.
 
-G1 giriş fiyatı ve likidasyon-proxy araştırmasını elle kontrol etmek için:
+G1 likidasyon-proxy araştırmasının veri hazırlığını elle kontrol etmek için:
 
 ```bash
-python research/eval_g1_liquidation_proxy.py --dir .
+python research/eval_g1_liquidation_proxy.py --dir . --no-download
 ```
 
-İlk çalıştırma olgun G1 olaylarının yalnız 4 saatlik sonuç pencereleri için
-resmî Binance 5 dakikalık USD-M mumlarını indirip
-`research/data/g1_liquidation_5m/` altında önbellekler. Rapor `veri yetersiz`
-diyorsa G1 değiştirilmez; bu beklenen güvenli davranıştır. Buradaki
-`forceOrder` fiyat kümeleri gerçekleşmiş olay proxy'sidir, CoinGlass benzeri
-bekleyen likidasyon haritası değildir.
+Varsayılan çalışma yeni ağ isteği yapmaz. 90 gün / 30 likidasyon olay günü /
+30 olgun G1 ve girdi bütünlüğü kapıları eksikse, önbellek olsa bile getiri
+hesaplanmaz. "Süresi dolmuş" olay sayısı, "getirisi ölçülen" sayıdan ayrıdır.
+Eski ticker ve yeni fresh-ask sürümleri aynı başarı tablosuna katılmaz.
+
+Kapılar sağlandığında `--download` ile yalnız dondurulmuş 4 saatlik pencereler
+için resmî Binance 5dk USD-M mumları indirilebilir; önbellek
+`research/data/g1_liquidation_5m/` altındadır. `--output` yalnız istenirse,
+kaynak arşiv klasörünün dışında **yeni** bir özel JSON raporu yazar. PC yedeği
+inceleniyorsa manifest/hash uyuşmazlığı giderilmeden sonuç üretilmez; bu
+araç manifesti onarmaz ve arşiv dosyalarını değiştirmez.
+
+Bu, canlı G1 giriş fiyatının veya kişisel dolumun testi değildir: koşul
+mumundan sonraki saat açılışı referans alınır. `forceOrder` kümeleri
+gerçekleşmiş olay proxy'sidir, CoinGlass benzeri modellenmiş heatmap değildir.
+[13 Ekim denetimi](research/G1_LIQUIDATION_REVIEW_2026-10-13.md) ve
+[ayrı heatmap veri taslağı](research/G1_HEATMAP_CAPTURE_SPEC.md).
 
 ## Sınırlar
 
