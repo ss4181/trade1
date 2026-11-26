@@ -54,6 +54,5 @@ def format_html(score):
     if not score['n']:return f"📊 <b>Son 5 {name}:</b> henüz teslim edilmiş geçmiş yok · {definition}."
     resolved=score['success']+score['failed']
     ratio=f" · sonuçlanan {score['success']}/{resolved}" if resolved else ""
-    return (f"📊 <b>Son 5 {name} ({score['n']} kayıt):</b> {score['success']} başarılı · "
-            f"{score['failed']} başarısız · {score['pending']} bekliyor · {score['unknown']} ölçülemedi{ratio}\n"
-            f"<i>{definition}; brüt fiyat ölçümü, gerçek işlem kârı değil.</i>")
+    return (f"📊 <b>Son 5 {name} · {definition} ({score['n']} kayıt):</b> {score['success']} başarılı · "
+            f"{score['failed']} başarısız · {score['pending']} bekliyor · {score['unknown']} ölçülemedi{ratio}")

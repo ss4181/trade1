@@ -312,7 +312,8 @@ def test_readable_telegram_signal_text():
         "horizon_hours": 4, "note": "gölge araştırma", "observe": True,
     })
     assert "💰 <b>Tarama anı fiyatı:</b>" in g1_text
-    assert "Koşul mumu kapanışı" in g1_text
+    for removed in ("Koşul mumu kapanışı", "Bildirim gecikmesi", "Hedefe dokunma, stop"):
+        assert removed not in g1_text, removed
     assert "Ölçüm girişi" in g1_text
     assert "2026-09-01 15:00:00 TRT" in g1_text
     assert "Son ticker" not in g1_text

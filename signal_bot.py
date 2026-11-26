@@ -2647,7 +2647,7 @@ def _telegram_evidence_lines(sig: dict) -> list[str]:
 
 
 def _g1_risk_lines(sig: dict) -> list[str]:
-    """ATR-scaled reference stop and per-1-USDT-risk size; arithmetic, not an order."""
+    """ATR-scaled reference stop; arithmetic, not an order."""
     atr, price = sig.get("atr14_1h_pct"), sig.get("price")
     if not isinstance(atr, (int, float)) or not isinstance(price, (int, float)) or atr <= 0 or price <= 0:
         return []
@@ -2658,8 +2658,6 @@ def _g1_risk_lines(sig: dict) -> list[str]:
         f"🛑 <b>Referans stop ({g1_entry.REFERENCE_STOP_ATR_MULT:g}×ATR):</b> "
         f"{_fmt_price(float(f'{price * (1 - stop_pct / 100):.5g}'))} · girişin %{stop_pct:.1f} altı "
         f"(ATR14 1s %{atr:.2f})",
-        f"📏 <b>Boyut:</b> her 1 USDT risk ≈ {100 / stop_pct:.1f} USDT pozisyon · kayma/gap hariç",
-        "🧯 Tasfiye fiyatı stopun altında kalmalı; borsa ekranında kontrol et.",
     ]
 
 
@@ -2694,17 +2692,15 @@ def _telegram_g1_signal_text(sig: dict) -> str:
     quote = sig.get("entry_quote")
     if quote:
         age = max(0., (datetime.now(timezone.utc).timestamp()*1000-quote['exchange_time_ms'])/1000)
-        lines.append(f"📐 <b>Kotasyon:</b> gönderimde yaş {age:.1f} sn · spread {quote['spread_bps']:.1f} bp · dolum değildir")
+        # Sade kart: kotasyon yaşı/spread ve ölçüm tanımı yalnız sorun varken görünür.
         if age > 30:
             lines.append("⚠️ Teslim gecikti: kotasyon eski, giriş fiyatı olarak kullanma; yeni hedef ölçümüne alınmaz.")
-        lines.append("🔎 <b>Ölçüm:</b> teslimden sonraki ilk tam 1dk mumundan; ilk kısmi dakika bilinmiyor.")
     elif sig.get("price_target_measurement_version") == g1_entry.MEASUREMENT:
         lines.append("⚠️ Taze kotasyon alınamadı: bu referanstan hedef başarı oranı hesaplanmaz.")
     wanted = {
         "24s yükselen sırası", "Kapanmış mum 24s getirisi",
         "1s hacim / önceki 24s medyan", "Open interest 1s",
-        "Global hesap long/short", "Short hesap payi",
-        "Koşul mumu kapanışı", "Bildirim gecikmesi", "Ölçüm girişi",
+        "Global hesap long/short", "Short hesap payi", "Ölçüm girişi",
     }
     for label, value in _signal_detail_rows(sig):
         if label == "Ölçüm girişi" and sig.get("price_target_measurement_version") == g1_entry.MEASUREMENT:
@@ -2723,7 +2719,6 @@ def _telegram_g1_signal_text(sig: dict) -> str:
                 f"%{live['hit_rate_pct']:g} ({live['hit']}/{live['resolved']}{small})")
     except Exception:
         pass
-    lines.append("⚠️ Hedefe dokunma, stop öncesi kâr veya güvenilir giriş garantisi değildir; bot emir vermez.")
     return "\n".join(lines)
 
 
