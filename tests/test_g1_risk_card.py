@@ -19,7 +19,7 @@ class G1RiskCardTests(unittest.TestCase):
         self.assertIn(f"🛑 <b>Stop:</b> {bot._fmt_price(94.0)} (−%6.0) · kazanç/risk 0.33", text)
         self.assertIn("⏱️ <b>Süre sınırı:</b> ", text)
         self.assertIn("(~4 saat)", text)
-        order = [text.index(x) for x in ("Fiyat", "Hedef", "Stop", "Süre sınırı", "Son 5")]
+        order = [text.index(x) for x in ("Giriş fiyatı", "Hedef", "Stop", "Süre sınırı", "Son 5")]
         self.assertEqual(order, sorted(order))
         for removed in ("USDT risk", "Tasfiye", "brüt fiyat", "Neden geldi", "Toplu hedef",
                         "Koşul mumu", "Bildirim gecikmesi", "Ölçüm girişi", "ATR14", "⚠️"):
@@ -34,14 +34,14 @@ class G1RiskCardTests(unittest.TestCase):
         now_ms = time.time() * 1000
         fresh = bot._telegram_signal_text(g1(entry_quote={"exchange_time_ms": now_ms, "spread_bps": 2.0},
                                              notification_delay_minutes=0.1))
-        self.assertIn("💰 <b>Giriş (ask):</b>", fresh)
+        self.assertIn("💰 <b>Giriş fiyatı:</b>", fresh)
         self.assertNotIn("⚠️", fresh)
         stale = bot._telegram_signal_text(g1(entry_quote={"exchange_time_ms": now_ms - 60_000, "spread_bps": 2.0}))
         self.assertIn("Teslim gecikti", stale)
         late = bot._telegram_signal_text(g1(notification_delay_minutes=12.0))
         self.assertIn("12 dakika sonra geldi", late)
         missing = bot._telegram_signal_text(g1(price_target_measurement_version=bot.g1_entry.MEASUREMENT))
-        self.assertIn("Fiyat (eski referans)", missing)
+        self.assertIn("Giriş fiyatı (eski)", missing)
         self.assertIn("Taze kotasyon alınamadı", missing)
 
     def test_dashboard_detail_row(self):

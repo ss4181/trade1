@@ -2666,29 +2666,24 @@ def _telegram_g1_signal_text(sig: dict) -> str:
     profile = sig.get("price_target")
     profile = profile if isinstance(profile, dict) else {}
     targets = profile.get("targets") or []
-    target_text = " · ".join(
-        f"{_fmt_price(t.get('price'))} (+%{float(t['level_pct']):g})"
-        for t in targets
-    ) or "henüz oluşturulmadı"
     first_target = float(targets[0]["level_pct"]) if targets else None
     quote = sig.get("entry_quote")
     no_fresh_quote = (not quote and sig.get("price_target_measurement_version")
                       == g1_entry.MEASUREMENT)
-    price_label = ("Giriş (ask)" if quote else
-                   "Fiyat (eski referans)" if no_fresh_quote else "Fiyat (tarama anı)")
+    price_label = ("Giriş fiyatı" if quote else
+                   "Giriş fiyatı (eski)" if no_fresh_quote else "Giriş fiyatı (tarama anı)")
     lines = [
         f"🔔 <b>G1 — {_html.escape(str(sig.get('symbol') or '?'))} "
-        f"{_html.escape(str(sig.get('direction') or ''))}</b>",
+        f"{_html.escape(str(sig.get('direction') or ''))}</b> · gözlem · doğrulanmamış",
         f"💰 <b>{price_label}:</b> {_fmt_price(sig.get('price'))}",
-        f"🎯 <b>Hedef:</b> {target_text}",
+        _target_line(sig) or "🎯 <b>Hedef:</b> henüz oluşturulmadı",
     ]
     stop = _g1_stop_line(sig, first_target)
     if stop:
         lines.append(stop)
-    hours = sig.get("horizon_hours", 4)
-    if isinstance(hours, (int, float)):
-        deadline = (datetime.now(TR_ZONE) + timedelta(hours=hours)).strftime("%H:%M TRT")
-        lines.append(f"⏱️ <b>Süre sınırı:</b> {deadline} (~{hours:g} saat)")
+    deadline = _deadline_line(sig.get("horizon_hours", 4))
+    if deadline:
+        lines.append(deadline)
     score = sig.get("last_five_scorecard")
     if isinstance(score, dict) and "target_pct" not in score:
         score = {**score, "target_pct": USER_SUCCESS_TARGET_PCT}
@@ -2706,78 +2701,87 @@ def _telegram_g1_signal_text(sig: dict) -> str:
     return "\n".join(lines)
 
 
+def _signal_tag(sig: dict, strategy: str) -> str:
+    """Başlıktaki tek kelimelik güven etiketi."""
+    if strategy == "S2":
+        return "araştırma"
+    if sig.get("observe") or strategy in SHADOW_STRATEGIES:
+        return "gözlem · doğrulanmamış"
+    if sig.get("strength") == "STRONG":
+        return "güçlü"
+    return ""
+
+
+def _target_line(sig: dict) -> str | None:
+    profile = sig.get("price_target") or {}
+    targets = profile.get("targets") if isinstance(profile, dict) else None
+    if not targets:
+        return None
+    # Yalnız bildirim gönderilen hedef seviyeleri (varsayılan +%2, +%3).
+    targets = [t for t in targets
+               if float(t.get("level_pct") or 0) in PRICE_TARGET_NOTIFY_LEVELS_PCT] or targets
+    sign = "−" if sig.get("direction") == "SHORT" else "+"
+    text = " · ".join(f"{_fmt_price(t.get('price'))} ({sign}%{float(t['level_pct']):g})"
+                      for t in targets)
+    return f"🎯 <b>Hedef:</b> {text}"
+
+
+def _deadline_line(hours) -> str | None:
+    if not isinstance(hours, (int, float)) or isinstance(hours, bool):
+        return None
+    deadline = (datetime.now(TR_ZONE) + timedelta(hours=hours)).strftime("%H:%M TRT")
+    return f"⏱️ <b>Süre sınırı:</b> {deadline} (~{hours:g} saat)"
+
+
+def _detection_delay_minutes(sig: dict) -> float | None:
+    try:
+        return (_target_dt(sig["detected_at"]) - _target_dt(sig["signal_reference_at"])
+                ).total_seconds() / 60
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _telegram_signal_text(sig: dict) -> str:
-    """Compact strategy card; detailed evidence stays in the performance report."""
+    """Sade kart: yalnız karar için gereken satırlar; uyarılar sadece sorun varken."""
     strategy = str(sig.get("strategy") or "?")
     if strategy == "G1":
         return _telegram_g1_signal_text(sig)
-    direction = str(sig.get("direction") or "")
-    if strategy == "S2":
-        marker = "🧪"
-    elif sig.get("observe") or strategy in SHADOW_STRATEGIES:
-        marker = "🔬"
-    elif sig.get("strength") == "STRONG":
-        marker = "✅"
-    else:
-        marker = "🟦"
-    price_label = "Koşul kapanış referansı" if strategy == "G2" else "Fiyat"
-    lines = [
-        f"🔔 <b>{_html.escape(strategy)} — "
-        f"{_html.escape(str(sig.get('symbol') or '?'))} "
-        f"{_html.escape(direction)}</b> {marker}",
-        f"💰 <b>{price_label}:</b> {_fmt_price(sig.get('price'))}",
-    ]
-    profile = sig.get("price_target") or {}
-    targets = profile.get("targets") or []
-    if targets:
-        target_text = " · ".join(
-            f"TP{float(t['level_pct']):g} {_fmt_price(t.get('price'))}"
-            for t in targets)
-        lines.append(f"🎯 <b>Kişisel fiyat takibi:</b> {target_text}")
-    horizon_label = "Deliste kalan süre" if strategy == "DL1" else "Beklenen ufuk"
-    lines.append(f"⏱️ <b>{horizon_label}:</b> ~{sig.get('horizon_hours', '?')} saat")
+    tag = _signal_tag(sig, strategy)
+    header = (f"🔔 <b>{_html.escape(strategy)} — {_html.escape(str(sig.get('symbol') or '?'))} "
+              f"{_html.escape(str(sig.get('direction') or ''))}</b>")
+    lines = [header + (f" · {tag}" if tag else "")]
+    if strategy == "DL1":
+        lines.append(f"💰 <b>Fiyat:</b> {_fmt_price(sig.get('price'))}")
+        lines.append("⚠️ Giriş sinyali değil: resmî delist duyurusu alarmı.")
+        keep = {"Resmî duyuru", "Binance spot durdurma", "Bybit linear perp",
+                "OKX USDT swap", "Resmî makale"}
+        for label, value in _signal_detail_rows(sig):
+            if label in keep:
+                lines.append(f"{_TELEGRAM_DETAIL_ICONS.get(label, '•')} "
+                             f"<b>{_html.escape(label)}:</b> {_html.escape(str(value))}")
+        return "\n".join(lines)
     if strategy == "G2":
-        lines += [f"📅 <b>Planlanan referans giriş:</b> {_html.escape(_display_tr_time(sig.get('planned_entry_at')))}",
-                  "🔔 <b>Zamanlama:</b> Girişten önceki son 5 dakikada hazırlık bildirimi.",
-                  "🔎 <b>Koşullar:</b> Aşağıdaki değerler tespit mumuna aittir; güncel güç teyidi yapılmadı. Giriş öncesi fiyatı takip edin.",
-                  "🎯 <b>Plan:</b> TP %3 · SL %2 · azami 24 saat · coin başına 24 saat bekleme",
-                  "🏦 <b>Hyperliquid:</b> Limit / ALO · dolum doğrulanmadı; planlanan Binance referansı."]
+        lines += [
+            f"💰 <b>Referans fiyat (koşul kapanışı):</b> {_fmt_price(sig.get('price'))}",
+            f"📅 <b>Giriş zamanı:</b> {_html.escape(_display_tr_time(sig.get('planned_entry_at')))}",
+            "🎯 <b>Plan:</b> TP %3 · SL %2 · en geç 24 saat",
+            "🏦 Hyperliquid'de Limit/ALO emir; fiyat planlanan Binance referansıdır, dolum garanti değil.",
+        ]
+    else:
+        lines.append(f"💰 <b>Giriş fiyatı:</b> {_fmt_price(sig.get('price'))}")
+        target = _target_line(sig)
+        if target:
+            lines.append(target)
+        deadline = _deadline_line(sig.get("horizon_hours"))
+        if deadline:
+            lines.append(deadline)
     lines.append(notification_scorecard.format_html(sig.get("last_five_scorecard")))
-    if strategy == "G2" and sig.get("rank_loser") is not None:
-        lines.append(f"🔟 <b>24s düşen sırası:</b> #{_html.escape(str(sig['rank_loser']))}")
-    for label, value in _signal_detail_rows(sig):
-        if label == "Performans piyasası":
-            continue
-        icon = _TELEGRAM_DETAIL_ICONS.get(label, "•")
-        lines.append(f"{icon} <b>{_html.escape(label)}:</b> "
-                     f"{_html.escape(str(value))}")
-    lines += ["", f"💡 <b>Neden geldi?</b> "
-              f"{_html.escape(_telegram_reason(sig))}"]
-    try:
-        live = price_target_summary().get(strategy, {}).get(
-            _target_level_key(USER_SUCCESS_TARGET_PCT), {})
-        if live.get("resolved"):
-            small = " · küçük N" if live.get("sample_warning") else ""
-            lines += ["", f"📡 <b>Toplu hedef arşivi TP{USER_SUCCESS_TARGET_PCT:g}:</b> "
-                      f"%{live['hit_rate_pct']:g} ({live['hit']}/{live['resolved']}{small})"]
-    except Exception:
-        pass
-    if sig.get("signal_reference_at") and sig.get("detected_at"):
-        try:
-            reference_dt = _target_dt(sig["signal_reference_at"]).astimezone(TR_ZONE)
-            detected_dt = _target_dt(sig["detected_at"]).astimezone(TR_ZONE)
-            reference = _display_tr_time(reference_dt.isoformat())
-            detected = (detected_dt.strftime("%H:%M:%S TRT")
-                        if reference_dt.date() == detected_dt.date()
-                        else _display_tr_time(detected_dt.isoformat()))
-            label = "Funding zamanı" if strategy == "S2" else "Mum kapanışı"
-            lines.append(f"⏱️ <i>{label}: {reference} · Tespit: {detected}</i>")
-        except (TypeError, ValueError):
-            pass
-    elif sig.get("bar_time"):
-        label = "Tespit" if strategy == "DL1" else "Sinyal mumu"
-        stamp = _display_tr_time(sig["bar_time"], seconds=False)
-        lines.append(f"🕒 <i>{label}: {_html.escape(stamp)}</i>")
+    # Saatlik mum kapanışında tetiklenen stratejiler: normal tespit ~1-2 dk.
+    hourly = OBSERVE_BASE_OF.get(strategy, strategy).split("+")[0] in ("S1", "S3")
+    delay = _detection_delay_minutes(sig) if hourly else None
+    if delay is not None and delay >= 10:
+        lines.append(f"⚠️ Bildirim sinyal mumundan {delay:.0f} dakika sonra geldi; "
+                     "fiyatı borsada kontrol et.")
     return "\n".join(lines)
 
 
@@ -3337,26 +3341,18 @@ def _send_price_target_alert(event: dict, hit_keys: list[str]) -> None:
         return
     levels = sorted((float(k) for k in notify_keys))
     sign = "+" if event.get("direction") == "LONG" else "-"
-    level_text = " ve ".join(f"{sign}%{x:g}" for x in levels)
     target_rows = []
     for level in levels:
         target = event["targets"][_target_level_key(level)]
         target_rows.append(
             f"• {sign}%{level:g}: <b>{_fmt_price(target['price'])}</b>")
+    who = (f"{_html.escape(str(event.get('strategy') or '?'))} · "
+           f"{_html.escape(str(event.get('symbol') or '?'))} "
+           f"{_html.escape(str(event.get('direction') or ''))}")
     text = "\n".join([
-        "🎯 <b>G2: TP %3 STOP ÖNCESİ ULAŞILDI</b>" if event.get("g2_bracket") else "🎯 <b>FİYAT HEDEFİ DOKUNDU</b>",
-        f"<i>{_html.escape(str(event.get('strategy') or '?'))} · "
-        f"{_html.escape(str(event.get('symbol') or '?'))} · "
-        f"{_html.escape(str(event.get('direction') or ''))}</i>",
-        "",
-        f"💰 <b>{'Planlanan Binance giriş referansı' if event.get('g2_bracket') else 'Bildirim referansı'}:</b> {_fmt_price(event['entry_ref'])}",
-        f"🎯 <b>Ulaşılan seviye:</b> {level_text}",
-        *target_rows,
-        f"⚠️ <b>Hedef öncesi ters hareket:</b> "
-        f"{min(float(event['targets'][k].get('max_adverse_before_hit_pct') or 0) for k in notify_keys):+.2f}%",
-        "",
-        f"ℹ️ Kapanmış {g1_entry.tracking_step(event)//60_000}dk mumuyla ölçülen brüt fiyat dokunmasıdır; "
-        "ücret/slippage düşülmez, kaldıraçlı ROI değildir ve bot emir vermez.",
+        f"🎯 <b>{'G2 TP %3 stoptan önce geldi' if event.get('g2_bracket') else 'Hedefe ulaştı'} — {who}</b>",
+        f"💰 <b>{'Planlanan giriş' if event.get('g2_bracket') else 'Giriş fiyatı'}:</b> {_fmt_price(event['entry_ref'])}",
+        *(f"✅ {row[2:]}" for row in target_rows),
         *( ["Hyperliquid limit emrinin dolduğunu göstermez."] if event.get("g2_bracket") else [] ),
     ])
     for cid in TELEGRAM_SUBSCRIBERS:

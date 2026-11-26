@@ -161,6 +161,7 @@ class G2Tests(unittest.TestCase):
             self.assertIn('Son 5 G2',text)
             self.assertIn('TP %3',text)
             self.assertIn('planlanan Binance',text)
+            self.assertNotIn('⚠️',text)
             self.assertLess(len(text),4096)
 
 

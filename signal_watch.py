@@ -43,10 +43,7 @@ def digest_messages(items, now_ms):
     footer = ("\n\n🧭 <i>Kurulum/risk gözlemidir; doğrulanmış çıkış modeli değil. "
               "Gerçek pozisyonu/emirleri izlemez; borsadaki stop-loss yerine geçmez.</i>")
     if critical:
-        footer = ("\n\n🛡️ <b>Aynı yönde açık pozisyonun varsa önceden belirlediğin stop/çıkış planını kontrol et.</b>"
-                  "\n<i>Bu, kesin kapat emri veya toparlanma tahmini değildir. Gerçek girişini, "
-                  "pozisyonunu, kaldıraç ve teminatını bilmez; emir açmaz/kapatmaz. "
-                  "Teyit gecikebilir; borsadaki stop-loss yerine geçmez.</i>")
+        footer = "\n\n🛡️ <b>Bu yönde açık pozisyonun varsa stop/çıkış planını kontrol et.</b>"
     def size(text):
         return len(text.encode("utf-16-le"))//2
     groups = {}

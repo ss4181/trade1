@@ -294,15 +294,15 @@ def test_readable_telegram_signal_text():
         ]},
     }
     text = bot._telegram_signal_text(sig)
-    for required in ("S2 — TESTUSDT LONG", "🧪",
-                     "💰 <b>Fiyat:</b>", "💡 <b>Neden geldi?</b>",
-                     "Funding %", "Funding aralığı", "Kişisel fiyat takibi",
-                     "Son 5 bildirim", "2026-09-01 14:00 TRT"):
+    for required in ("S2 — TESTUSDT LONG</b> · araştırma",
+                     "💰 <b>Giriş fiyatı:</b>", "🎯 <b>Hedef:</b>", "(+%2)", "(+%3)",
+                     "⏱️ <b>Süre sınırı:</b>", "(~72 saat)", "Son 5 bildirim"):
         assert required in text, required
     for removed in ("Kanıt ve risk", "Dondurulmuş test", "Mekanik referanslar",
-                    "Evren / config", "Motor:", "Son ticker"):
+                    "Evren / config", "Motor:", "Son ticker", "Neden geldi",
+                    "Funding %", "Kişisel fiyat takibi", "(+%10)", "⚠️"):
         assert removed not in text, removed
-    assert text.index("Kişisel fiyat takibi") < text.index("Beklenen ufuk")
+    assert text.index("Hedef") < text.index("Süre sınırı")
     assert len(text) < 4000, len(text)
     g1_text = bot._telegram_signal_text({
         "strategy": "G1", "symbol": "AAAUSDT", "direction": "LONG",
@@ -311,7 +311,7 @@ def test_readable_telegram_signal_text():
         "measurement_entry_time_utc": "2026-09-01T12:00:00+00:00",
         "horizon_hours": 4, "note": "gölge araştırma", "observe": True,
     })
-    assert "💰 <b>Fiyat (tarama anı):</b>" in g1_text
+    assert "💰 <b>Giriş fiyatı (tarama anı):</b>" in g1_text
     assert "12 dakika sonra geldi" in g1_text
     for removed in ("Koşul mumu kapanışı", "Bildirim gecikmesi", "Hedefe dokunma, stop",
                     "Ölçüm girişi", "Neden geldi"):
