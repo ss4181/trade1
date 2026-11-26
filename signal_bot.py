@@ -2681,6 +2681,9 @@ def _telegram_g1_signal_text(sig: dict) -> str:
     stop = _g1_stop_line(sig, first_target)
     if stop:
         lines.append(stop)
+    strength = sig.get("g1_strength")
+    if isinstance(strength, dict) and isinstance(strength.get("score"), (int, float)):
+        lines.append(f"💪 <b>Güç:</b> {strength['score']:.0f}/100 · test ediliyor, filtre değil")
     deadline = _deadline_line(sig.get("horizon_hours", 4))
     if deadline:
         lines.append(deadline)
@@ -3134,6 +3137,7 @@ def _price_target_public(event: dict, now: datetime | None = None) -> dict:
         "bar_interval_minutes": g1_entry.tracking_step(event) // 60_000,
         "entry_shadow": g1_entry.public_shadow(event),
         "exit_shadow": g1_entry.public_exit_shadow(event),
+        "g1_strength": event.get("g1_strength"),
         "unobserved_initial_seconds": event.get("unobserved_initial_seconds"),
         "entry_definition": event.get("entry_definition", "signal_reference_not_executed_price"),
         "universe": event.get("universe", "UNKNOWN"),
@@ -3243,7 +3247,8 @@ def _register_price_targets(record: dict, persist: bool = True) -> dict | None:
             if minute_mode:
                 # Point-in-time research labels only; never an entry filter.
                 event["entry_study_origin"] = "forward_live_delivery"
-                for field in ("market_regime", "market_regime_data_close_at", "atr14_1h_pct"):
+                for field in ("market_regime", "market_regime_data_close_at", "atr14_1h_pct",
+                              "g1_strength"):
                     if field in record:
                         event[field] = record[field]
             if persist:
