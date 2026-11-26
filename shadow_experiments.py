@@ -499,6 +499,10 @@ def scan_g1(futures_get: Callable, state_path: Path, archive_dir: Path,
                 "push_policy_enabled": True,
                 "config_version": CONFIG_VERSION,
             }
+            # Dondurulmuş güç puanı (g1-strength-v1): gösterim + ileri test etiketi,
+            # G1 koşulu/filtre değildir. Alan eksikse None kalır.
+            from g1_strength import score as g1_strength_score
+            signal["g1_strength"] = g1_strength_score(signal)
             signals.append(signal)
             last_fire[symbol] = _iso(now)
             previous[symbol] = True
