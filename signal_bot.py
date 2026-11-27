@@ -2661,6 +2661,28 @@ def _g1_stop_line(sig: dict, target_pct: float | None) -> str | None:
     return line
 
 
+def _number(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _market_line(sig: dict) -> str | None:
+    """Koşul mumundaki 1s OI değişimi ve global short hesap oranı, tek satır."""
+    parts = []
+    oi = _number(sig.get("oi_change_1h_pct"))
+    if oi is not None:
+        label = "OI artışı (1s)" if oi >= 0 else "OI değişimi (1s)"
+        parts.append(f"<b>{label}:</b> {'+' if oi >= 0 else '−'}%{abs(oi):.1f}")
+    short = _number(sig.get("global_short_account_pct"))
+    ratio = _number(sig.get("global_long_short_ratio"))
+    if short is not None:
+        parts.append(f"<b>Short hesap oranı:</b> %{short:.1f}")
+    elif ratio is not None and ratio > 0:
+        parts.append(f"<b>Long/short:</b> {ratio:.2f}")
+    return "🔥 " + " · ".join(parts) if parts else None
+
+
 def _telegram_g1_signal_text(sig: dict) -> str:
     """G1 kartı: yalnız karar için gereken satırlar; uyarılar sadece sorun varken."""
     profile = sig.get("price_target")
@@ -2681,6 +2703,9 @@ def _telegram_g1_signal_text(sig: dict) -> str:
     stop = _g1_stop_line(sig, first_target)
     if stop:
         lines.append(stop)
+    market = _market_line(sig)
+    if market:
+        lines.append(market)
     strength = sig.get("g1_strength")
     if isinstance(strength, dict) and isinstance(strength.get("score"), (int, float)):
         lines.append(f"💪 <b>Güç:</b> {strength['score']:.0f}/100 · test ediliyor, filtre değil")
@@ -2763,9 +2788,11 @@ def _telegram_signal_text(sig: dict) -> str:
                 lines.append(f"{_TELEGRAM_DETAIL_ICONS.get(label, '•')} "
                              f"<b>{_html.escape(label)}:</b> {_html.escape(str(value))}")
         return "\n".join(lines)
+    market = _market_line(sig)
     if strategy == "G2":
         lines += [
             f"💰 <b>Referans fiyat (koşul kapanışı):</b> {_fmt_price(sig.get('price'))}",
+            *([market] if market else []),
             f"📅 <b>Giriş zamanı:</b> {_html.escape(_display_tr_time(sig.get('planned_entry_at')))}",
             "🎯 <b>Plan:</b> TP %3 · SL %2 · en geç 24 saat",
             "🏦 Hyperliquid'de Limit/ALO emir; fiyat planlanan Binance referansıdır, dolum garanti değil.",
@@ -2775,6 +2802,8 @@ def _telegram_signal_text(sig: dict) -> str:
         target = _target_line(sig)
         if target:
             lines.append(target)
+        if market:
+            lines.append(market)
         deadline = _deadline_line(sig.get("horizon_hours"))
         if deadline:
             lines.append(deadline)
